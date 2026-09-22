@@ -1,0 +1,11 @@
+{
+  "M365_Mail": "mail",
+  "M365-Calendar": "calendar",
+  "M365-Teams": "teams",
+  "M365-Search": "m365-copilot",
+  "M365-Sharepoint": "sharepoint",
+  "M365-Word": "word",
+  "M365-Profile": "m365-user",
+  "ICM": "icm",
+  "Enghub": "enghub"
+}

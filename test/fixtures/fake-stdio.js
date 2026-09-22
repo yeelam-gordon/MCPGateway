@@ -1,0 +1,13 @@
+import { appendFileSync } from 'node:fs';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
+import { setTimeout as delay } from 'node:timers/promises';
+if (process.env.COUNTER_FILE) appendFileSync(process.env.COUNTER_FILE, `${process.pid}\n`);
+if (process.env.STDERR_BYTES) process.stderr.write('x'.repeat(Number(process.env.STDERR_BYTES)));
+const server = new McpServer({ name: 'fake-stdio', version: '1' });
+server.registerTool('echo', { description: 'Echo text', inputSchema: { text: z.string() } }, async ({ text }) => ({ content: [{ type: 'text', text }], structuredContent: { text } }));
+server.registerTool('slow', { inputSchema: { milliseconds: z.number().int().nonnegative() } }, async ({ milliseconds }) => { await delay(milliseconds); return { content: [{ type: 'text', text: 'slow' }] }; });
+server.registerTool('hidden', { inputSchema: {} }, async () => ({ content: [{ type: 'text', text: 'hidden' }] }));
+server.registerTool('mutate', { inputSchema: {}, annotations: { destructiveHint: true } }, async () => { if (process.env.MUTATION_FILE) appendFileSync(process.env.MUTATION_FILE, 'called\n'); process.exit(23); });
+await server.connect(new StdioServerTransport());
