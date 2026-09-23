@@ -14,6 +14,9 @@ const IDENTITY = Object.freeze({ name: 'shared-mcp-gateway', version: VERSION })
 const LOCK_FILE = 'gateway-start.lock';
 const INSTANCE_FILE = 'gateway-instance.json';
 const POLL_MS = 75;
+const PROCESS_INSPECTION_MAX_MS = 10_000;
+const LOCK_PROCESS_RECHECK_MS = 1000;
+let ownProcessInfoCache = null;
 
 const delay = milliseconds => new Promise(resolveDelay => setTimeout(resolveDelay, milliseconds));
 const remaining = deadline => Math.max(0, deadline - Date.now());
@@ -44,16 +47,22 @@ async function processInfo(pid, timeoutMs = 2500) {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   if (process.platform === 'win32') {
     const script = `$p=Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if($null -ne $p){[pscustomobject]@{creation=$p.StartTime.ToUniversalTime().ToString('o');executable=$p.Path}|ConvertTo-Json -Compress}; exit 0`;
-    try {
-      const { stdout } = await execFileAsync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: timeoutMs });
-      const text = stdout.trim();
-      if (!text) return null;
-      const parsed = JSON.parse(text);
-      return { marker: parsed.creation, executable: parsed.executable ?? null, commandLine: parsed.commandLine ?? null };
-    } catch (error) {
-      if (error.killed) throw new Error(`Timed out checking process ${pid}`, { cause: error });
-      throw new Error(`Cannot inspect process ${pid}: ${error.message}`, { cause: error });
+    let lastError;
+    for (const shell of ['pwsh.exe', 'powershell.exe']) {
+      try {
+        const { stdout } = await execFileAsync(shell, ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: timeoutMs });
+        const text = stdout.trim();
+        if (!text) return null;
+        const parsed = JSON.parse(text);
+        return { marker: parsed.creation, executable: parsed.executable ?? null, commandLine: parsed.commandLine ?? null };
+      } catch (error) {
+        lastError = error;
+        if (error.code === 'ENOENT' && shell === 'pwsh.exe') continue;
+        if (error.killed) throw new Error(`Timed out checking process ${pid}`, { cause: error });
+        throw new Error(`Cannot inspect process ${pid}: ${error.message}`, { cause: error });
+      }
     }
+    throw new Error(`Cannot inspect process ${pid}: ${lastError?.message ?? 'no PowerShell executable found'}`, { cause: lastError });
   }
   try {
     const stat = await readFile(`/proc/${pid}/stat`, 'utf8');
@@ -63,6 +72,17 @@ async function processInfo(pid, timeoutMs = 2500) {
   } catch {
     try { process.kill(pid, 0); return { marker: `pid:${pid}`, executable: null, commandLine: null }; } catch { return null; }
   }
+}
+
+function processInspectionTimeout(deadline) {
+  return Math.max(1, Math.min(PROCESS_INSPECTION_MAX_MS, remaining(deadline)));
+}
+
+async function ownProcessInfo(deadline) {
+  if (ownProcessInfoCache) return ownProcessInfoCache;
+  const info = await processInfo(process.pid, processInspectionTimeout(deadline));
+  if (info) ownProcessInfoCache = info;
+  return info;
 }
 
 function sameProcess(info, record) {
@@ -128,13 +148,14 @@ async function probeGateway(port, token, timeoutMs) {
   }
 }
 
-async function matchingInstance(stateDir, spec, port) {
+async function matchingInstance(stateDir, spec, port, deadline, allowMissingMetadata) {
   const metadata = await readJson(join(stateDir, INSTANCE_FILE));
+  if (!metadata && allowMissingMetadata) return null;
   if (!metadata || metadata.port !== port || metadata.fingerprint !== spec.fingerprint || metadata.identity?.name !== IDENTITY.name || metadata.identity?.version !== IDENTITY.version) {
     throw new Error(`Authenticated gateway on port ${port} was started with different config or adapter settings`);
   }
   if (metadata.pid == null) return { pid: null, reused: true };
-  const info = await processInfo(metadata.pid);
+  const info = await processInfo(metadata.pid, processInspectionTimeout(deadline));
   if (!sameProcess(info, metadata)) throw new Error(`Gateway metadata for port ${port} does not match the live process`);
   return { pid: metadata.pid, reused: true };
 }
@@ -145,16 +166,19 @@ function probeFailure(port, probe) {
   return new Error(`Port ${port} is occupied by a listener that is not ${IDENTITY.name}@${IDENTITY.version}; refusing to replace it`, { cause: probe.error });
 }
 
-async function inspectOrStartable(spec, token, deadline) {
+async function inspectOrStartable(spec, token, deadline, allowMissingMetadata = false) {
   const timeoutMs = Math.max(1, Math.min(1500, remaining(deadline)));
   const probe = await probeGateway(spec.port, token, timeoutMs);
-  if (probe.kind === 'healthy') return { result: await matchingInstance(spec.stateDir, spec, spec.port) };
+  if (probe.kind === 'healthy') {
+    const result = await matchingInstance(spec.stateDir, spec, spec.port, deadline, allowMissingMetadata);
+    return result ? { result } : { pending: true };
+  }
   if (probe.kind === 'absent') return { startable: true };
   throw probeFailure(spec.port, probe);
 }
 
 async function acquireLock(lockPath, deadline) {
-  const ownInfo = await processInfo(process.pid, Math.max(1, Math.min(2500, remaining(deadline))));
+  const ownInfo = await ownProcessInfo(deadline);
   if (!ownInfo) throw new Error('Cannot establish gateway lock process provenance');
   const record = { nonce: randomUUID(), pid: process.pid, processMarker: ownInfo.marker, executable: ownInfo.executable, createdAt: new Date().toISOString() };
   while (remaining(deadline) > 0) {
@@ -174,9 +198,18 @@ async function acquireLock(lockPath, deadline) {
       continue;
     }
     let info;
-    try { info = await processInfo(existing.pid, Math.max(1, Math.min(1000, remaining(deadline)))); } catch { await delay(Math.min(POLL_MS, remaining(deadline))); continue; }
+    try { info = await processInfo(existing.pid, processInspectionTimeout(deadline)); } catch { await delay(Math.min(POLL_MS, remaining(deadline))); continue; }
     if (sameProcess(info, existing)) {
-      await delay(Math.min(POLL_MS, remaining(deadline)));
+      const recheckDeadline = Date.now() + Math.min(LOCK_PROCESS_RECHECK_MS, remaining(deadline));
+      while (remaining(deadline) > 0 && Date.now() < recheckDeadline) {
+        await delay(Math.min(POLL_MS, remaining(deadline), recheckDeadline - Date.now()));
+        try {
+          if (await readFile(lockPath, 'utf8') !== raw) break;
+        } catch (error) {
+          if (!['EACCES', 'ENOENT', 'EPERM'].includes(error.code)) throw error;
+          break;
+        }
+      }
       continue;
     }
     try {
@@ -189,11 +222,16 @@ async function acquireLock(lockPath, deadline) {
 }
 
 async function releaseOwnedLock(lockPath, record) {
-  try {
-    const current = await readJson(lockPath);
-    if (current?.nonce === record.nonce && current.pid === record.pid && current.processMarker === record.processMarker) await unlink(lockPath);
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      const current = await readJson(lockPath);
+      if (current?.nonce === record.nonce && current.pid === record.pid && current.processMarker === record.processMarker) await unlink(lockPath);
+      return;
+    } catch (error) {
+      if (error.code === 'ENOENT') return;
+      if (!['EACCES', 'EPERM'].includes(error.code) || attempt === 4) throw error;
+      await delay(POLL_MS);
+    }
   }
 }
 
@@ -217,7 +255,7 @@ async function spawnGateway(spec, nonce, deadline) {
     closeSync(stderrFd);
   }
   try {
-    const info = await processInfo(child.pid, Math.max(1, Math.min(2500, remaining(deadline))));
+    const info = await processInfo(child.pid, processInspectionTimeout(deadline));
     if (!info) throw new Error('spawned process is no longer running');
     const metadata = {
       nonce,
@@ -291,47 +329,48 @@ export async function ensureGateway({ configPath, adaptersPath = null, stateDir,
   const spec = await createLaunchSpec(configPath, adaptersPath, stateDir, port);
   const tokenLockPath = `${spec.stateDir}.token-init.lock`;
   const tokenLock = await acquireLock(tokenLockPath, deadline);
+  let token;
   try {
-    const { token } = await loadOrCreateToken(spec.stateDir);
-    const initial = await inspectOrStartable(spec, token, deadline);
-    if (initial.result) return initial.result;
-
-    const lockPath = join(spec.stateDir, LOCK_FILE);
-    let lock;
-    let launched;
-    try {
-      lock = await acquireLock(lockPath, deadline);
-      const afterLock = await inspectOrStartable(spec, token, deadline);
-      if (afterLock.result) return afterLock.result;
-
-      launched = await spawnGateway(spec, lock.nonce, deadline);
-      while (remaining(deadline) > 0) {
-        if (launched.child.exitCode !== null) {
-          const stderr = await readFile(launched.stderrPath, 'utf8').catch(() => '');
-          if (/EADDRINUSE/i.test(stderr)) throw new Error(`Port ${port} became occupied during gateway startup (EADDRINUSE); no existing listener was replaced`);
-          throw new Error(`Gateway process exited with code ${launched.child.exitCode}; see ${launched.stderrPath}`);
-        }
-        const probe = await probeGateway(port, token, Math.max(1, Math.min(750, remaining(deadline))));
-        if (probe.kind === 'healthy') {
-          await writeJsonAtomic(join(spec.stateDir, INSTANCE_FILE), launched.metadata);
-          return { pid: launched.metadata.pid, reused: false };
-        }
-        if (probe.kind !== 'absent') throw probeFailure(port, probe);
-        await delay(Math.min(POLL_MS, remaining(deadline)));
-      }
-      throw new Error(`Gateway did not become ready within ${startupTimeoutMs}ms; see ${launched.stderrPath}`);
-    } catch (error) {
-      if (launched) {
-        await terminateMetadata(launched.metadata, Math.min(3000, startupTimeoutMs)).catch(() => {});
-        const metadataPath = join(spec.stateDir, INSTANCE_FILE);
-        const current = await readJson(metadataPath).catch(() => null);
-        if (current?.nonce === launched.metadata.nonce && current?.processMarker === launched.metadata.processMarker) await unlink(metadataPath).catch(() => {});
-      }
-      throw error;
-    } finally {
-      if (lock) await releaseOwnedLock(lockPath, lock);
-    }
+    ({ token } = await loadOrCreateToken(spec.stateDir));
   } finally {
     await releaseOwnedLock(tokenLockPath, tokenLock);
+  }
+  const initial = await inspectOrStartable(spec, token, deadline, true);
+  if (initial.result) return initial.result;
+
+  const lockPath = join(spec.stateDir, LOCK_FILE);
+  let lock;
+  let launched;
+  try {
+    lock = await acquireLock(lockPath, deadline);
+    const afterLock = await inspectOrStartable(spec, token, deadline);
+    if (afterLock.result) return afterLock.result;
+
+    launched = await spawnGateway(spec, lock.nonce, deadline);
+    while (remaining(deadline) > 0) {
+      if (launched.child.exitCode !== null) {
+        const stderr = await readFile(launched.stderrPath, 'utf8').catch(() => '');
+        if (/EADDRINUSE/i.test(stderr)) throw new Error(`Port ${port} became occupied during gateway startup (EADDRINUSE); no existing listener was replaced`);
+        throw new Error(`Gateway process exited with code ${launched.child.exitCode}; see ${launched.stderrPath}`);
+      }
+      const probe = await probeGateway(port, token, Math.max(1, Math.min(750, remaining(deadline))));
+      if (probe.kind === 'healthy') {
+        await writeJsonAtomic(join(spec.stateDir, INSTANCE_FILE), launched.metadata);
+        return { pid: launched.metadata.pid, reused: false };
+      }
+      if (probe.kind !== 'absent') throw probeFailure(port, probe);
+      await delay(Math.min(POLL_MS, remaining(deadline)));
+    }
+    throw new Error(`Gateway did not become ready within ${startupTimeoutMs}ms; see ${launched.stderrPath}`);
+  } catch (error) {
+    if (launched) {
+      await terminateMetadata(launched.metadata, Math.min(3000, startupTimeoutMs)).catch(() => {});
+      const metadataPath = join(spec.stateDir, INSTANCE_FILE);
+      const current = await readJson(metadataPath).catch(() => null);
+      if (current?.nonce === launched.metadata.nonce && current?.processMarker === launched.metadata.processMarker) await unlink(metadataPath).catch(() => {});
+    }
+    throw error;
+  } finally {
+    if (lock) await releaseOwnedLock(lockPath, lock);
   }
 }

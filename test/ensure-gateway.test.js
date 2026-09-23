@@ -37,7 +37,7 @@ async function fixture(config = { mcpServers: {} }) {
 }
 
 function options(item, overrides = {}) {
-  return { configPath: item.configPath, adaptersPath: null, stateDir: item.stateDir, port: item.port, startupTimeoutMs: 15_000, ...overrides };
+  return { configPath: item.configPath, adaptersPath: null, stateDir: item.stateDir, port: item.port, startupTimeoutMs: 20_000, ...overrides };
 }
 
 async function ensureInSeparateProcess(ensureOptions) {
@@ -81,7 +81,7 @@ test('rejects an unrelated or wrong-token listener without replacing it', { time
   const listener = createHttpServer((_request, response) => response.writeHead(401, { 'content-type': 'application/json' }).end('{"error":"unauthorized"}'));
   await new Promise((resolve, reject) => { listener.once('error', reject); listener.listen(item.port, '127.0.0.1', resolve); });
   try {
-    await assert.rejects(() => ensureGateway(options(item, { startupTimeoutMs: 3000 })), /rejected the gateway owner token|refusing to replace/i);
+    await assert.rejects(() => ensureGateway(options(item, { startupTimeoutMs: 10_000 })), /rejected the gateway owner token|refusing to replace/i);
     assert.equal(listener.listening, true);
     await assert.rejects(() => readFile(join(item.stateDir, 'gateway-instance.json'), 'utf8'), error => error.code === 'ENOENT');
   } finally {
