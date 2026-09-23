@@ -28,7 +28,8 @@ async function pluginFixture() {
   await cp(new URL('../tools/migrate-config.mjs', import.meta.url), join(root, 'tools', 'migrate-config.mjs'));
   await cp(new URL('../tools/connector.mjs', import.meta.url), join(root, 'tools', 'connector.mjs'));
   await mkdir(join(root, 'src'), { recursive: true });
-  await writeFile(join(root, 'src', 'config.js'), "export async function loadConfig() { return {}; }\n");
+  await cp(new URL('../src/config.js', import.meta.url), join(root, 'src', 'config.js'));
+  await cp(new URL('../src/config-schema.js', import.meta.url), join(root, 'src', 'config-schema.js'));
   await writeFile(join(root, 'src', 'request-budget.js'), "export const CLIENT_REQUEST_TIMEOUT_MS = 120000;\n");
   await writeFile(join(root, 'src', 'token.js'), `import { mkdir, readFile, writeFile } from 'node:fs/promises';\nimport { join } from 'node:path';\nexport async function loadOrCreateToken(stateDir) { await mkdir(stateDir, { recursive: true }); const path = join(stateDir, 'owner.token'); try { return { token: (await readFile(path, 'utf8')).trim(), path }; } catch (error) { if (error.code !== 'ENOENT') throw error; await writeFile(path, 'fixture-token\\n'); return { token: 'fixture-token', path }; } }\n`);
   await mkdir(join(root, 'adapters'), { recursive: true });
@@ -57,7 +58,7 @@ async function injectedToken(stateDir) {
 function aliases(count = 13) {
   return Object.fromEntries(Array.from({ length: count }, (_, index) => [`backend-${index + 1}`, {
     command: 'node', args: [`server-${index + 1}.js`, '--index', String(index + 1)],
-    env: { [`TOKEN_${index + 1}`]: `secret-${index + 1}` }, tools: [`tool-${index + 1}`], extra: { index }
+    env: { [`TOKEN_${index + 1}`]: `secret-${index + 1}` }, tools: [`tool-${index + 1}`]
   }]));
 }
 
@@ -89,6 +90,8 @@ test('preview is builtin-only, excludes node_modules, and writes nothing', async
 test('apply publishes a stable runtime then invokes copied migration with exact backup and 13 aliases preserved', async () => {
   const sourceRoot = await pluginFixture();
   const original = { theme: 'preserved', mcpServers: aliases(13) };
+  original.mcpServers['backend-1'].requiresExclusiveAccess = true;
+  original.mcpServers['backend-2'].requiresExclusiveAccess = false;
   const item = await sourceFixture(original);
   const result = await pluginSetup({ sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir, apply: true, tokenLoader: injectedToken });
   assert.equal(result.status, 'configured');
@@ -167,7 +170,7 @@ test('existing migrated entry and private config are detected and preserved with
   const item = await sourceFixture({ mcpServers: {} });
   const privatePath = join(item.stateDir, 'backends.json');
   const connectorPath = join(item.root, 'old-install', 'tools', 'connector.mjs');
-  const backend = { servers: { manual: { type: 'http', url: 'https://example.test/mcp', tools: ['kept'], extra: { keep: true } } } };
+  const backend = { servers: { manual: { type: 'http', url: 'https://example.test/mcp', tools: ['kept'] } } };
   await writeJson(privatePath, backend);
   const current = { mcpServers: { 'shared-mcp-gateway': {
     command: process.execPath,
@@ -408,6 +411,28 @@ test('adopt-existing refuses concurrent backend or adapter edits before client c
     }), new RegExp(`${target === 'backend' ? 'Backend' : 'Adapter'} config changed`));
     assert.deepEqual(await readFile(item.sourcePath), item.sourceBytes);
     assert.deepEqual(await readFile(target === 'backend' ? item.privatePath : item.adapterPath), changed);
+  }
+});
+
+
+test('existing gateway validates connector and private runtime config before deployment or writes', async () => {
+  for (const mutate of [
+    item => { item.source.mcpServers['shared-mcp-gateway'].timeout = 'slow'; },
+    item => { item.backend.servers['backend-1'].env = { TOKEN: 7 }; },
+    item => { item.backend.servers['backend-1'].unknown = true; }
+  ]) {
+    const item = await existingGatewayFixture();
+    item.backend = JSON.parse(item.backendBytes.toString('utf8'));
+    mutate(item);
+    await writeJson(item.sourcePath, item.source);
+    await writeJson(item.privatePath, item.backend);
+    let npmCalled = false;
+    await assert.rejects(() => pluginSetup({
+      sourceRoot: item.sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir,
+      adoptExisting: true, apply: true, npmRunner: async () => { npmCalled = true; }
+    }), /timeout|env\.TOKEN|unknown/);
+    assert.equal(npmCalled, false);
+    await assert.rejects(() => stat(join(item.stateDir, 'runtime')), error => error.code === 'ENOENT');
   }
 });
 

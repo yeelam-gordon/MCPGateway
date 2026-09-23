@@ -9,9 +9,10 @@ import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { GatewayError } from './errors.js';
-import { redactedMetadata } from './config.js';
+import { redactedMetadata, requiresExclusiveAccess as configRequiresExclusiveAccess } from './config.js';
 import { downstreamTimeout, isRequestTimeout, withTimeout } from './time.js';
 import { BACKEND_CALL_TIMEOUT_MS, requestOptions } from './request-budget.js';
+import { VERSION } from './version.js';
 
 async function firstExisting(paths) {
   for (const path of paths) { try { await access(path, constants.F_OK); return path; } catch {} }
@@ -41,6 +42,22 @@ function allows(config, toolName) {
   return config.tools === undefined || config.tools.includes('*') || config.tools.includes(toolName);
 }
 
+function catalogTimeout(name, milliseconds, cause) {
+  return new GatewayError('timeout', `List tools for ${name} timed out after ${milliseconds}ms`, cause);
+}
+
+function hasAmbiguousTransportFailure(error) {
+  for (let current = error; current; current = current.cause) {
+    const message = String(current.message ?? '');
+    if (/session not found/i.test(message)) return false;
+    const code = String(current.code ?? '').toUpperCase();
+    if (['ECONNRESET', 'EPIPE', 'ECONNABORTED', 'ENETRESET'].includes(code)) return true;
+    if (/^UND_ERR_(?:SOCKET|CONNECT_TIMEOUT|HEADERS_TIMEOUT|BODY_TIMEOUT|ABORTED)$/.test(code)) return true;
+    if (/connection (?:was )?(?:closed|reset|aborted)|socket hang up|network (?:request )?aborted/i.test(message)) return true;
+  }
+  return false;
+}
+
 export class BackendRegistry {
   constructor(configs, options = {}) {
     this.configs = configs;
@@ -66,20 +83,24 @@ export class BackendRegistry {
     return config;
   }
 
+  requiresExclusiveAccess(name) {
+    return configRequiresExclusiveAccess(this.requireConfig(name));
+  }
+
   async connect(name) {
     if (this.stopping) throw new GatewayError('gateway_stopping', 'Gateway is shutting down');
     const config = this.requireConfig(name);
     const current = this.entries.get(name);
     if (current?.state === 'ready') return current;
     if (current?.connecting) return current.connecting;
-    const entry = { state: 'connecting', client: null, transport: null, tools: null, connecting: null, closing: null, transportError: null, retireScheduled: null };
+    const entry = { state: 'connecting', client: null, transport: null, tools: null, discovery: null, connecting: null, closing: null, transportError: null, retireScheduled: null };
     this.entries.set(name, entry);
     entry.connecting = this.#connect(config, entry);
     return entry.connecting;
   }
 
   async #connect(config, entry) {
-    const client = new Client({ name: 'shared-mcp-gateway', version: '0.1.0' });
+    const client = new Client({ name: 'shared-mcp-gateway', version: VERSION });
     entry.client = client;
     try {
       if (config.url) {
@@ -125,6 +146,7 @@ export class BackendRegistry {
 
   #retire(name, entry) {
     if (this.entries.get(name) === entry) this.entries.delete(name);
+    if (entry.discovery && !entry.discovery.settled) entry.discovery.controller.abort();
     if (entry.retireScheduled) {
       clearImmediate(entry.retireScheduled);
       entry.retireScheduled = null;
@@ -138,12 +160,20 @@ export class BackendRegistry {
     return entry.closing;
   }
 
-  async #listAllTools(name, entry) {
+  async #listAllTools(name, entry, discovery) {
     const tools = [];
     const seenCursors = new Set();
     let cursor;
     for (let page = 0; page < this.maxToolPages; page += 1) {
-      const listed = await entry.client.listTools(cursor ? { cursor } : undefined, requestOptions(this.callTimeoutMs));
+      const remaining = discovery.deadline - Date.now();
+      if (remaining <= 0) {
+        discovery.timedOut = true;
+        discovery.controller.abort();
+        throw catalogTimeout(name, this.callTimeoutMs, new Error('Catalog discovery deadline exceeded'));
+      }
+      const options = requestOptions(page === 0 ? this.callTimeoutMs : remaining);
+      Object.defineProperty(options, 'signal', { value: discovery.controller.signal });
+      const listed = await entry.client.listTools(cursor ? { cursor } : undefined, options);
       tools.push(...listed.tools);
       if (tools.length > this.maxTools) throw new GatewayError('tool_limit_exceeded', `Backend ${name} returned more than ${this.maxTools} tools`);
       if (!listed.nextCursor) return tools;
@@ -154,34 +184,98 @@ export class BackendRegistry {
     throw new GatewayError('pagination_limit', `Backend ${name} exceeded ${this.maxToolPages} tool pages`);
   }
 
-  async #tools(name) {
+  #startDiscovery(name, config, entry) {
+    const controller = new AbortController();
+    const discovery = {
+      controller,
+      deadline: Date.now() + this.callTimeoutMs,
+      timer: null,
+      waiters: new Set(),
+      settled: false,
+      timedOut: false,
+      promise: null
+    };
+    discovery.timer = setTimeout(() => {
+      discovery.timedOut = true;
+      controller.abort();
+    }, this.callTimeoutMs);
+    discovery.timer.unref?.();
+    discovery.promise = (async () => {
+      try {
+        const listed = await this.#listAllTools(name, entry, discovery);
+        if (this.entries.get(name) !== entry || entry.discovery !== discovery || entry.state !== 'ready') {
+          throw new GatewayError('connect_cancelled', `Tool discovery for ${name} was cancelled`);
+        }
+        const tools = new Map(listed.filter(tool => allows(config, tool.name)).map(tool => [tool.name, tool]));
+        entry.tools = tools;
+        return tools;
+      } catch (error) {
+        if (discovery.timedOut || isRequestTimeout(error)) {
+          throw error instanceof GatewayError && error.code === 'timeout'
+            ? error
+            : catalogTimeout(name, this.callTimeoutMs, error);
+        }
+        if (controller.signal.aborted) throw new GatewayError('cancelled', `Tool discovery for ${name} was cancelled`, error);
+        await this.#retire(name, entry);
+        throw error instanceof GatewayError ? error : new GatewayError('tool_discovery_failed', `Tool discovery failed for ${name}: ${error.message}`, error);
+      } finally {
+        clearTimeout(discovery.timer);
+        discovery.settled = true;
+        if (entry.discovery === discovery) entry.discovery = null;
+      }
+    })();
+    discovery.promise.catch(() => {});
+    entry.discovery = discovery;
+    return discovery;
+  }
+
+  #awaitDiscovery(name, discovery, signal) {
+    if (signal?.aborted) return Promise.reject(new GatewayError('cancelled', `Tool discovery for ${name} was cancelled`));
+    const waiter = {};
+    discovery.waiters.add(waiter);
+    return new Promise((resolve, reject) => {
+      let finished = false;
+      const cleanup = () => {
+        if (finished) return;
+        finished = true;
+        signal?.removeEventListener('abort', onAbort);
+        discovery.waiters.delete(waiter);
+      };
+      const onAbort = () => {
+        cleanup();
+        if (!discovery.settled && discovery.waiters.size === 0) discovery.controller.abort();
+        reject(new GatewayError('cancelled', `Tool discovery for ${name} was cancelled`));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      if (signal?.aborted) onAbort();
+      discovery.promise.then(
+        tools => { cleanup(); resolve(tools); },
+        error => { cleanup(); reject(error); }
+      );
+    });
+  }
+
+  async #tools(name, signal) {
     const config = this.requireConfig(name);
     const entry = await this.connect(name);
     if (entry.tools) return entry.tools;
-    try {
-      const listed = await this.#listAllTools(name, entry);
-      entry.tools = new Map(listed.filter(tool => allows(config, tool.name)).map(tool => [tool.name, tool]));
-      return entry.tools;
-    } catch (error) {
-      if (isRequestTimeout(error)) throw downstreamTimeout(`List tools for ${name}`, this.callTimeoutMs, error);
-      await this.#retire(name, entry);
-      throw error instanceof GatewayError ? error : new GatewayError('tool_discovery_failed', `Tool discovery failed for ${name}: ${error.message}`, error);
-    }
+    const discovery = entry.discovery ?? this.#startDiscovery(name, config, entry);
+    return this.#awaitDiscovery(name, discovery, signal);
   }
 
-  async searchTools(server, query = '') {
+  async searchTools(server, query = '', signal) {
     const names = server ? [server] : [...this.configs.keys()].filter(name => this.entries.get(name)?.state === 'ready');
     const tools = [];
-    for (const name of names) for (const tool of (await this.#tools(name)).values()) {
+    for (const name of names) for (const tool of (await this.#tools(name, signal)).values()) {
       if (!query || `${tool.name} ${tool.description ?? ''}`.toLowerCase().includes(query.toLowerCase())) {
-        tools.push({ server: name, name: tool.name, description: tool.description ?? null });
+        tools.push({ server: name, name: tool.name, description: tool.description ?? null, requiresExclusiveAccess: this.requiresExclusiveAccess(name) });
       }
     }
     return { tools, note: server ? null : 'Only already-initialized backends are searched when server is omitted.' };
   }
 
-  async getTool(name, toolName) {
-    const tool = (await this.#tools(name)).get(toolName);
+  async getTool(name, toolName, signal) {
+    const tool = (await this.#tools(name, signal)).get(toolName);
     if (!tool) throw new GatewayError('tool_not_allowed', `Tool ${toolName} is unavailable or not allowed on ${name}`);
     return tool;
   }
@@ -204,8 +298,8 @@ export class BackendRegistry {
     }
   }
 
-  async callTool(name, toolName, args) {
-    const tool = await this.getTool(name, toolName);
+  async callTool(name, toolName, args, signal) {
+    const tool = await this.getTool(name, toolName, signal);
     const entry = await this.connect(name);
     const validate = this.#validatorFor(tool, name, toolName);
     if (!validate(args ?? {})) {
@@ -219,8 +313,11 @@ export class BackendRegistry {
       );
     } catch (error) {
       if (isRequestTimeout(error)) throw downstreamTimeout(`Call ${name}.${toolName}`, this.callTimeoutMs, error);
-      await this.#retire(name, entry);
-      throw error instanceof GatewayError ? error : new GatewayError('call_failed', `Call ${name}.${toolName} failed: ${error.message}`, error);
+      const failure = error instanceof GatewayError ? error : new GatewayError('call_failed', `Call ${name}.${toolName} failed: ${error.message}`, error);
+      if (hasAmbiguousTransportFailure(error)) failure.outcomeUnknown = true;
+      try { await this.#retire(name, entry); }
+      catch (cleanupError) { failure.cleanupError = cleanupError; }
+      throw failure;
     }
   }
 

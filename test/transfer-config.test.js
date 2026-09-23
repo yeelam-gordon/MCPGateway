@@ -41,8 +41,7 @@ const sourceConfig = {
       cwd: 'C:\\Users\\person\\gateway',
       env: { TENANT: 'tenant-secret', EMPTY: '' },
       tools: ['search', 'profile'],
-      disabled: false,
-      oauth: { refreshToken: 'oauth-secret' }
+      disabled: false
     },
     Remote: {
       type: 'http',
@@ -99,7 +98,7 @@ test('exported package contains no original secret values, hashes, or source mac
 
 test('import requires every and only requirement value and materializes a normal usable config', async () => {
   const item = await exported(sourceConfig);
-  const values = Object.fromEntries(item.requirements.map(requirement => [requirement.id, `value-for-${requirement.id}`]));
+  const values = Object.fromEntries(item.requirements.map(requirement => [requirement.id, requirement.field === 'url' ? 'https://restored.example.test/mcp' : `value-for-${requirement.id}`]));
   const valuesPath = join(item.root, 'values.json');
   const destination = join(item.root, 'remote', 'mcp-config.json');
   await writeJson(valuesPath, values);
@@ -155,6 +154,27 @@ test('17-alias config sanitizes absolute Node and Agency adapter paths and resto
   await importConfig({ input: item.output, output: outputPath, values: valuesPath });
   assert.deepEqual(JSON.parse(await readFile(outputPath, 'utf8')), source);
 });
+
+test('transfer preserves explicit server ownership settings and rejects invalid values', async () => {
+  const config = { mcpServers: {
+    browser: { command: 'node', requiresExclusiveAccess: true, tools: ['navigate'] },
+    isolated: { command: 'node', requiresExclusiveAccess: false },
+    shared: { command: 'node' }
+  } };
+  const item = await exported(config);
+  assert.equal(item.template.config.mcpServers.browser.requiresExclusiveAccess, true);
+  assert.equal(item.template.config.mcpServers.isolated.requiresExclusiveAccess, false);
+  assert.equal(Object.hasOwn(item.template.config.mcpServers.shared, 'requiresExclusiveAccess'), false);
+  const valuesPath = join(item.root, 'values.json');
+  const outputPath = join(item.root, 'restored.json');
+  await writeJson(valuesPath, {});
+  await importConfig({ input: item.output, output: outputPath, values: valuesPath });
+  assert.deepEqual(JSON.parse(await readFile(outputPath, 'utf8')), config);
+  await assert.rejects(
+    () => exported({ mcpServers: { browser: { command: 'node', requiresExclusiveAccess: 'true' } } }),
+    /requiresExclusiveAccess.*must be a boolean/
+  );
+});
 test('values replace exact value positions without injecting object fields', async () => {
   const item = await exported({ mcpServers: { one: { command: '/opt/private/server', env: { TOKEN: 'secret' } } } });
   const ids = item.requirements.map(value => value.id);
@@ -209,6 +229,42 @@ test('invalid config shape and entries fail before creating export output', asyn
   await assert.rejects(() => stat(output), error => error.code === 'ENOENT');
 });
 
+
+test('canonical transfer validation rejects invalid runtime fields before creating output', async () => {
+  const cases = [
+    [{ mcpServers: { bad: { command: 'node', timeout: 0 } } }, /timeout/],
+    [{ mcpServers: { bad: { url: 'not a url' } } }, /url/],
+    [{ mcpServers: { bad: { command: 'node', env: { TOKEN: 7 } } } }, /env\.TOKEN/],
+    [{ mcpServers: { bad: { command: 'node', type: 'remote' } } }, /type/],
+    [{ mcpServers: { bad: { command: 'node', unknown: true } } }, /unknown/]
+  ];
+  for (const [config, pattern] of cases) {
+    const root = await temporary();
+    const source = join(root, 'source.json');
+    const output = join(root, 'package');
+    await writeJson(source, config);
+    await assert.rejects(() => exportConfig({ source, output }), pattern);
+    await assert.rejects(() => stat(output), error => error.code === 'ENOENT');
+  }
+});
+
+test('typed URL placeholders validate as templates and require a valid materialized URL without echoing it', async () => {
+  const item = await exported({ mcpServers: { remote: { type: 'http', url: 'https://user:private@example.test/mcp' } } });
+  const requirement = item.requirements.find(value => value.field === 'url');
+  assert.ok(requirement);
+  const valuesPath = join(item.root, 'values.json');
+  const destination = join(item.root, 'output.json');
+  await writeJson(valuesPath, { [requirement.id]: 'private-malformed-url' });
+  await assert.rejects(() => importConfig({ input: item.output, output: destination, values: valuesPath }), error => {
+    assert.match(error.message, /url/);
+    assert.equal(error.message.includes('private-malformed-url'), false);
+    return true;
+  });
+  await writeJson(valuesPath, { [requirement.id]: 'https://restored.example.test/mcp' });
+  await importConfig({ input: item.output, output: destination, values: valuesPath });
+  assert.equal(JSON.parse(await readFile(destination, 'utf8')).mcpServers.remote.url, 'https://restored.example.test/mcp');
+});
+
 test('CLI parser is strict for operations, required flags, duplicates, and stray arguments', () => {
   assert.deepEqual(parseTransferArgs(['export', '--source', 'a', '--output', 'b']), { operation: 'export', source: 'a', output: 'b' });
   assert.deepEqual(parseTransferArgs(['import', '--input', 'a', '--output', 'b', '--values', 'c']), { operation: 'import', input: 'a', output: 'b', values: 'c' });
@@ -217,4 +273,3 @@ test('CLI parser is strict for operations, required flags, duplicates, and stray
   assert.throws(() => parseTransferArgs(['import', '--input', 'a', '--output', 'b', '--values', 'c', 'stray']), /Usage:/);
   assert.throws(() => parseTransferArgs(['preview']), /Usage:/);
 });
-

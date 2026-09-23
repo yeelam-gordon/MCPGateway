@@ -32,6 +32,11 @@ function configCollection(config, sourcePath) {
   return { key: keys[0], servers: config[keys[0]] };
 }
 
+async function canonicalValidator() {
+  const module = await import(`${pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'config-schema.js')).href}?pluginSetup=${Date.now()}`);
+  return module;
+}
+
 async function readJson(path, label) {
   let bytes;
   try { bytes = await readFile(path); } catch (error) {
@@ -144,7 +149,9 @@ async function inspectExistingGateway(servers, requested) {
     throw new Error('Existing gateway connector adapter settings do not match the requested setup settings');
   }
   const backend = await readJson(backendPath, 'Existing private backend config');
-  const backendServers = configCollection(backend.value, backendPath).servers;
+  const validator = await canonicalValidator();
+  validator.validateBackendConfig(own, `gateway.${SELF_NAME}`, { allowUnknown: true });
+  const backendServers = validator.validateConfig(backend.value).servers;
   const adapterPath = hasAdapters ? resolve(args[adapterIndex + 1]) : null;
   const adapter = requested.adoptExisting && adapterPath ? await readJson(adapterPath, 'Existing adapter config') : null;
   if (adapter && (!adapter.value || typeof adapter.value !== 'object' || Array.isArray(adapter.value))) {
@@ -424,7 +431,8 @@ export async function pluginSetup(options = {}) {
   if (sourcePath === privatePath) throw new Error('Source config and private backend config must be different files');
 
   const source = await readJson(sourcePath, 'Source config');
-  const { servers } = configCollection(source.value, sourcePath);
+  const collection = configCollection(source.value, sourcePath);
+  const { servers } = collection;
   const existing = await inspectExistingGateway(servers, {
     stateDir, privatePath, port, agencyAdapters: options.agencyAdapters, adoptExisting
   });
@@ -440,6 +448,9 @@ export async function pluginSetup(options = {}) {
     ...recoveryGuidance({ sourcePath, connectorPath: existing.connectorPath, stateDir, port,
       message: 'Gateway setup is already configured; existing configuration and credentials were not overwritten.' })
   };
+
+  const validator = await canonicalValidator();
+  validator.validateConfig(source.value);
 
   if (await exists(privatePath)) {
     const privateBytes = await readFile(privatePath);

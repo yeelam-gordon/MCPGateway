@@ -14,7 +14,7 @@ async function mapping(value) {
 
 test('applies selected adapters without mutating configs or allowlists', async () => {
   const profile = Object.freeze({ name: 'M365-Profile', type: 'http', url: 'https://profile.example/mcp', headers: {}, tools: Object.freeze(['GetMyDetails']), disabled: false });
-  const calendar = Object.freeze({ name: 'M365-Calendar', url: 'https://calendar.example/mcp', tools: Object.freeze(['ListEvents', 'GetRooms']) });
+  const calendar = Object.freeze({ name: 'M365-Calendar', url: 'https://calendar.example/mcp', tools: Object.freeze(['ListEvents', 'GetRooms']), requiresExclusiveAccess: true });
   const webiq = Object.freeze({ name: 'webiq', url: 'https://search.example.test/mcp', headers: Object.freeze({ 'x-apikey': 'preserved' }), tools: Object.freeze(['web']) });
   const source = new Map([['M365-Profile', profile], ['M365-Calendar', calendar], ['webiq', webiq]]);
   const result = await applyAgencyAdapters(source, await mapping({ 'M365-Profile': 'm365-user', 'M365-Calendar': 'calendar' }));
@@ -22,7 +22,7 @@ test('applies selected adapters without mutating configs or allowlists', async (
   assert.notEqual(result, source);
   assert.deepEqual(source.get('M365-Profile'), profile);
   assert.deepEqual(result.get('M365-Profile'), { name: 'M365-Profile', type: 'stdio', command: 'agency', args: ['mcp', 'm365-user'], tools: ['GetMyDetails'], disabled: false });
-  assert.deepEqual(result.get('M365-Calendar'), { name: 'M365-Calendar', command: 'agency', args: ['mcp', 'calendar'], tools: ['ListEvents', 'GetRooms'] });
+  assert.deepEqual(result.get('M365-Calendar'), { name: 'M365-Calendar', command: 'agency', args: ['mcp', 'calendar'], tools: ['ListEvents', 'GetRooms'], requiresExclusiveAccess: true });
   assert.deepEqual(result.get('webiq'), webiq);
   assert.notEqual(result.get('webiq'), webiq);
   assert.notEqual(result.get('webiq').headers, webiq.headers);
@@ -61,4 +61,3 @@ test('requires a Map and a JSON object mapping', async () => {
   await assert.rejects(() => applyAgencyAdapters({}, empty), /configsMap to be a Map/);
   await assert.rejects(() => applyAgencyAdapters(new Map(), array), /root must be a JSON object/);
 });
-

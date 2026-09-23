@@ -1,6 +1,6 @@
 {
   "name": "shared-mcp-gateway",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/cli.js",
     "setup": "node tools/plugin-setup.mjs",
-    "test": "node --test --test-timeout=120000 --test-concurrency=1 test/gateway.test.js test/agency-adapters.test.js test/ensure-gateway.test.js test/migrate-config.test.js test/plugin-setup.test.js test/plugin-package.test.js test/transfer-config.test.js test/timeout.test.js tools/connector.test.mjs",
+    "test": "node --test --test-timeout=120000 --test-concurrency=1 test/gateway.test.js test/server-lease.test.js test/catalog-discovery.test.js test/catalog-scale.test.js test/session-expiry.test.js test/agency-adapters.test.js test/ensure-gateway.test.js test/migrate-config.test.js test/plugin-setup.test.js test/plugin-package.test.js test/release-contract.test.js test/transfer-config.test.js test/timeout.test.js tools/connector.test.mjs",
     "test:live": "node --test --test-timeout=180000 --test-concurrency=1 test/live.test.js"
   },
   "dependencies": {

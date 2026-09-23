@@ -1,31 +1,19 @@
 import { readFile } from 'node:fs/promises';
-import { z } from 'zod';
+import { validateConfig } from './config-schema.js';
 
-const stringMap = z.record(z.string(), z.string());
-const backendSchema = z.object({
-  disabled: z.boolean().optional(), type: z.enum(['http', 'stdio', 'local']).optional(), command: z.string().min(1).optional(), args: z.array(z.string()).optional(),
-  cwd: z.string().min(1).optional(), env: stringMap.optional(), url: z.string().url().optional(),
-  headers: stringMap.optional(), tools: z.array(z.string().min(1)).optional(),
-  timeout: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional()
-}).strict().superRefine((value, context) => {
-  if (Boolean(value.command) === Boolean(value.url)) context.addIssue({ code: 'custom', message: 'exactly one of command or url is required' });
-});
-const configSchema = z.object({
-  mcpServers: z.record(z.string().min(1), backendSchema).optional(),
-  servers: z.record(z.string().min(1), backendSchema).optional()
-}).passthrough().superRefine((value, context) => {
-  if (!value.mcpServers && !value.servers) context.addIssue({ code: 'custom', message: 'mcpServers or servers object is required' });
-});
+export function requiresExclusiveAccess(config) {
+  return config.requiresExclusiveAccess ?? config.name === 'playwright';
+}
 
 export async function loadConfig(path, ownNames = new Set(['shared-mcp-gateway'])) {
   let json;
   try { json = JSON.parse(await readFile(path, 'utf8')); }
   catch (error) { throw new Error(`Cannot read MCP config ${path}: ${error.message}`, { cause: error }); }
-  const parsed = configSchema.safeParse(json);
-  if (!parsed.success) throw new Error(`Invalid MCP config ${path}: ${z.prettifyError(parsed.error)}`);
-  const source = parsed.data.mcpServers ?? parsed.data.servers;
+  let collection;
+  try { collection = validateConfig(json); }
+  catch (error) { throw new Error(`Invalid MCP config ${path}: ${error.message}`, { cause: error }); }
   const backends = new Map();
-  for (const [name, settings] of Object.entries(source)) {
+  for (const [name, settings] of Object.entries(collection.servers)) {
     if (!settings.disabled && !ownNames.has(name)) {
       const { timeout: _nativeClientTimeout, ...backendSettings } = settings;
       backends.set(name, Object.freeze({ name, ...backendSettings }));
@@ -36,5 +24,6 @@ export async function loadConfig(path, ownNames = new Set(['shared-mcp-gateway']
 
 export function redactedMetadata(config, state) {
   return { name: config.name, transport: config.url ? 'http' : 'stdio', state,
-    toolAllowlistConfigured: Array.isArray(config.tools), allowedToolCount: config.tools?.length ?? null };
+    toolAllowlistConfigured: Array.isArray(config.tools), allowedToolCount: config.tools?.length ?? null,
+    requiresExclusiveAccess: requiresExclusiveAccess(config) };
 }

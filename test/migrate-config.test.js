@@ -14,7 +14,7 @@ async function fixture(config) {
   return { root, sourceConfig, stateDir, bytes };
 }
 const source = { theme: 'preserved', mcpServers: {
-  alpha: { command: 'node', args: ['server.js', '--org', 'example'], env: { TOKEN: 'top-secret' }, tools: ['one'] },
+  alpha: { command: 'node', args: ['server.js', '--org', 'example'], env: { TOKEN: 'top-secret' }, tools: ['one'], requiresExclusiveAccess: true },
   remote: { type: 'http', url: 'https://example.test/mcp', headers: { Authorization: 'Bearer hidden' }, tools: ['two'] },
   disabled: { disabled: true, command: 'node', args: ['off.js'] }
 } };
@@ -28,6 +28,7 @@ test('first apply makes exact copies and preserves backend details', async () =>
   const item = await fixture(source); const value = await migrateConfig({ sourceConfig: item.sourceConfig, stateDir: item.stateDir, apply: true, now: new Date('2026-09-22T04:00:00Z') });
   assert.deepEqual(await readFile(value.privatePath), item.bytes); assert.deepEqual(await readFile(value.backupPath), item.bytes);
   const raw = JSON.parse(await readFile(value.privatePath, 'utf8')); assert.deepEqual(raw.mcpServers.alpha.args, ['server.js', '--org', 'example']);
+  assert.equal(raw.mcpServers.alpha.requiresExclusiveAccess, true);
   assert.deepEqual(raw.mcpServers.alpha.tools, ['one']); assert.equal(raw.mcpServers.remote.headers.Authorization, 'Bearer hidden');
   const migrated = JSON.parse(await readFile(item.sourceConfig, 'utf8')); assert.equal(migrated.theme, 'preserved'); assert.deepEqual(Object.keys(migrated.mcpServers), ['shared-mcp-gateway']);
   assert.equal(migrated.mcpServers['shared-mcp-gateway'].timeout, 210000);

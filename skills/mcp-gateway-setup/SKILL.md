@@ -42,7 +42,7 @@ Set up the installed `shared-mcp-gateway` plugin without relying on the current 
    ```
 
 8. Read the apply JSON and give an explicit success or failure message. On success, report the top-level `sourcePath`, `backupPath`, `manifestPath`, `runtimePath`, copyable safely quoted PowerShell `rollbackCommand`, and exact `readinessCommand`. `--apply` installs the stable runtime and migrates the MCP configuration; it is not merely a plugin download. The script copies the runtime to `<stateDir>\runtime\<contentHash>`, runs a 120-second bounded `npm ci --omit=dev --ignore-scripts --no-audit --no-fund`, and invokes the copied migration implementation. It does not start the gateway daemon directly; after the client restarts, the connector starts or reuses the owned gateway.
-9. Ask the user to restart Copilot CLI, then use the gateway in this order: `list_servers`, focused `search_tools` for one alias, `get_tool_schema` for one selected tool, then `call_tool`. Do not fetch a whole backend catalog when a focused search is enough.
+9. Ask the user to restart Copilot CLI, then use the gateway in this order: `list_servers`, focused `search_tools` for one alias, `get_tool_schema` for one selected tool, then `call_tool`. If discovery reports `requiresExclusiveAccess: true`, call `claim_server` with that server alias once before the workflow and `release_server` after its calls finish. Non-exclusive servers need no claim. Do not fetch a whole backend catalog when a focused search is enough.
 
 ## Options
 
@@ -97,6 +97,8 @@ Use only the exact `rollbackCommand` and paths returned by apply or failure JSON
 - The gateway is a global connector for native clients sharing the same Copilot home. It does not modify Agency defaults/plugins or Memory Assistant, and it does not relocate history.
 - A gateway approval can reach any downstream tool permitted by the selected alias's configured allowlist; it is not a separate CLI approval boundary per downstream tool.
 - Do not hardcode a server count, port beyond the selected/default value, or assume WorkIQ is present.
+- Preserve each backend's `requiresExclusiveAccess` setting. Only the legacy alias `playwright` defaults to exclusive when unset; renamed browser aliases require an explicit setting. Standard MCP input schemas do not declare this gateway ownership policy.
+- Do not retry an exclusive workflow or release its server after an unknown-outcome timeout. Report the uncertainty and require an idle-time gateway restart. Client disconnect is not proof that the underlying operation stopped.
 
 ## Troubleshooting
 

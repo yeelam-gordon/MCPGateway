@@ -14,7 +14,7 @@ import { afterEach, test } from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { BackendRegistry } from '../src/backend-registry.js';
-import { loadConfig } from '../src/config.js';
+import { loadConfig, requiresExclusiveAccess } from '../src/config.js';
 import { createGateway } from '../src/gateway-server.js';
 import { loadOrCreateToken } from '../src/token.js';
 const closers = [];
@@ -65,8 +65,17 @@ test('creates and reuses the exact owner token file', async () => {
   const first = await loadOrCreateToken(directory); const second = await loadOrCreateToken(directory);
   assert.equal(first.path, join(directory, 'owner.token')); assert.equal(first.token, second.token); assert.match(first.token, /^[A-Za-z0-9_-]{40,}$/);
 });
-test('validates config and skips disabled and self entries', async () => {
+test('validates config, resolves exclusivity, and skips disabled and self entries', async () => {
   const { config } = await fixture(); const loaded = await loadConfig(config); assert.deepEqual([...loaded.keys()], ['fake', 'playwright']);
+  assert.equal(requiresExclusiveAccess(loaded.get('fake')), false);
+  assert.equal(requiresExclusiveAccess(loaded.get('playwright')), true);
+  const directory = await mkdtemp(join(tmpdir(), 'mcp-gateway-config-'));
+  const optOut = join(directory, 'opt-out.json');
+  await writeFile(optOut, JSON.stringify({ mcpServers: { playwright: { command: 'node', requiresExclusiveAccess: false } } }));
+  assert.equal(requiresExclusiveAccess((await loadConfig(optOut)).get('playwright')), false);
+  const invalid = join(directory, 'invalid.json');
+  await writeFile(invalid, JSON.stringify({ mcpServers: { browser: { command: 'node', requiresExclusiveAccess: 'yes' } } }));
+  await assert.rejects(() => loadConfig(invalid), /requiresExclusiveAccess/);
   await assert.rejects(() => loadConfig(join(tmpdir(), 'missing-mcp-config.json')), /Cannot read MCP config/);
 });
 test('two clients single-flight one backend and disconnect independently', async () => {
@@ -213,9 +222,9 @@ test('rejects bad auth, Origin, and Host without token leakage', async () => {
 });
 test('isolates Playwright for a full client workflow', async () => {
   const { endpoint, token } = await start(); const a = await connect(endpoint, token); const b = await connect(endpoint, token);
-  assert.equal((await a.callTool({ name: 'claim_playwright', arguments: {} })).content[0].text === '{"claimed":true}', true);
-  assert.equal(errorOf(await b.callTool({ name: 'claim_playwright', arguments: {} })), 'lease_busy');
+  assert.equal((await a.callTool({ name: 'claim_server', arguments: { server: 'playwright' } })).content[0].text === '{"claimed":true,"server":"playwright"}', true);
+  assert.equal(errorOf(await b.callTool({ name: 'claim_server', arguments: { server: 'playwright' } })), 'lease_busy');
   assert.equal(errorOf(await b.callTool({ name: 'call_tool', arguments: { server: 'playwright', tool: 'echo', arguments: { text: 'blocked' } } })), 'lease_required');
   assert.equal((await a.callTool({ name: 'call_tool', arguments: { server: 'playwright', tool: 'echo', arguments: { text: 'owned' } } })).content[0].text, 'owned');
-  await a.testTransport.terminateSession(); assert.equal((await b.callTool({ name: 'claim_playwright', arguments: {} })).content[0].text === '{"claimed":true}', true);
+  await a.testTransport.terminateSession(); assert.equal((await b.callTool({ name: 'claim_server', arguments: { server: 'playwright' } })).content[0].text === '{"claimed":true,"server":"playwright"}', true);
 });

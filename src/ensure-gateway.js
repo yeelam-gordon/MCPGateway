@@ -7,9 +7,10 @@ import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { loadOrCreateToken } from './token.js';
+import { VERSION } from './version.js';
 
 const execFileAsync = promisify(execFile);
-const IDENTITY = Object.freeze({ name: 'shared-mcp-gateway', version: '0.1.0' });
+const IDENTITY = Object.freeze({ name: 'shared-mcp-gateway', version: VERSION });
 const LOCK_FILE = 'gateway-start.lock';
 const INSTANCE_FILE = 'gateway-instance.json';
 const POLL_MS = 75;

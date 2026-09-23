@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, posix, resolve, win32 } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { validateConfig } from '../src/config-schema.js';
 
 const FORMAT = 'shared-mcp-gateway-transfer';
 const VERSION = 1;
@@ -70,34 +71,7 @@ function inspectUrl(value) {
 }
 
 function configCollection(config) {
-  if (!isObject(config)) throw new Error('Source config must be a JSON object');
-  const keys = ['mcpServers', 'servers'].filter(key => Object.hasOwn(config, key));
-  if (keys.length !== 1 || !isObject(config[keys[0]])) throw new Error('Source config must contain exactly one of mcpServers or servers');
-  return { key: keys[0], servers: config[keys[0]] };
-}
-
-function validateEntry(name, entry) {
-  if (!isObject(entry)) throw new Error(`Invalid MCP server entry: ${name}`);
-  const hasCommand = typeof entry.command === 'string' && entry.command.length > 0;
-  const hasUrl = typeof entry.url === 'string' && entry.url.length > 0;
-  if (hasCommand === hasUrl) throw new Error(`Invalid MCP server entry ${name}: expected exactly one of command or url`);
-  if (entry.args !== undefined && (!Array.isArray(entry.args) || entry.args.some(value => typeof value !== 'string'))) {
-    throw new Error(`Invalid MCP server entry ${name}: args must be an array of strings`);
-  }
-  for (const field of ['env', 'headers']) if (entry[field] !== undefined && !isObject(entry[field])) {
-    throw new Error(`Invalid MCP server entry ${name}: ${field} must be an object`);
-  }
-  if (entry.cwd !== undefined && typeof entry.cwd !== 'string') throw new Error(`Invalid MCP server entry ${name}: cwd must be a string`);
-  if (entry.disabled !== undefined && typeof entry.disabled !== 'boolean') throw new Error(`Invalid MCP server entry ${name}: disabled must be a boolean`);
-  if (entry.tools !== undefined && (!Array.isArray(entry.tools) || entry.tools.some(value => typeof value !== 'string'))) {
-    throw new Error(`Invalid MCP server entry ${name}: tools must be an array of strings`);
-  }
-}
-
-function validateConfig(config) {
-  const collection = configCollection(config);
-  for (const [name, entry] of Object.entries(collection.servers)) validateEntry(name, entry);
-  return collection;
+  return validateConfig(config);
 }
 
 async function readJson(path, label) {
@@ -166,7 +140,7 @@ function sanitizer() {
         });
         continue;
       }
-      if (['tools', 'type', 'disabled', 'timeout'].includes(key)) output[key] = child;
+      if (['tools', 'type', 'disabled', 'timeout', 'requiresExclusiveAccess'].includes(key)) output[key] = child;
       else if (['command', 'url', 'cwd'].includes(key) && typeof child === 'string') output[key] = knownString(child, { server, field: key });
       else if (isSensitiveKey(key)) output[key] = redact(server, key, 'credential or authentication field');
       else output[key] = walk(child, { server, field: key });
@@ -203,12 +177,23 @@ function collectPlaceholders(value, output = []) {
   return output;
 }
 
+function templateValidationCopy(value, field = '') {
+  if (typeof value === 'string' && PLACEHOLDER_PATTERN.test(value)) {
+    if (field === 'url') return 'https://placeholder.invalid/mcp';
+    return 'placeholder';
+  }
+  if (Array.isArray(value)) return value.map(item => templateValidationCopy(item, field));
+  if (!isObject(value)) return value;
+  return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, templateValidationCopy(child, key)]));
+}
+
 function validatePackage(template, manifest) {
   if (!isObject(template) || template.format !== FORMAT || template.version !== VERSION || !isObject(template.config)) {
     throw new Error('Unsupported or malformed template.json');
   }
   if (!Array.isArray(manifest)) throw new Error('Unsupported or malformed requirements.json');
-  const collection = validateConfig(template.config);
+  collectPlaceholders(template.config);
+  const collection = validateConfig(templateValidationCopy(template.config));
   if (template.collection !== collection.key) throw new Error('Template collection metadata does not match its config');
   const placeholders = collectPlaceholders(template.config);
   const placeholderSet = new Set(placeholders);
@@ -315,4 +300,3 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   main(process.argv.slice(2)).then(result => process.stdout.write(`${JSON.stringify(result, null, 2)}\n`))
     .catch(error => { process.stderr.write(`Transfer failed: ${error.message}\n`); process.exitCode = 1; });
 }
-

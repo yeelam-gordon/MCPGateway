@@ -128,6 +128,7 @@ test('keeps Playwright locked after a timeout with unknown outcome', async () =>
   let downstreamCalls = 0;
   const registry = {
     list: () => [],
+    requiresExclusiveAccess: name => { if (name !== 'playwright') throw Object.assign(new Error('unknown'), { code: 'unknown_server' }); return true; },
     searchTools: async () => ({ tools: [] }),
     getTool: async () => ({ name: 'mutate' }),
     async callTool() {
@@ -146,15 +147,15 @@ test('keeps Playwright locked after a timeout with unknown outcome', async () =>
   await client.connect(transport);
   closers.push(() => client.close(), () => gateway.close());
 
-  await client.callTool({ name: 'claim_playwright', arguments: {} });
+  await client.callTool({ name: 'claim_server', arguments: { server: 'playwright' } });
   const first = decode(await client.callTool({ name: 'call_tool', arguments: { server: 'playwright', tool: 'mutate', arguments: {} } }));
   assert.equal(first.error, 'timeout');
   assert.match(first.message, /outcome is unknown/);
   const second = decode(await client.callTool({ name: 'call_tool', arguments: { server: 'playwright', tool: 'mutate', arguments: {} } }));
-  assert.equal(second.error, 'playwright_outcome_unknown');
+  assert.equal(second.error, 'server_outcome_unknown');
   assert.equal(downstreamCalls, 1);
-  const release = decode(await client.callTool({ name: 'release_playwright', arguments: {} }));
-  assert.deepEqual(release, { released: false, pending: true });
+  const release = decode(await client.callTool({ name: 'release_server', arguments: { server: 'playwright' } }));
+  assert.equal(release.error, 'server_outcome_unknown');
 });
 
 test('connector forwards abort and the larger explicit request budget', async () => {

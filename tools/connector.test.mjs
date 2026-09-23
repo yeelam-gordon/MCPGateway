@@ -16,10 +16,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 
-async function startFakeGateway(token) {
+async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
   const app = createMcpExpressApp({ host: '127.0.0.1', allowedHosts: undefined });
   const sessions = new Map();
   let deletes = 0;
+  let listCalls = 0;
+  let failHeartbeatRequests = false;
   app.use((request, response, next) => request.headers.authorization === `Bearer ${token}` ? next() : response.status(401).json({ error: 'unauthorized' }));
   app.use('/mcp', express.json({ limit: '64kb' }));
   app.all('/mcp', async (request, response) => {
@@ -27,7 +29,7 @@ async function startFakeGateway(token) {
     let session = id ? sessions.get(id) : null;
     if (!session && request.method === 'POST' && request.body?.method === 'initialize') {
       const server = new McpServer({ name: 'fake-shared-gateway', version: '1' });
-      server.registerTool('list_servers', {}, async () => ({ content: [{ type: 'text', text: '[]' }], structuredContent: { servers: [] } }));
+      server.registerTool('list_servers', {}, async () => { listCalls += 1; return { content: [{ type: 'text', text: '[]' }], structuredContent: { servers: [] } }; });
       server.registerTool('search_tools', { inputSchema: { query: z.string().optional() } }, async () => ({ content: [{ type: 'text', text: '[]' }] }));
       server.registerTool('get_tool_schema', { inputSchema: { server: z.string(), tool: z.string() } }, async () => ({ content: [{ type: 'text', text: '{}' }] }));
       server.registerTool(
@@ -44,14 +46,18 @@ async function startFakeGateway(token) {
           structuredContent: { echoed: args.text, nested: { preserved: true } }
         })
       );
-      server.registerTool('claim_playwright', {}, async () => ({ content: [{ type: 'text', text: 'claimed' }] }));
-      server.registerTool('release_playwright', {}, async () => ({ content: [{ type: 'text', text: 'released' }] }));
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID, onsessioninitialized: sessionId => sessions.set(sessionId, { server, transport }) });
+      server.registerTool('claim_server', { inputSchema: { server: z.string() } }, async () => ({ content: [{ type: 'text', text: 'claimed' }] }));
+      server.registerTool('release_server', { inputSchema: { server: z.string() } }, async () => ({ content: [{ type: 'text', text: 'released' }] }));
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID, onsessioninitialized: sessionId => sessions.set(sessionId, { server, transport, lastActivityAt: Date.now() }) });
       transport.onclose = () => { if (transport.sessionId) sessions.delete(transport.sessionId); };
       await server.connect(transport);
       session = { server, transport };
     }
     if (!session) return response.status(400).json({ error: 'invalid_session' });
+    if (request.method === 'POST') session.lastActivityAt = Date.now();
+    if (failHeartbeatRequests && request.method === 'POST' && request.body?.method === 'tools/call' && request.body?.params?.name === 'list_servers') {
+      return response.status(503).json({ error: token });
+    }
     if (request.method === 'DELETE') {
       deletes += 1;
       sessions.delete(id);
@@ -59,12 +65,20 @@ async function startFakeGateway(token) {
     }
     await session.transport.handleRequest(request, response, request.body);
   });
+  const sweep = idleTimeoutMs > 0 ? setInterval(() => {
+    const now = Date.now();
+    for (const [id, session] of sessions) if (now - session.lastActivityAt >= idleTimeoutMs) { sessions.delete(id); void session.transport.close(); }
+  }, 10) : null;
+  sweep?.unref?.();
   const listener = await new Promise((resolve, reject) => { const server = app.listen(0, '127.0.0.1', () => resolve(server)); server.once('error', reject); });
   return {
     port: listener.address().port,
     deletes: () => deletes,
+    listCalls: () => listCalls,
+    failHeartbeats: () => { failHeartbeatRequests = true; },
     sessionCount: () => sessions.size,
     async close() {
+      clearInterval(sweep);
       await new Promise(resolve => listener.close(resolve));
     }
   };
@@ -79,7 +93,7 @@ test('forwards tools and closes only its authenticated client session', async ()
   const client = new Client({ name: 'connector-test', version: '1' });
   try {
     await client.connect(connectorTransport);
-    assert.deepEqual((await client.listTools()).tools.map(tool => tool.name).sort(), ['call_tool', 'claim_playwright', 'get_tool_schema', 'list_servers', 'release_playwright', 'search_tools']);
+    assert.deepEqual((await client.listTools()).tools.map(tool => tool.name).sort(), ['call_tool', 'claim_server', 'get_tool_schema', 'list_servers', 'release_server', 'search_tools']);
     const result = await client.callTool({ name: 'call_tool', arguments: { server: 'fake', tool: 'echo', arguments: { text: 'hello' } } });
     assert.equal(result.content[0].text, 'hello');
     assert.deepEqual(result.structuredContent, { echoed: 'hello', nested: { preserved: true } });
@@ -99,6 +113,59 @@ test('forwards tools and closes only its authenticated client session', async ()
 });
 
 
+
+
+test('heartbeat keeps an idle connector session alive until EOF cleanup', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'gateway-heartbeat-'));
+  const token = 'heartbeat-secret-token';
+  await writeFile(join(stateDir, 'owner.token'), token);
+  const gateway = await startFakeGateway(token, { idleTimeoutMs: 80 });
+  const child = spawn(process.execPath, [join(process.cwd(), 'tools', 'connector.mjs'), '--state-dir', stateDir, '--port', String(gateway.port), '--heartbeat-interval-ms', '20', '--heartbeat-timeout-ms', '50'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  try {
+    await waitFor(() => gateway.listCalls() >= 3, 3000);
+    await new Promise(resolve => setTimeout(resolve, 120));
+    assert.equal(gateway.sessionCount(), 1, stderr);
+    const exited = new Promise(resolve => child.once('exit', code => resolve(code)));
+    child.stdin.end();
+    const code = await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error('heartbeat EOF exit exceeded bound')), 4000))]);
+    assert.equal(code, 0, stderr);
+    assert.equal(gateway.deletes(), 1);
+    assert.doesNotMatch(stderr, new RegExp(token));
+  } finally {
+    if (child.exitCode === null) child.kill();
+    await gateway.close();
+  }
+});
+
+
+test('two consecutive heartbeat failures exit once with a sanitized diagnostic', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'gateway-heartbeat-failure-'));
+  const token = 'heartbeat-failure-secret-token';
+  await writeFile(join(stateDir, 'owner.token'), token);
+  const gateway = await startFakeGateway(token);
+  const child = spawn(process.execPath, [join(process.cwd(), 'tools', 'connector.mjs'), '--state-dir', stateDir, '--port', String(gateway.port), '--heartbeat-interval-ms', '20', '--heartbeat-timeout-ms', '50'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  try {
+    await waitFor(() => gateway.sessionCount() === 1, 3000);
+    gateway.failHeartbeats();
+    const code = await Promise.race([
+      new Promise(resolve => child.once('exit', exitCode => resolve(exitCode))),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('heartbeat failure exit exceeded bound')), 4000))
+    ]);
+    assert.equal(code, 1, stderr);
+    assert.equal((stderr.match(/Connector heartbeat failed twice/g) ?? []).length, 1);
+    assert.doesNotMatch(stderr, new RegExp(token));
+    assert.equal(gateway.deletes(), 1);
+  } finally {
+    if (child.exitCode === null) child.kill();
+    await gateway.close();
+  }
+});
 
 test('stdin EOF exits connector and deletes its remote session', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'gateway-eof-'));
