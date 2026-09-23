@@ -1,138 +1,156 @@
 # Shared MCP Gateway
 
-A localhost-only gateway that lets multiple Copilot or Agency CLI sessions reuse one persistent MCP backend connection per configured alias.
+**Connect Copilot to many MCP tools through one small, shared gateway.**
+
+Copilot sees **six gateway tools**, whether your configured backends provide 10, 100, or 1,000 tools. It discovers the tools it needs on demand instead of receiving every backend schema upfront.
+
+Works with ordinary **Copilot CLI**. **Agency is optional.**
 
 ## Benefits
 
-- **Less repeated startup:** clients reuse warm backend processes and HTTP connections.
-- **Smaller tool context:** clients initially see a compact gateway surface and load downstream schemas only when needed.
-- **Central local configuration:** aliases, allowlists, arguments, environment settings, and explicit organization arguments remain in one private catalog.
-- **Safe adoption:** setup previews by default, preserves the source configuration in a backup, refuses conflicting reruns, and records rollback data.
-- **Stable after plugin updates:** applied setup copies the runtime outside the plugin cache so uninstalling or refreshing the plugin does not break configured clients.
-- **Shared browser coordination:** Playwright workflows use an exclusive gateway lease instead of competing for one browser state.
-
-```text
-Copilot or Agency
-  -> thin stdio connector per CLI
-  -> authenticated localhost gateway
-  -> lazy shared backend per alias
-```
+- **A fixed-size tool interface:** adding more backend tools does not add more gateway tool definitions to Copilot.
+- **On-demand schemas:** search tool summaries first, then fetch the full schema of the selected tool.
+- **Less repeated startup:** multiple CLI sessions reuse one local gateway and its initialized backend connections.
+- **Warm backends:** closing one client does not shut down the shared backend fleet.
+- **One private configuration:** preserve your server aliases, tool allowlists, credentials, and organization-specific arguments.
+- **Backed-up setup:** preview changes before applying them and receive an exact manual restore command.
 
 ## How to install
 
-Install the plugin from a terminal:
+### 1. Check prerequisites
+
+You need:
+
+- Copilot CLI with plugin support.
+- Node.js **24 or newer**, npm, and Git.
+- An existing Copilot MCP configuration and any authentication its servers require.
+
+Windows is the primary tested platform. You do **not** need Agency, a custom PowerShell profile, or a special Copilot agent.
+
+### 2. Install the plugin
+
+Run these commands in your **terminal**, not inside the Copilot chat:
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
 copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
-Or install it interactively inside Copilot CLI:
+### 3. Run setup inside Copilot
 
-```text
-/plugin marketplace add yeelam-gordon/MCPGateway
-/plugin install shared-mcp-gateway@mcp-gateway
+Start Copilot:
+
+```powershell
+copilot
 ```
 
-The shorter `copilot plugin install yeelam-gordon/MCPGateway` also works in the tested CLI, but it displays a direct-install deprecation notice. The marketplace commands above are the recommended path.
-
-Plugin installation only downloads the plugin. It does not rewrite MCP configuration or install the gateway runtime dependencies. After installation, run:
+Then enter this command **inside Copilot**:
 
 ```text
 /mcp-gateway-setup
 ```
 
-The setup skill previews the operation first. Preview performs no npm or network operation and writes nothing; it shows the source MCP config, private state location, backend count, and proposed stable runtime path. Approve the explicit apply step to install the runtime outside the plugin cache, create an exact backup of the existing MCP config, and migrate that config to the shared gateway connector.
+Review the preview and approve the migration. Setup will:
 
-When apply succeeds, setup prints the exact top-level `sourcePath`, `backupPath`, `manifestPath`, `runtimePath`, `rollbackCommand`, `restartNewCli`, and `runtimeHealthPowerShell` values. Restart Copilot CLI as instructed, then run the printed health command. If the migrated setup does not work, close Copilot CLI and run the printed `rollbackCommand` to copy the exact backup back to `sourcePath`.
+1. Install the gateway runtime in a stable, private local directory.
+2. Back up your existing MCP configuration.
+3. Preserve the backend definitions in a private catalog.
+4. Replace the client configuration with the shared gateway connector.
+5. Print the exact backup path, restore command, and health-check command.
 
-Use your normal GitHub Git access to install the plugin. `copilot mcp add` is not a substitute for this setup: it registers a command but does not migrate the existing MCP configuration or install this gateway's runtime dependencies.
+Installing the plugin alone does not change your MCP routing; the setup step performs the migration.
 
-## Using the gateway
+### 4. Reopen Copilot and use it normally
 
-Use the smallest discovery path needed:
+Close and reopen Copilot, then ask:
 
-1. `list_servers` to see configured aliases without starting all backends.
-2. `search_tools` with one alias and a focused query.
-3. `get_tool_schema` for the selected tool.
-4. `call_tool` with validated arguments.
-
-`claim_playwright` and `release_playwright` coordinate exclusive browser workflows. WorkIQ is available only when it already exists in the migrated local catalog. If asked to add WorkIQ or an Agency adapter, first verify a supported local mapping; the gateway does not promise any particular backend or server count.
-
-The migration preserves aliases and configured tool allowlists. It changes the global native-client MCP configuration for clients using the same Copilot home, but does not relocate Copilot history or modify Agency defaults/plugins, Memory Assistant, or approval defaults. Plugin uninstall removes the setup skill, not an applied stable runtime, to avoid breaking active client configuration.
-
-## Move an existing checkout installation
-
-Already using the gateway from a development checkout? Install or update the plugin, then ask `/mcp-gateway-setup` to adopt the existing installation. The skill previews the explicit `--adopt-existing` operation before applying it.
-
-```powershell
-node "<plugin-root>\tools\plugin-setup.mjs" --adopt-existing
-node "<plugin-root>\tools\plugin-setup.mjs" --adopt-existing --apply
+```text
+Use the shared MCP gateway to list my configured servers.
 ```
 
-Adoption installs the plugin's runtime into the private state directory and changes the client connector to that stable location. Existing backend definitions and credentials stay in place. It backs up the client configuration and preserves any existing adapter mapping outside the development checkout. It neither deletes the checkout nor changes the shared PowerShell profile.
+Then request a task using one of your servers. **No separate gateway terminal is required:** the first connector starts the gateway in the background, and later clients reuse it.
 
-Finish active gateway work before stopping the old owned daemon and starting the new connector. Existing clients need restarting to pick up the new connector path. The printed backup and rollback information remains available if validation fails.
+The gateway uses **your own configured servers**. It does not install a predefined collection of services or supply their credentials.
 
-For an existing installation, setup without `--adopt-existing` remains a read-only compatibility check; installing a newer plugin does not silently replace a running gateway.
+## Why only six tools?
 
-## Reuse configuration on another machine
+There are **four discovery/execution tools**, plus **two browser-coordination tools**:
 
-Export the **backend catalog**, not the connector-only Copilot configuration:
+| Tool | Purpose |
+|---|---|
+| `list_servers` | List configured backend aliases and their state without starting all backends. |
+| `search_tools` | Search a named backend for matching tool names and descriptions. |
+| `get_tool_schema` | Retrieve the full input schema for one selected tool. |
+| `call_tool` | Invoke that backend tool while enforcing its configured allowlist and validating arguments. |
+| `claim_playwright` | Reserve the shared Playwright backend for one client's browser workflow. |
+| `release_playwright` | Release that reservation after the workflow finishes. |
+
+**Six is a design choice, not an MCP requirement.** Separating discovery, schema lookup, and execution keeps each operation clear and avoids returning large schemas when only a summary is needed. The two Playwright tools prevent different clients from interleaving actions in the same browser workflow.
+
+```text
+Copilot A ─┐                              ┌─ Backend A: many tools
+Copilot B ─┼─ 6 gateway tools ── gateway ─┼─ Backend B: many tools
+Copilot C ─┘                              └─ Backend C: many tools
+```
+
+For example, with 1,000 backend tools, Copilot can search one server, receive a few matching summaries, fetch one schema, and call that tool. **The gateway still exposes six tools; the backend catalog can grow without enlarging that initial interface.** Copilot calls through `call_tool` rather than registering every discovered tool as a new native tool.
+
+The gateway may retrieve a backend's complete catalog internally and cache it in memory. Use focused searches: an empty or broad query can still return many summaries. The fixed tool count does not mean unlimited capacity or constant memory/token usage for every request.
+
+## What changes on your machine?
+
+The default locations are:
+
+| Location | Contents |
+|---|---|
+| `$HOME\.copilot\mcp-config.json` | The gateway connector instead of individual backend entries. Setup respects `COPILOT_HOME` when set. |
+| `$HOME\.shared-mcp-gateway\backends.json` | Your original backend definitions; may contain credentials. |
+| `$HOME\.shared-mcp-gateway\runtime\...` | Installed runtime, independent of the plugin cache. |
+| `$HOME\.shared-mcp-gateway\backups\...` | Original configuration and rollback records. |
+
+`$HOME` means your user home directory, not your current folder. Keep gateway state and configuration backups private.
+
+Setup preserves conversation history and existing approval settings. Agency integration is opt-in with `--agency-adapters`; normal Copilot users do not need it. Existing Agency plugins/defaults may still add their own MCPs.
+
+## If setup does not work
+
+Use the **exact backup path and `rollbackCommand` printed by setup**. Close Copilot before restoring its original configuration, then reopen it.
+
+If setup fails after creating a backup, it prints recovery information. If it fails before creating one, it reports that the source configuration was not replaced. Do not delete your backend catalog as a troubleshooting step.
+
+Uninstalling the plugin removes the setup skill, not the installed runtime, so existing clients are not left pointing at a deleted program.
+
+## Existing installations and other machines
+
+**Moving from a development checkout?** Update the plugin, run `/mcp-gateway-setup`, and ask it to adopt your existing installation. The explicit `--adopt-existing` workflow previews and backs up the connector change while retaining your backend data. It does not delete the checkout or edit shell profiles.
+
+**Setting up another machine?** Normally, install the plugin there and migrate that machine's own MCP configuration. To reuse a catalog, the plugin includes `tools\transfer-config.mjs`:
 
 ```powershell
+# On the source machine: export backend definitions, not the connector.
 node "<plugin-root>\tools\transfer-config.mjs" export `
-  --source "$HOME\.shared-mcp-gateway\backends.json" `
-  --output ".\gateway-transfer"
-```
+  --source "$HOME\.shared-mcp-gateway\backends.json" --output ".\gateway-transfer"
 
-Copy the generated `gateway-transfer` directory to the destination. It contains `template.json` and `requirements.json`, preserving server aliases, tool allowlists, and disabled settings. Credentials, environment values, local paths, and unclassified argument values become placeholders instead of being copied. Review the template before sharing it; ordinary endpoints and organization settings can still identify private integrations.
-
-On the destination, create a local `values.json` object mapping every requirement ID to its destination-specific string value. Keep that file private. Then materialize a new configuration:
-
-```powershell
+# On the destination: fill a private values.json using requirements.json.
 node "<plugin-root>\tools\transfer-config.mjs" import `
-  --input ".\gateway-transfer" --values ".\values.json" `
-  --output ".\backends.ready.json"
+  --input ".\gateway-transfer" --values ".\values.json" --output ".\backends.ready.json"
 ```
 
-Import refuses missing or extra values and never overwrites an existing output file. Review the materialized configuration, back up the destination's normal MCP configuration, and merge the intended backend definitions into it before running `/mcp-gateway-setup`. An already-migrated destination instead needs a backed-up merge into its private backend catalog and an owned-gateway restart. Do not replace that catalog with a connector entry or drop destination-only servers. Do not copy `owner.token`, instance manifests, locks, browser profiles, or OAuth caches.
+`<plugin-root>` is the installed plugin directory reported by Copilot; ask the setup skill to locate it rather than guessing. The export replaces credentials, local paths, and unclassified argument values with placeholders. Review it before sharing because ordinary endpoints and organization names may still be private.
 
-## Manual developer setup
+Back up and merge the materialized definitions into the destination's configuration before running setup. For an already-migrated destination, merge into its private backend catalog instead. Never copy gateway tokens, process manifests, locks, browser profiles, or OAuth caches between machines.
 
-For repository development or when plugin installation is unavailable:
+## Development
 
 ```powershell
 git clone https://github.com/yeelam-gordon/MCPGateway
 cd .\MCPGateway
 npm ci
 npm test
-node .\tools\migrate-config.mjs
+npm run setup
 ```
 
-Review the dry-run JSON before applying:
-
-```powershell
-node .\tools\migrate-config.mjs --apply
-```
-
-Optional migration arguments are `--source-config PATH`, `--state-dir PATH`, `--port N`, and `--agency-adapters`. Use Agency adapters only for verified locally supported aliases; do not guess service equivalence or broaden permissions.
-
-After migration, start `copilot` normally. To check an existing installation, use the connector, state directory, and port recorded by setup:
-
-```powershell
-node <stable-runtime>\tools\connector.mjs --state-dir <state-dir> --port <port> --check
-```
-
-The connector auto-starts only when invoked with its explicit auto-start configuration. A health check confirms the gateway, not every downstream backend. Raw HTTP backends may still require their normal authentication.
-
-## Result and rollback
-
-Successful apply output includes the exact top-level `sourcePath`, `backupPath`, `manifestPath`, `runtimePath`, `rollbackCommand`, `restartNewCli`, and `runtimeHealthPowerShell` values, plus an explicit success `message`. If setup fails before creating a backup, `backupPath`, `manifestPath`, and `rollbackCommand` are `null` and the output states that the source config was not replaced. If migration fails after backup creation, the failure output includes the exact backup path and the copyable PowerShell `rollbackCommand` and an explicit failure `message` immediately.
-
-Restore is never performed silently. Close Copilot CLI before running the returned `rollbackCommand`. Do not broadly kill Node processes or recursively delete Copilot or gateway state.
-
-Measured gateway timings are not whole-CLI startup timings. Network, authentication, plugin loading, and model work still contribute to end-to-end latency.
+`npm run setup` previews only. To apply after reviewing it, use `npm run setup -- --apply`. See [MIGRATION_PROMPT.md](MIGRATION_PROMPT.md) for an agent-guided workflow.
 
 ## License
 
