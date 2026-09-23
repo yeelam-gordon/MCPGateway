@@ -53,6 +53,7 @@ Append only options required by the user's request:
 --state-dir PATH
 --port N
 --agency-adapters
+--adopt-existing
 ```
 
 Use `--agency-adapters` only when the user asks to add Agency support and the local catalog contains verified supported aliases. WorkIQ is not guaranteed to exist in every installation. Preserve explicit aliases, including Azure DevOps organization-specific aliases; never guess that two services are equivalent.
@@ -67,10 +68,19 @@ Use `--agency-adapters` only when the user asks to add Agency support and the lo
 ## Existing Installation and Health
 
 - If setup returns `already-configured`, do not overwrite or describe it as upgraded. Report `connectorPath`, `runtimePath`, `privatePath`, and `stateDir` from the JSON.
+- If the user explicitly asks to move an existing checkout installation or adopt a newer plugin runtime, preview with `--adopt-existing`, review the returned backup and adapter paths, and obtain approval before adding `--apply`. Preserve the backend catalog byte-for-byte; do not feed the connector-only configuration into a fresh migration.
+- After adoption, finish active client work, stop only the old owned daemon using its recorded state directory and port, then start the new connector using the generated MCP entry. Verify backend aliases, an allowed harmless call, and shared process reuse before declaring success. Do not delete the development checkout, backend data, or old runtime.
+- Do not modify unrelated shell profiles during runtime adoption. If other client configurations still reference the old runtime, report them and update only their connector paths when the user has authorized that integration.
 - For a newly configured installation, execute the returned `readinessCommand` exactly. For `already-configured`, run `connectorPath` with the returned `stateDir`, the requested or default port that setup verified, and `--check`. Do not invent paths or rely on the plugin cache.
 - Discovery proves only that an alias is configured. Report exactly which backend and harmless read-only tool, if any, were exercised.
 
-## Rollback
+## Transferring a backend catalog
+
+Use the plugin's [transfer utility](../../tools/transfer-config.mjs) when asked to prepare configuration for another machine. Export from the backend catalog, never from a connector-only MCP configuration. Inspect the exported template before sharing; placeholders exclude credentials and local paths, but ordinary endpoints and organization names may still be private.
+
+On the destination, collect replacement values locally for every requirement. Do not print them, copy OAuth caches, or guess credentials. Import into a new file, compare its aliases and tool allowlists with the intended catalog, then preview setup against the chosen destination MCP configuration. Back up and merge any destination servers before replacing them. A transfer package is configuration data, not a copy of a running gateway.
+
+## Rollback procedure
 
 Use only the exact `rollbackCommand` and paths returned by apply or failure JSON. Show the user the exact source and backup paths before manual restore.
 

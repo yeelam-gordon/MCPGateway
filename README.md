@@ -61,6 +61,43 @@ Use the smallest discovery path needed:
 
 The migration preserves aliases and configured tool allowlists. It changes the global native-client MCP configuration for clients using the same Copilot home, but does not relocate Copilot history or modify Agency defaults/plugins, Memory Assistant, or approval defaults. Plugin uninstall removes the setup skill, not an applied stable runtime, to avoid breaking active client configuration.
 
+## Move an existing checkout installation
+
+Already using the gateway from a development checkout? Install or update the plugin, then ask `/mcp-gateway-setup` to adopt the existing installation. The skill previews the explicit `--adopt-existing` operation before applying it.
+
+```powershell
+node "<plugin-root>\tools\plugin-setup.mjs" --adopt-existing
+node "<plugin-root>\tools\plugin-setup.mjs" --adopt-existing --apply
+```
+
+Adoption installs the plugin's runtime into the private state directory and changes the client connector to that stable location. Existing backend definitions and credentials stay in place. It backs up the client configuration and preserves any existing adapter mapping outside the development checkout. It neither deletes the checkout nor changes the shared PowerShell profile.
+
+Finish active gateway work before stopping the old owned daemon and starting the new connector. Existing clients need restarting to pick up the new connector path. The printed backup and rollback information remains available if validation fails.
+
+For an existing installation, setup without `--adopt-existing` remains a read-only compatibility check; installing a newer plugin does not silently replace a running gateway.
+
+## Reuse configuration on another machine
+
+Export the **backend catalog**, not the connector-only Copilot configuration:
+
+```powershell
+node "<plugin-root>\tools\transfer-config.mjs" export `
+  --source "$HOME\.shared-mcp-gateway\backends.json" `
+  --output ".\gateway-transfer"
+```
+
+Copy the generated `gateway-transfer` directory to the destination. It contains `template.json` and `requirements.json`, preserving server aliases, tool allowlists, and disabled settings. Credentials, environment values, local paths, and unclassified argument values become placeholders instead of being copied. Review the template before sharing it; ordinary endpoints and organization settings can still identify private integrations.
+
+On the destination, create a local `values.json` object mapping every requirement ID to its destination-specific string value. Keep that file private. Then materialize a new configuration:
+
+```powershell
+node "<plugin-root>\tools\transfer-config.mjs" import `
+  --input ".\gateway-transfer" --values ".\values.json" `
+  --output ".\backends.ready.json"
+```
+
+Import refuses missing or extra values and never overwrites an existing output file. Review the materialized configuration, back up the destination's normal MCP configuration, and merge the intended backend definitions into it before running `/mcp-gateway-setup`. An already-migrated destination instead needs a backed-up merge into its private backend catalog and an owned-gateway restart. Do not replace that catalog with a connector entry or drop destination-only servers. Do not copy `owner.token`, instance manifests, locks, browser profiles, or OAuth caches.
+
 ## Manual developer setup
 
 For repository development or when plugin installation is unavailable:

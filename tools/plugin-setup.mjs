@@ -1,14 +1,15 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, cp, link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELF_NAME = 'shared-mcp-gateway';
 const MIN_NODE_MAJOR = 24;
-const SETUP_USAGE = 'Usage: node tools/plugin-setup.mjs [--apply] [--source-config PATH] [--state-dir PATH] [--port PORT] [--agency-adapters]';
+const CLIENT_REQUEST_TIMEOUT_MS = 210_000;
+const SETUP_USAGE = 'Usage: node tools/plugin-setup.mjs [--apply] [--adopt-existing] [--source-config PATH] [--state-dir PATH] [--port PORT] [--agency-adapters]';
 const STATIC_FILES = ['LICENSE', 'package.json', 'package-lock.json', 'tools/connector.mjs', 'tools/migrate-config.mjs'];
 const STATIC_TREES = ['src'];
 const JSON_TREES = ['adapters'];
@@ -39,6 +40,33 @@ async function readJson(path, label) {
   }
   try { return { bytes, value: JSON.parse(bytes.toString('utf8')) }; }
   catch { throw new Error(`Cannot parse ${label.toLowerCase()} ${path}: invalid JSON`); }
+}
+
+const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+const timestamp = date => date.toISOString().replaceAll(':', '-');
+
+async function secureDirectory(path, platform) {
+  await mkdir(path, { recursive: true, mode: 0o700 });
+  if (platform !== 'win32') await chmod(path, 0o700);
+}
+
+async function atomicWrite(path, bytes, platform) {
+  const staged = join(dirname(path), `.${basename(path)}.${process.pid}.${Date.now()}.tmp`);
+  await writeFile(staged, bytes, { flag: 'wx', mode: 0o600 });
+  if (platform !== 'win32') await chmod(staged, 0o600);
+  try { await rename(staged, path); } catch (error) { await rm(staged, { force: true }); throw error; }
+}
+
+async function atomicCreate(path, bytes, platform) {
+  const staged = join(dirname(path), `.${basename(path)}.${process.pid}.${Date.now()}.tmp`);
+  await writeFile(staged, bytes, { flag: 'wx', mode: 0o600 });
+  if (platform !== 'win32') await chmod(staged, 0o600);
+  try { await link(staged, path); } finally { await rm(staged, { force: true }); }
+}
+
+function isWithin(path, parent) {
+  const rel = relative(resolve(parent), resolve(path));
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
 function powershellLiteral(value) {
@@ -107,7 +135,9 @@ async function inspectExistingGateway(servers, requested) {
   if (backendPath !== requested.privatePath || entryStateDir !== requested.stateDir || entryPort !== requested.port) {
     throw new Error('Existing gateway connector settings do not match the requested setup settings');
   }
-  const adapterIndex = args.indexOf('--adapters');
+  const adapterIndexes = args.map((value, index) => value === '--adapters' ? index : -1).filter(index => index >= 0);
+  if (adapterIndexes.length > 1) throw new Error('Existing gateway connector has invalid --adapters settings');
+  const adapterIndex = adapterIndexes[0] ?? -1;
   const hasAdapters = adapterIndex >= 0;
   if ((requested.agencyAdapters !== undefined && hasAdapters !== requested.agencyAdapters)
       || (hasAdapters && !args[adapterIndex + 1])) {
@@ -115,13 +145,22 @@ async function inspectExistingGateway(servers, requested) {
   }
   const backend = await readJson(backendPath, 'Existing private backend config');
   const backendServers = configCollection(backend.value, backendPath).servers;
+  const adapterPath = hasAdapters ? resolve(args[adapterIndex + 1]) : null;
+  const adapter = requested.adoptExisting && adapterPath ? await readJson(adapterPath, 'Existing adapter config') : null;
+  if (adapter && (!adapter.value || typeof adapter.value !== 'object' || Array.isArray(adapter.value))) {
+    throw new Error(`Existing adapter config must be a JSON object: ${adapterPath}`);
+  }
   return {
     status: 'already-configured',
     migrationStatus: 'already-migrated',
     backendCount: Object.values(backendServers).filter(entry => !entry?.disabled).length,
     connectorPath: resolve(connectorPath),
     runtimePath: dirname(dirname(resolve(connectorPath))),
-    privatePath: backendPath
+    privatePath: backendPath,
+    entry: own,
+    backendBytes: backend.bytes,
+    adapterPath,
+    adapterBytes: adapter?.bytes ?? null
   };
 }
 
@@ -189,7 +228,7 @@ async function installDependencies(runtimePath, options = {}) {
   });
 }
 
-async function publishedRuntime(runtimeRoot, hash) {
+async function publishedRuntime(runtimeRoot, hash, allowDifferentRuntime = false) {
   if (!(await exists(runtimeRoot))) return null;
   for (const entry of await readdir(runtimeRoot, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name.startsWith('.staging-')) continue;
@@ -198,15 +237,15 @@ async function publishedRuntime(runtimeRoot, hash) {
     if (!(await exists(markerPath))) throw new Error(`Refusing to overwrite an unowned runtime directory: ${path}`);
     const marker = await readJson(markerPath, 'Runtime marker');
     if (marker.value?.contentHash !== entry.name) throw new Error(`Runtime marker does not match its directory: ${path}`);
-    if (entry.name !== hash) throw new Error(`A different plugin runtime is already installed at ${path}; updates require a separate explicit operation`);
-    return path;
+    if (entry.name === hash) return path;
+    if (!allowDifferentRuntime) throw new Error(`A different plugin runtime is already installed at ${path}; updates require a separate explicit operation`);
   }
   return null;
 }
 
 async function deployRuntime(plan, options) {
   const runtimeRoot = join(plan.stateDir, 'runtime');
-  const existing = await publishedRuntime(runtimeRoot, plan.contentHash);
+  const existing = await publishedRuntime(runtimeRoot, plan.contentHash, options.allowDifferentRuntime === true);
   if (existing) return existing;
   await mkdir(runtimeRoot, { recursive: true });
   const staging = join(runtimeRoot, `.staging-${plan.contentHash}-${process.pid}-${randomBytes(6).toString('hex')}`);
@@ -219,7 +258,7 @@ async function deployRuntime(plan, options) {
     try { await rename(staging, destination); }
     catch (error) {
       if (error.code !== 'EEXIST' && error.code !== 'ENOTEMPTY') throw error;
-      const raced = await publishedRuntime(runtimeRoot, plan.contentHash);
+      const raced = await publishedRuntime(runtimeRoot, plan.contentHash, options.allowDifferentRuntime === true);
       if (!raced) throw error;
       await rm(staging, { recursive: true, force: true });
       return raced;
@@ -248,6 +287,7 @@ export function parseSetupArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     if (flag === '--apply') { options.apply = true; continue; }
+    if (flag === '--adopt-existing') { options.adoptExisting = true; continue; }
     if (flag === '--agency-adapters') { options.agencyAdapters = true; continue; }
     if (!['--source-config', '--state-dir', '--port'].includes(flag)) throw new Error(SETUP_USAGE);
     const value = argv[++index];
@@ -257,6 +297,115 @@ export function parseSetupArgs(argv) {
     if (flag === '--port') options.port = Number(value);
   }
   return options;
+}
+
+async function adoptExistingGateway({ source, sourcePath, stateDir, port, existing, sourceRoot, files, contentHash, apply, options }) {
+  const platform = options.platform ?? process.platform;
+  const runtimePath = join(stateDir, 'runtime', contentHash);
+  const connectorPath = join(runtimePath, 'tools', 'connector.mjs');
+  const oldRuntimePath = existing.runtimePath;
+  const copyAdapter = existing.adapterPath !== null && !isWithin(existing.adapterPath, stateDir);
+  const adaptersPath = copyAdapter ? join(stateDir, 'adopted-agency-adapters.json') : existing.adapterPath;
+  if (copyAdapter && await exists(adaptersPath)) {
+    const current = await readFile(adaptersPath);
+    if (!current.equals(existing.adapterBytes)) throw new Error(`Refusing adoption because stable adapter config differs: ${adaptersPath}`);
+  }
+
+  const args = [...existing.entry.args];
+  args[0] = connectorPath;
+  if (copyAdapter) args[args.indexOf('--adapters') + 1] = adaptersPath;
+  const { key } = configCollection(source.value, sourcePath);
+  const replacementEntry = { ...existing.entry, command: process.execPath, args,
+    timeout: existing.entry.timeout ?? CLIENT_REQUEST_TIMEOUT_MS };
+  const replacement = { ...source.value, [key]: { [SELF_NAME]: replacementEntry } };
+  const replacementBytes = Buffer.from(`${JSON.stringify(replacement, null, 2)}\n`);
+  const backupDir = join(stateDir, 'backups', timestamp(options.now instanceof Date ? options.now : new Date()));
+  const backupPath = join(backupDir, 'client-config.json');
+  const backendBackupPath = join(backupDir, 'backends.json');
+  const adapterBackupPath = existing.adapterPath ? join(backupDir, 'agency-adapters.json') : null;
+  const manifestPath = join(backupDir, 'rollback-manifest.json');
+  const guidance = recoveryGuidance({ sourcePath, stateDir, port,
+    message: apply ? 'Gateway adoption is preparing an explicit backed-up client configuration switch.' : 'Adoption preview complete; no files were changed.' });
+  const base = {
+    ...guidance,
+    mode: apply ? 'apply' : 'preview', status: apply ? 'installing' : 'planned-adoption', migrationStatus: 'not-applicable',
+    sourceExists: true, sourcePath, stateDir, privatePath: existing.privatePath, runtimePath, oldRuntimePath,
+    contentHash, runtimeFileCount: files.length, backendCount: existing.backendCount, adaptersPath,
+    sourceAdapterPath: existing.adapterPath, adapterCopied: copyAdapter, restartRequired: true,
+    backupPath: apply ? backupPath : null, sourceBackupPath: apply ? backupPath : null,
+    backendBackupPath: apply ? backendBackupPath : null, adapterBackupPath: apply ? adapterBackupPath : null,
+    manifestPath: apply ? manifestPath : null,
+    rollbackCommand: apply ? `Copy-Item -LiteralPath ${powershellLiteral(backupPath)} -Destination ${powershellLiteral(sourcePath)} -Force` : null
+  };
+  if (!apply) return base;
+
+  let deployedPath = null;
+  try {
+    deployedPath = await deployRuntime({ sourceRoot, stateDir, files, contentHash }, { ...options, allowDifferentRuntime: true });
+    if (await exists(backupPath) || await exists(backendBackupPath) || (adapterBackupPath && await exists(adapterBackupPath)) || await exists(manifestPath)) {
+      const error = new Error(`Backup location already exists: ${backupDir}`);
+      error.code = 'EEXIST';
+      throw error;
+    }
+    const currentSource = await readFile(sourcePath);
+    const currentBackend = await readFile(existing.privatePath);
+    const currentAdapter = existing.adapterPath ? await readFile(existing.adapterPath) : null;
+    if (!currentSource.equals(source.bytes)) throw new Error(`Source config changed during adoption; refusing to overwrite ${sourcePath}`);
+    if (!currentBackend.equals(existing.backendBytes)) throw new Error(`Backend config changed during adoption; refusing to continue: ${existing.privatePath}`);
+    if (currentAdapter && !currentAdapter.equals(existing.adapterBytes)) throw new Error(`Adapter config changed during adoption; refusing to continue: ${existing.adapterPath}`);
+
+    await secureDirectory(backupDir, platform);
+    await atomicCreate(backupPath, source.bytes, platform);
+    await atomicCreate(backendBackupPath, existing.backendBytes, platform);
+    if (adapterBackupPath) await atomicCreate(adapterBackupPath, existing.adapterBytes, platform);
+    if (copyAdapter && !(await exists(adaptersPath))) await atomicCreate(adaptersPath, existing.adapterBytes, platform);
+    const manifest = {
+      version: 1, operation: 'adopt-existing', sourcePath, privatePath: existing.privatePath,
+      sourceAdapterPath: existing.adapterPath, adaptersPath, backupLocation: backupPath,
+      files: {
+        source: { path: sourcePath, backupPath, originalSha256: digest(source.bytes), replacementSha256: digest(replacementBytes) },
+        backend: { path: existing.privatePath, backupPath: backendBackupPath, originalSha256: digest(existing.backendBytes) },
+        ...(existing.adapterPath ? { adapter: { path: existing.adapterPath, backupPath: adapterBackupPath, originalSha256: digest(existing.adapterBytes) } } : {})
+      }
+    };
+    await atomicCreate(manifestPath, Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`), platform);
+    if (options.beforeSourceReplace) await options.beforeSourceReplace();
+    const commitSource = await readFile(sourcePath);
+    const commitBackend = await readFile(existing.privatePath);
+    const commitAdapter = existing.adapterPath ? await readFile(existing.adapterPath) : null;
+    const stableAdapter = copyAdapter ? await readFile(adaptersPath) : null;
+    if (!commitSource.equals(source.bytes)) throw new Error(`Source config changed during adoption; refusing to overwrite ${sourcePath}`);
+    if (!commitBackend.equals(existing.backendBytes)) throw new Error(`Backend config changed during adoption; refusing to continue: ${existing.privatePath}`);
+    if (commitAdapter && !commitAdapter.equals(existing.adapterBytes)) throw new Error(`Adapter config changed during adoption; refusing to continue: ${existing.adapterPath}`);
+    if (stableAdapter && !stableAdapter.equals(existing.adapterBytes)) throw new Error(`Stable adapter config changed during adoption; refusing to continue: ${adaptersPath}`);
+    try { await (options.sourceWriter ?? atomicWrite)(sourcePath, replacementBytes, platform); }
+    catch (error) { throw new Error(`Adoption could not replace source config; the original remains at ${sourcePath} and ${backupPath}`, { cause: error }); }
+    return {
+      ...base, status: 'adopted', runtimePath: deployedPath, connectorPath: join(deployedPath, 'tools', 'connector.mjs'),
+      ...recoveryGuidance({ sourcePath, backupPath, manifestPath, connectorPath: join(deployedPath, 'tools', 'connector.mjs'), stateDir, port,
+        message: 'Existing gateway runtime adopted successfully. Restart is required; activation remains the caller\'s responsibility.' }),
+      sourceBackupPath: backupPath, backendBackupPath, adapterBackupPath, adaptersPath, oldRuntimePath,
+      restartRequired: true,
+      readinessCommand: { command: process.execPath, args: [join(deployedPath, 'tools', 'connector.mjs'), '--state-dir', stateDir, '--port', String(port), '--check'] }
+    };
+  } catch (error) {
+    const backupExists = await exists(backupPath);
+    const backendBackupExists = await exists(backendBackupPath);
+    const adapterBackupExists = adapterBackupPath ? await exists(adapterBackupPath) : false;
+    error.setupResult = {
+      ...base, status: 'failed', runtimePath: deployedPath ?? runtimePath,
+      ...recoveryGuidance({ sourcePath, backupPath: backupExists ? backupPath : null,
+        manifestPath: await exists(manifestPath) ? manifestPath : null,
+        connectorPath: deployedPath ? join(deployedPath, 'tools', 'connector.mjs') : null, stateDir, port,
+        message: backupExists
+          ? 'Gateway adoption failed after creating exact backups. The source config was not overwritten unless the replacement completed.'
+          : 'Gateway adoption failed before creating backups. The source, backend, and adapter configs were unchanged.' }),
+      sourceBackupPath: backupExists ? backupPath : null,
+      backendBackupPath: backendBackupExists ? backendBackupPath : null,
+      adapterBackupPath: adapterBackupExists ? adapterBackupPath : null
+    };
+    throw error;
+  }
 }
 
 export async function pluginSetup(options = {}) {
@@ -269,6 +418,7 @@ export async function pluginSetup(options = {}) {
   const privatePath = join(stateDir, 'backends.json');
   const port = options.port ?? 7319;
   const apply = options.apply === true;
+  const adoptExisting = options.adoptExisting === true;
   const agencyAdapters = options.agencyAdapters === true;
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('--port must be an integer from 1 to 65535');
   if (sourcePath === privatePath) throw new Error('Source config and private backend config must be different files');
@@ -276,10 +426,17 @@ export async function pluginSetup(options = {}) {
   const source = await readJson(sourcePath, 'Source config');
   const { servers } = configCollection(source.value, sourcePath);
   const existing = await inspectExistingGateway(servers, {
-    stateDir, privatePath, port, agencyAdapters: options.agencyAdapters
+    stateDir, privatePath, port, agencyAdapters: options.agencyAdapters, adoptExisting
   });
+  if (existing && adoptExisting) {
+    const files = await runtimeFiles(sourceRoot);
+    const hash = await contentHash(sourceRoot, files);
+    return adoptExistingGateway({ source, sourcePath, stateDir, port, existing, sourceRoot, files, contentHash: hash, apply, options });
+  }
   if (existing) return {
-    mode: apply ? 'apply' : 'preview', sourceExists: true, sourcePath, stateDir, ...existing,
+    mode: apply ? 'apply' : 'preview', sourceExists: true, sourcePath, stateDir,
+    status: existing.status, migrationStatus: existing.migrationStatus, backendCount: existing.backendCount,
+    connectorPath: existing.connectorPath, runtimePath: existing.runtimePath, privatePath: existing.privatePath,
     ...recoveryGuidance({ sourcePath, connectorPath: existing.connectorPath, stateDir, port,
       message: 'Gateway setup is already configured; existing configuration and credentials were not overwritten.' })
   };

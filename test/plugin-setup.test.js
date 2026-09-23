@@ -221,3 +221,196 @@ test('missing or malformed source config fails without fabricating state', async
   await assert.rejects(() => pluginSetup({ sourceRoot, sourceConfig: malformed, stateDir }), error => /invalid JSON/.test(error.message) && !error.message.includes('secret'));
   await assert.rejects(() => stat(stateDir), error => error.code === 'ENOENT');
 });
+
+
+async function existingGatewayFixture({ adapterInsideState = false, timeout } = {}) {
+  const item = await sourceFixture({ mcpServers: {} });
+  const sourceRoot = await pluginFixture();
+  const privatePath = join(item.stateDir, 'backends.json');
+  const backend = { servers: aliases(17), mapping: { preserved: true } };
+  const backendBytes = Buffer.from(JSON.stringify(backend));
+  await mkdir(dirname(privatePath), { recursive: true });
+  await writeFile(privatePath, backendBytes);
+  const adapterPath = adapterInsideState
+    ? join(item.stateDir, 'manual-agency-adapters.json')
+    : join(item.root, 'checkout', 'adapters', 'agency.json');
+  const adapterBytes = Buffer.from('{"mapping":{"alpha":{"command":"agency"}},"preserved":true}');
+  await mkdir(dirname(adapterPath), { recursive: true });
+  await writeFile(adapterPath, adapterBytes);
+  const oldConnectorPath = join(item.root, 'checkout', 'tools', 'connector.mjs');
+  const entry = {
+    command: process.execPath,
+    args: [oldConnectorPath, '--auto-start', '--config', privatePath, '--port', '7319', '--state-dir', item.stateDir, '--adapters', adapterPath],
+    type: 'stdio', tools: ['preserved-tool'], extra: { preserved: true },
+    ...(timeout === undefined ? {} : { timeout })
+  };
+  const source = { theme: 'preserved', unrelated: { keep: true }, mcpServers: { 'shared-mcp-gateway': entry } };
+  const sourceBytes = Buffer.from(JSON.stringify(source));
+  await writeFile(item.sourcePath, sourceBytes);
+  return { ...item, sourceRoot, privatePath, backendBytes, adapterPath, adapterBytes, oldConnectorPath, source, sourceBytes };
+}
+
+test('adopt-existing remains a normal preview when no gateway entry is active', async () => {
+  const sourceRoot = await pluginFixture();
+  const item = await sourceFixture({ mcpServers: aliases(2) });
+  const result = await pluginSetup({ sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir, adoptExisting: true });
+  assert.equal(result.status, 'planned');
+  assert.equal(result.migrationStatus, 'planned');
+  assert.equal(result.oldRuntimePath, undefined);
+  assert.deepEqual(await readFile(item.sourcePath), item.bytes);
+  await assert.rejects(() => stat(item.stateDir), error => error.code === 'ENOENT');
+});
+
+test('adopt-existing preview is builtin-only and writes nothing', async () => {
+  const item = await existingGatewayFixture();
+  let npmCalled = false;
+  const beforeState = (await readdir(item.stateDir)).sort();
+  const result = await pluginSetup({
+    sourceRoot: item.sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir, adoptExisting: true,
+    npmRunner: async () => { npmCalled = true; }
+  });
+  assert.equal(result.mode, 'preview');
+  assert.equal(result.status, 'planned-adoption');
+  assert.equal(result.backendCount, 17);
+  assert.equal(result.oldRuntimePath, dirname(dirname(item.oldConnectorPath)));
+  assert.equal(result.adaptersPath, join(item.stateDir, 'adopted-agency-adapters.json'));
+  assert.equal(result.adapterCopied, true);
+  assert.equal(result.restartRequired, true);
+  assert.equal(result.backupPath, null);
+  assert.equal(npmCalled, false);
+  assert.deepEqual(await readFile(item.sourcePath), item.sourceBytes);
+  assert.deepEqual(await readFile(item.privatePath), item.backendBytes);
+  assert.deepEqual(await readFile(item.adapterPath), item.adapterBytes);
+  assert.deepEqual((await readdir(item.stateDir)).sort(), beforeState);
+});
+
+test('adopt-existing apply deploys alongside an older runtime and switches only the client config', async () => {
+  const item = await existingGatewayFixture({ timeout: 345678 });
+  const olderHash = 'a'.repeat(64);
+  const olderRuntime = join(item.stateDir, 'runtime', olderHash);
+  await mkdir(olderRuntime, { recursive: true });
+  await writeJson(join(olderRuntime, '.plugin-runtime.json'), { version: 1, contentHash: olderHash });
+  const now = new Date('2026-09-23T09:35:12.000Z');
+  const result = await pluginSetup({
+    sourceRoot: item.sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir,
+    adoptExisting: true, apply: true, now, npmRunner: async () => {}
+  });
+  assert.equal(result.status, 'adopted');
+  assert.equal(result.restartRequired, true);
+  assert.equal(result.oldRuntimePath, dirname(dirname(item.oldConnectorPath)));
+  assert.notEqual(result.runtimePath, olderRuntime);
+  assert.equal((await stat(olderRuntime)).isDirectory(), true);
+  assert.deepEqual(await readFile(item.privatePath), item.backendBytes);
+  assert.deepEqual(await readFile(item.adapterPath), item.adapterBytes);
+  assert.deepEqual(await readFile(result.adaptersPath), item.adapterBytes);
+  assert.deepEqual(await readFile(result.sourceBackupPath), item.sourceBytes);
+  assert.deepEqual(await readFile(result.backendBackupPath), item.backendBytes);
+  assert.deepEqual(await readFile(result.adapterBackupPath), item.adapterBytes);
+  const adopted = JSON.parse(await readFile(item.sourcePath, 'utf8'));
+  assert.equal(adopted.theme, 'preserved');
+  assert.deepEqual(adopted.unrelated, { keep: true });
+  const entry = adopted.mcpServers['shared-mcp-gateway'];
+  assert.equal(entry.command, process.execPath);
+  assert.equal(entry.args[0], join(result.runtimePath, 'tools', 'connector.mjs'));
+  assert.equal(entry.args[entry.args.indexOf('--config') + 1], item.privatePath);
+  assert.equal(entry.args[entry.args.indexOf('--state-dir') + 1], item.stateDir);
+  assert.equal(entry.args[entry.args.indexOf('--port') + 1], '7319');
+  assert.equal(entry.args[entry.args.indexOf('--adapters') + 1], result.adaptersPath);
+  assert.equal(entry.timeout, 345678);
+  assert.equal(entry.type, 'stdio');
+  assert.deepEqual(entry.tools, ['preserved-tool']);
+  assert.deepEqual(entry.extra, { preserved: true });
+  const manifest = JSON.parse(await readFile(result.manifestPath, 'utf8'));
+  assert.equal(manifest.operation, 'adopt-existing');
+  assert.equal(manifest.files.source.backupPath, result.sourceBackupPath);
+  assert.equal(manifest.files.backend.backupPath, result.backendBackupPath);
+  assert.equal(manifest.files.adapter.backupPath, result.adapterBackupPath);
+  assert.equal(result.rollbackCommand, `Copy-Item -LiteralPath '${result.sourceBackupPath}' -Destination '${item.sourcePath}' -Force`);
+  assert.match(result.message, /activation remains the caller's responsibility/);
+});
+
+test('adopt-existing preserves a private adapter path and supplies the client timeout default', async () => {
+  const item = await existingGatewayFixture({ adapterInsideState: true });
+  const result = await pluginSetup({
+    sourceRoot: item.sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir,
+    adoptExisting: true, apply: true, npmRunner: async () => {}
+  });
+  assert.equal(result.adapterCopied, false);
+  assert.equal(result.adaptersPath, item.adapterPath);
+  const entry = JSON.parse(await readFile(item.sourcePath, 'utf8')).mcpServers['shared-mcp-gateway'];
+  assert.equal(entry.args[entry.args.indexOf('--adapters') + 1], item.adapterPath);
+  assert.equal(entry.timeout, 210000);
+  assert.deepEqual(await readFile(result.adapterBackupPath), item.adapterBytes);
+});
+
+test('adopt-existing dependency failure preserves all existing configuration bytes', async () => {
+  const item = await existingGatewayFixture();
+  await assert.rejects(() => pluginSetup({
+    sourceRoot: item.sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir,
+    adoptExisting: true, apply: true, npmRunner: async () => { throw new Error('dependency failure'); }
+  }), error => {
+    assert.match(error.message, /dependency failure/);
+    assert.equal(error.setupResult.backupPath, null);
+    return true;
+  });
+  assert.deepEqual(await readFile(item.sourcePath), item.sourceBytes);
+  assert.deepEqual(await readFile(item.privatePath), item.backendBytes);
+  assert.deepEqual(await readFile(item.adapterPath), item.adapterBytes);
+  await assert.rejects(() => stat(join(item.stateDir, 'backups')), error => error.code === 'ENOENT');
+});
+
+test('adopt-existing client replacement failure retains originals and exact rollback backups', async () => {
+  const item = await existingGatewayFixture();
+  await assert.rejects(() => pluginSetup({
+    sourceRoot: item.sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir,
+    adoptExisting: true, apply: true, npmRunner: async () => {},
+    sourceWriter: async () => { throw new Error('replacement denied'); }
+  }), error => {
+    assert.match(error.message, /could not replace source config/);
+    assert.ok(error.setupResult.backupPath);
+    assert.ok(error.setupResult.manifestPath);
+    return true;
+  });
+  assert.deepEqual(await readFile(item.sourcePath), item.sourceBytes);
+  assert.deepEqual(await readFile(item.privatePath), item.backendBytes);
+  assert.deepEqual(await readFile(item.adapterPath), item.adapterBytes);
+  const backupDir = join(item.stateDir, 'backups', (await readdir(join(item.stateDir, 'backups')))[0]);
+  assert.deepEqual(await readFile(join(backupDir, 'client-config.json')), item.sourceBytes);
+  assert.deepEqual(await readFile(join(backupDir, 'backends.json')), item.backendBytes);
+  assert.deepEqual(await readFile(join(backupDir, 'agency-adapters.json')), item.adapterBytes);
+});
+
+test('adopt-existing refuses a conflicting stable adapter without deploying', async () => {
+  const item = await existingGatewayFixture();
+  const stableAdapter = join(item.stateDir, 'adopted-agency-adapters.json');
+  await writeFile(stableAdapter, '{"different":true}');
+  let npmCalled = false;
+  await assert.rejects(() => pluginSetup({
+    sourceRoot: item.sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir,
+    adoptExisting: true, npmRunner: async () => { npmCalled = true; }
+  }), /stable adapter config differs/);
+  assert.equal(npmCalled, false);
+  assert.deepEqual(await readFile(item.sourcePath), item.sourceBytes);
+  assert.deepEqual(await readFile(item.privatePath), item.backendBytes);
+  assert.deepEqual(await readFile(item.adapterPath), item.adapterBytes);
+  assert.deepEqual(await readFile(stableAdapter), Buffer.from('{"different":true}'));
+  await assert.rejects(() => stat(join(item.stateDir, 'runtime')), error => error.code === 'ENOENT');
+});
+
+test('adopt-existing refuses concurrent backend or adapter edits before client commit', async () => {
+  for (const target of ['backend', 'adapter']) {
+    const item = await existingGatewayFixture();
+    const changed = Buffer.from(`{"changed":"${target}"}`);
+    await assert.rejects(() => pluginSetup({
+      sourceRoot: item.sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir,
+      adoptExisting: true, apply: true, npmRunner: async () => {},
+      beforeSourceReplace: () => writeFile(target === 'backend' ? item.privatePath : item.adapterPath, changed)
+    }), new RegExp(`${target === 'backend' ? 'Backend' : 'Adapter'} config changed`));
+    assert.deepEqual(await readFile(item.sourcePath), item.sourceBytes);
+    assert.deepEqual(await readFile(target === 'backend' ? item.privatePath : item.adapterPath), changed);
+  }
+});
+
+test('parser exposes the explicit adopt-existing option', () => {
+  assert.deepEqual(parseSetupArgs(['--adopt-existing', '--apply']), { adoptExisting: true, apply: true });
+});
