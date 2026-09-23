@@ -323,9 +323,30 @@ export class BackendRegistry {
 
   async #closeOwned(client, transport) {
     const ownedPid = transport?.pid;
-    if (ownedPid && process.platform === 'win32') await terminateWindowsProcessTree(ownedPid, this.closeTimeoutMs);
-    const close = client ? client.close() : transport?.close();
-    if (close) await withTimeout(close, this.closeTimeoutMs, client ? 'Client close' : 'Transport close');
+    const ownedProcess = transport?._process;
+    const exactOwnedProcess = ownedProcess?.pid === ownedPid ? ownedProcess : null;
+    let hardKillTimer;
+    let hardKillError;
+    if (ownedPid && process.platform === 'win32') {
+      await terminateWindowsProcessTree(ownedPid, this.closeTimeoutMs);
+    } else if (exactOwnedProcess?.exitCode === null) {
+      const signaled = exactOwnedProcess.kill('SIGTERM');
+      if (!signaled && exactOwnedProcess.exitCode === null) throw new GatewayError('transport_close_failed', `Failed to terminate owned backend process ${ownedPid}`);
+      hardKillTimer = setTimeout(() => {
+        if (exactOwnedProcess.exitCode !== null) return;
+        try {
+          if (!exactOwnedProcess.kill('SIGKILL') && exactOwnedProcess.exitCode === null) {
+            hardKillError = new GatewayError('transport_close_failed', `Failed to kill owned backend process ${ownedPid}`);
+          }
+        } catch (error) { hardKillError = error; }
+      }, Math.max(50, Math.floor(this.closeTimeoutMs * 0.75)));
+      hardKillTimer.unref?.();
+    }
+    try {
+      const close = client ? client.close() : transport?.close();
+      if (close) await withTimeout(close, this.closeTimeoutMs, client ? 'Client close' : 'Transport close');
+      if (hardKillError) throw hardKillError;
+    } finally { clearTimeout(hardKillTimer); }
   }
 
   async close() {
