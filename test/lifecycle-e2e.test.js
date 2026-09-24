@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createServer as createNetServer } from 'node:net';
-import { access, copyFile, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, copyFile, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve } from 'node:path';
@@ -256,6 +256,11 @@ async function closeClient(client, clients) {
   assert.equal(client.lifecycleTransport.pid, null);
 }
 
+async function assertSameFileIdentity(actualPath, expectedPath) {
+  const [actual, expected] = await Promise.all([realpath(actualPath), realpath(expectedPath)]);
+  assert.equal(actual, expected);
+}
+
 async function gatewayManifest(stateDir) {
   return JSON.parse(await readFile(join(stateDir, 'gateway-instance.json'), 'utf8'));
 }
@@ -267,7 +272,7 @@ async function manifestOrNull(stateDir) {
 
 async function stopOwnedAndVerify(runtimePath, stateDir, port) {
   const manifest = await gatewayManifest(stateDir);
-  assert.equal(resolve(manifest.cliPath), resolve(join(runtimePath, 'src', 'cli.js')));
+  await assertSameFileIdentity(manifest.cliPath, join(runtimePath, 'src', 'cli.js'));
   assert.equal(await processAlive(manifest.pid), true);
   assert.equal(await observedProcessMarker(manifest.pid), manifest.processMarker);
   const moduleUrl = `${pathToFileURL(join(runtimePath, 'src', 'ensure-gateway.js')).href}?lifecycle=${Date.now()}-${Math.random()}`;
@@ -460,7 +465,7 @@ lifecycleTest('upgrade preserves data, switches runtimes, rolls back, and surviv
   assert.equal(oldClient.getServerVersion().version, baselineVersion);
   const oldCall = await claimAndEcho(oldClient, 'before-upgrade');
   const oldManifest = await gatewayManifest(fixture.stateDir);
-  assert.equal(resolve(oldManifest.cliPath), resolve(join(baseline.runtimePath, 'src', 'cli.js')));
+  await assertSameFileIdentity(oldManifest.cliPath, join(baseline.runtimePath, 'src', 'cli.js'));
 
   const upgradedVersion = candidateVersion(1);
   const candidate = await createCandidate(fixture.root, 'upgrade-success', upgradedVersion);
@@ -515,7 +520,7 @@ lifecycleTest('upgrade preserves data, switches runtimes, rolls back, and surviv
   const newCall = await claimAndEcho(newClient, 'after-upgrade');
   assert.notEqual(newCall.pid, oldCall.pid);
   const newManifest = await gatewayManifest(fixture.stateDir);
-  assert.equal(resolve(newManifest.cliPath), resolve(join(upgraded.runtimePath, 'src', 'cli.js')));
+  await assertSameFileIdentity(newManifest.cliPath, join(upgraded.runtimePath, 'src', 'cli.js'));
   assert.deepEqual(await readFile(fixture.privatePath), backendBytes);
   assert.deepEqual(await readFile(fixture.tokenPath), tokenBytes);
 
@@ -531,7 +536,7 @@ lifecycleTest('upgrade preserves data, switches runtimes, rolls back, and surviv
   const rolledBackCall = await claimAndEcho(rolledBackClient, 'after-rollback');
   assert.notEqual(rolledBackCall.pid, newCall.pid);
   const rolledBackManifest = await gatewayManifest(fixture.stateDir);
-  assert.equal(resolve(rolledBackManifest.cliPath), resolve(join(baseline.runtimePath, 'src', 'cli.js')));
+  await assertSameFileIdentity(rolledBackManifest.cliPath, join(baseline.runtimePath, 'src', 'cli.js'));
   assert.deepEqual(await readFile(fixture.privatePath), backendBytes);
   assert.deepEqual(await readFile(fixture.tokenPath), tokenBytes);
   await assertApprovalPreserved(fixture.sourceConfig, fixture.sourceBytes);
