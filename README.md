@@ -8,7 +8,7 @@ Instead of exposing every backend tool upfront, Copilot uses a fixed **6-tool in
 
 | Benefit | Without shared routing | With MCPGateway |
 |---|---|---|
-| **Smaller advertised tool interface** | 1,000 backend tools exposed directly | **6 gateway tools** — **99.4% fewer advertised tool definitions** in this example |
+| **More context available for your task** | Up to 1,000 backend tool definitions competing for context when loaded upfront | **6 gateway tools upfront**, then only the backend schemas needed for the task |
 | **Less duplicate backend work** | 5 clients × 20 initialized backend aliases = 100 client-to-backend connections | **20 shared backend connections**, plus 5 lightweight gateway client connections |
 | **Less duplicated backend RAM** | Each CLI can start its own copies of local MCP servers | **One shared instance per backend alias**, rather than one per CLI |
 | **Focused schema loading** | Fetch the full catalog of input schemas | Search summaries, then retrieve **1 selected schema** |
@@ -28,18 +28,19 @@ Works with ordinary **Copilot CLI**. **Agency is optional.**
 - **One private configuration:** preserve your server aliases, tool allowlists, credentials, and organization-specific arguments.
 - **Backed-up setup:** preview changes before applying them and receive an exact manual restore command.
 
-### Why this can save RAM—and model context
+### Model context: less tool-schema overhead, more room for your task
+
+**Tool definitions use tokens inside the model's context window.** Their names, descriptions, and parameter schemas can take space that would otherwise be available for code, instructions, conversation, and results.
+
+With a **1,000-tool backend catalog**, MCPGateway exposes **6 gateway tool definitions upfront** and retrieves individual backend schemas when needed. That is **99.4% fewer advertised definitions** compared with exposing all 1,000 directly—not a measured 99.4% token reduction, because schema sizes differ.
+
+**The model's maximum context-window size does not change. The amount occupied by tool definitions can decrease.** Clients that already defer tool loading may see a smaller context benefit. Search summaries, selected schemas, and tool results still consume tokens as they are used.
+
+### Machine memory: share backends instead of duplicating them
 
 **Run several Copilot sessions without paying for the same local backend fleet each time.**
 
 For illustration, if one local MCP backend fleet consumes **300 MB**, five independent copies consume **1,500 MB**. Sharing that fleet brings the duplicated backend portion back toward **300 MB**, plus gateway/connector overhead and any extra concurrent-work memory. That is **1,200 MB less duplicated baseline backend memory** in this example—not a measured saving or a cap on total application RAM.
-
-There are two different benefits:
-
-| Resource | What the gateway reduces |
-|---|---|
-| **Local RAM and processes** | Duplicate local MCP server instances across CLI sessions. HTTP-only backends may offer smaller local-memory savings. |
-| **Model context, measured in tokens** | Upfront exposure to backend tool definitions: the model starts with **6 gateway tools**, then retrieves the selected backend schemas on demand. |
 
 **A Copilot process using 1.5 GB of RAM does not mean its context window is full.** RAM can contain conversation history, outputs, caches, and other runtime state. The gateway does not eliminate Copilot's own memory usage or enlarge the model's context limit.
 
