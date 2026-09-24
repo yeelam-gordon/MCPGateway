@@ -1,8 +1,19 @@
 # Shared MCP Gateway
 
-**Connect Copilot to many MCP tools through one small, shared gateway.**
+## 1,000 backend tools. Just 6 gateway tools in Copilot.
 
-Copilot sees **six gateway tools**, whether your configured backends provide 10, 100, or 1,000 tools. It discovers the tools it needs on demand instead of receiving every backend schema upfront.
+**One local gateway. Shared backend connections. Schemas loaded only when needed.**
+
+Instead of exposing every backend tool upfront, Copilot uses a fixed **6-tool interface** to discover and call the capability it needs. Open another CLI session and reuse the same gateway rather than starting another independent backend fleet.
+
+| Benefit | Without shared routing | With MCPGateway |
+|---|---|---|
+| **Smaller advertised tool interface** | 1,000 backend tools exposed directly | **6 gateway tools** — **99.4% fewer advertised tool definitions** in this example |
+| **Less duplicate backend work** | 5 clients × 20 initialized backend aliases = 100 client-to-backend connections | **20 shared backend connections**, plus 5 lightweight gateway client connections |
+| **Focused schema loading** | Fetch the full catalog of input schemas | Search summaries, then retrieve **1 selected schema** |
+| **Automatic startup** | Start and manage separate backend fleets per client | **1 gateway per machine**, started on first use |
+
+The connection counts are an architectural example for clients using the same 20 backend aliases; unused aliases do not start. They are not total OS process counts. The 99.4% figure compares tool-definition counts, **not** token usage or end-to-end startup speed.
 
 Works with ordinary **Copilot CLI**. **Agency is optional.**
 
@@ -14,6 +25,14 @@ Works with ordinary **Copilot CLI**. **Agency is optional.**
 - **Warm backends:** closing one client does not shut down the shared backend fleet.
 - **One private configuration:** preserve your server aliases, tool allowlists, credentials, and organization-specific arguments.
 - **Backed-up setup:** preview changes before applying them and receive an exact manual restore command.
+
+### What has been verified?
+
+- **1,000-tool synthetic catalog, 2 clients:** both see exactly **6 gateway tools**; a focused search returns **1 matching summary**, and a second client reuses the cached catalog instead of fetching it again. [Test](test/catalog-scale.test.js)
+- **124 automated tests** passed for v0.4.1, covering sharing, ownership, cancellation, migration, recovery, and platform behavior.
+- **2 CI platforms:** Windows and Ubuntu on Node.js 24, plus CodeQL analysis.
+
+These checks demonstrate the mechanism, not unlimited capacity. Real startup time still includes authentication, network calls, and Copilot's own initialization.
 
 ## How to install
 
