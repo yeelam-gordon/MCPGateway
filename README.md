@@ -200,6 +200,46 @@ Uninstalling the plugin removes the setup skill, not the installed runtime, so e
 
 ## Existing installations and other machines
 
+### Updating the plugin and the running gateway
+
+These are two separate operations:
+
+1. **Download the plugin update** in a terminal:
+
+   ```powershell
+   copilot plugin marketplace update mcp-gateway
+   copilot plugin update shared-mcp-gateway@mcp-gateway
+   ```
+
+2. **Activate the runtime update** inside Copilot: run `/mcp-gateway-setup` and explicitly ask to adopt the updated runtime. Review the backup and restart steps before proceeding.
+
+The runtime is installed outside the plugin cache, so downloading a plugin update does not replace files used by the running gateway. Activation is a separate, backed-up switch after active requests finish.
+
+#### Windows plugin update reports “Access denied”
+
+This can occur when Copilot's updater cannot replace its installed-plugin cache. It does not, by itself, mean the gateway is broken. Do not remove backend configuration, change file permissions, or stop unrelated Node processes.
+
+First close Copilot windows normally and retry from a separate terminal. If replacement still fails, the following **cache-only recovery** was verified on Windows: move the old plugin directory intact to a backup, then use Copilot's standard install command to create a fresh copy. Run outside the plugin directory.
+
+```powershell
+$copilotHome = if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { Join-Path $HOME '.copilot' }
+$cache = Join-Path $copilotHome 'installed-plugins\mcp-gateway\shared-mcp-gateway'
+$backup = Join-Path $copilotHome ('plugin-cache-backups\shared-mcp-gateway-' + [guid]::NewGuid().ToString())
+
+# Inspect the exact target before proceeding.
+Get-Item -LiteralPath $cache -ErrorAction Stop
+New-Item -ItemType Directory -Path (Split-Path $backup -Parent) -Force | Out-Null
+Move-Item -LiteralPath $cache -Destination $backup -ErrorAction Stop
+copilot plugin install shared-mcp-gateway@mcp-gateway
+if ($LASTEXITCODE -ne 0) {
+    throw "Plugin install failed. Old cache is preserved at $backup. Do not delete either copy."
+}
+copilot plugin list --json
+"Previous plugin cache: $backup"
+```
+
+This targets only the named plugin's cache, not the stable runtime or credentials. If the move itself is denied, stop and inspect the locking process or policy; do not force access. If installation fails, retain the backup and restore it to `$cache` only after confirming the destination is absent. This is a recovery procedure, not an automatic replacement for the CLI's update mechanism.
+
 **Moving from a development checkout?** Update the plugin, run `/mcp-gateway-setup`, and ask it to adopt your existing installation. The explicit `--adopt-existing` workflow previews and backs up the connector change while retaining your backend data. It does not delete the checkout or edit shell profiles.
 
 **Setting up another machine?** Normally, install the plugin there and migrate that machine's own MCP configuration. To reuse a catalog, the plugin includes `tools\transfer-config.mjs`:
