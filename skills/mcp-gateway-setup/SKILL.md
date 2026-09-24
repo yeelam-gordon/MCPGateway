@@ -1,12 +1,21 @@
 ---
 name: mcp-gateway-setup
 license: MIT
-description: 'Install and safely migrate an existing Copilot MCP configuration to the shared-mcp-gateway plugin. Use when asked to set up, configure, preview, apply, verify, or roll back the Shared MCP Gateway, including optional Agency adapters.'
+description: 'Set up the shared MCP gateway.'
 ---
 
 # Shared MCP Gateway Setup
 
 Set up the installed `shared-mcp-gateway` plugin without relying on the current working directory.
+
+## Keep the user-facing output short
+
+- Do not echo this skill, raw setup JSON, content hashes, or every runtime path into chat.
+- Preview: give the status, backend count, whether anything changes, and the one approval needed. Inspect all returned fields internally.
+- Already configured: report health and whether an upgrade is needed; state that nothing changed.
+- Success: give the outcome, the next required action, and the exact backup path plus copyable restore command.
+- Failure: give the specific error and whether configuration changed. Include the exact backup path and restore command when available.
+- Show runtime, manifest, and connector paths only when needed to resolve a problem or explicitly requested. Do not omit recovery information or approval requirements for brevity.
 
 ## When to Use This Skill
 
@@ -32,7 +41,7 @@ Set up the installed `shared-mcp-gateway` plugin without relying on the current 
    node "<plugin-root>\tools\plugin-setup.mjs"
    ```
 
-4. Read the preview JSON. Report `status`, `sourcePath`, `stateDir`, `privatePath`, `runtimePath`, `contentHash`, and `backendCount`. Preview does not yet create a backup or rollback manifest. Do not claim installation or upgrade when the result is only `planned` or `already-configured`.
+4. Read and inspect the preview fields `status`, `sourcePath`, `stateDir`, `privatePath`, `runtimePath`, `contentHash`, and `backendCount`. Summarize them using the short-output rules above. Preview does not yet create a backup or rollback manifest. Do not claim installation or upgrade when the result is only `planned` or `already-configured`.
 5. Explain that `--apply` changes the global native-client MCP routing for clients using the same Copilot home. It preserves server aliases and allowlists and does not change Copilot history, Agency defaults or plugins, Memory Assistant, approval defaults, or unrelated configuration.
 6. Obtain explicit approval immediately before `--apply`, unless the user's current request already clearly authorizes both installation and migration. A request to inspect, preview, or install the plugin alone is not approval to migrate global routing.
 7. Apply only after approval:
@@ -41,7 +50,7 @@ Set up the installed `shared-mcp-gateway` plugin without relying on the current 
    node "<plugin-root>\tools\plugin-setup.mjs" --apply
    ```
 
-8. Read the apply JSON and give an explicit success or failure message. On success, report the top-level `sourcePath`, `backupPath`, `manifestPath`, `runtimePath`, copyable safely quoted PowerShell `rollbackCommand`, and exact `readinessCommand`. `--apply` installs the stable runtime and migrates the MCP configuration; it is not merely a plugin download. The script copies the runtime to `<stateDir>\runtime\<contentHash>`, runs a 120-second bounded `npm ci --omit=dev --ignore-scripts --no-audit --no-fund`, and invokes the copied migration implementation. It does not start the gateway daemon directly; after the client restarts, the connector starts or reuses the owned gateway.
+8. Read the apply JSON and give an explicit success or failure message. Inspect `sourcePath`, `backupPath`, `manifestPath`, `runtimePath`, `rollbackCommand`, and `readinessCommand` internally. Report the outcome, required next step, exact backup path, and copyable safely quoted PowerShell restore command rather than dumping all fields. `--apply` installs the stable runtime and migrates the MCP configuration; it is not merely a plugin download. The script copies the runtime to `<stateDir>\runtime\<contentHash>`, runs a 120-second bounded `npm ci --omit=dev --ignore-scripts --no-audit --no-fund`, and invokes the copied migration implementation. It does not start the gateway daemon directly; after the client restarts, the connector starts or reuses the owned gateway.
 9. Ask the user to restart Copilot CLI, then use the gateway in this order: `list_servers`, focused `search_tools` for one alias, `get_tool_schema` for one selected tool, then `call_tool`. If discovery reports `requiresExclusiveAccess: true`, call `claim_server` with that server alias once before the workflow and `release_server` after its calls finish. Non-exclusive servers need no claim. Do not fetch a whole backend catalog when a focused search is enough.
 
 ## Options
@@ -67,7 +76,7 @@ Use `--agency-adapters` only when the user asks to add Agency support and the lo
 
 ## Existing Installation and Health
 
-- If setup returns `already-configured`, do not overwrite or describe it as upgraded. Report `connectorPath`, `runtimePath`, `privatePath`, and `stateDir` from the JSON.
+- If setup returns `already-configured`, do not overwrite or describe it as upgraded. Inspect its paths internally and report health and unchanged state, not the full path inventory.
 - If the user explicitly asks to move an existing checkout installation or adopt a newer plugin runtime, preview with `--adopt-existing`, review the returned backup and adapter paths, and obtain approval before adding `--apply`. Preserve the backend catalog byte-for-byte; do not feed the connector-only configuration into a fresh migration.
 - After adoption, finish active client work, stop only the old owned daemon using its recorded state directory and port, then start the new connector using the generated MCP entry. Verify backend aliases, an allowed harmless call, and shared process reuse before declaring success. Do not delete the development checkout, backend data, or old runtime.
 - Do not modify unrelated shell profiles during runtime adoption. If other client configurations still reference the old runtime, report them and update only their connector paths when the user has authorized that integration.

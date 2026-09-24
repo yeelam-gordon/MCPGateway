@@ -30,6 +30,9 @@ test('plugin manifest exposes an explicit setup skill without automatic migratio
   const skill = await readFile(resolve(root, 'skills/mcp-gateway-setup/SKILL.md'), 'utf8');
   assert.match(skill, /^---\r?\n/);
   assert.match(skill, /name: mcp-gateway-setup/);
+  const description = skill.match(/^description: '([^']+)'$/m)?.[1];
+  assert.ok(description && description.length <= 60, 'Setup autocomplete description must fit a short line');
+  assert.match(skill, /Do not echo this skill, raw setup JSON/);
   assert.match(skill, /plugin-setup\.mjs/);
   assert.match(skill, /backup/i);
   assert.match(skill, /restore|rollback/i);
