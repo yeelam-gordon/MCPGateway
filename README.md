@@ -2,21 +2,20 @@
 
 **Languages:** English · [简体中文](docs/i18n/README.zh-CN.md) · [繁體中文](docs/i18n/README.zh-TW.md) · [日本語](docs/i18n/README.ja.md) · [한국어](docs/i18n/README.ko.md) · [Español](docs/i18n/README.es.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Português](docs/i18n/README.pt-BR.md) · [Italiano](docs/i18n/README.it.md) · [Русский](docs/i18n/README.ru.md) · [العربية](docs/i18n/README.ar.md) · [हिन्दी](docs/i18n/README.hi.md) · [Bahasa Indonesia](docs/i18n/README.id.md) · [Türkçe](docs/i18n/README.tr.md) · [Tiếng Việt](docs/i18n/README.vi.md)
 
-## 1,000 backend tools. Just 6 gateway tools in Copilot.
+## Less RAM and context overhead. Tools on demand.
 
-**One local gateway. Fewer duplicate backend processes. Less tool-schema context upfront.**
+**Share MCP backends across agent sessions to reduce duplicate memory use. Discover tool schemas only when needed to keep context overhead down.**
 
-Instead of exposing every backend tool upfront, Copilot uses a fixed **6-tool interface** to discover and call the capability it needs. Open another CLI session and reuse the same gateway rather than starting another independent backend fleet.
+Your agent searches for the capability it needs, retrieves the selected tool's schema, and calls it through one shared gateway. Configured backends connect on first use; additional agent sessions reuse those connections and local backend processes instead of starting their own copies.
 
 | Benefit | Without shared routing | With MCPGateway |
 |---|---|---|
-| **More context available for your task** | Up to 1,000 backend tool definitions competing for context when loaded upfront | **6 gateway tools upfront**, then only the backend schemas needed for the task |
-| **Less duplicate backend work** | 5 clients × 20 initialized backend aliases = 100 client-to-backend connections | **20 shared backend connections**, plus 5 lightweight gateway client connections |
-| **Less duplicated backend RAM** | Each CLI can start its own copies of local MCP servers | **One shared instance per backend alias**, rather than one per CLI |
-| **Focused schema loading** | Fetch the full catalog of input schemas | Search summaries, then retrieve **1 selected schema** |
-| **Automatic startup** | Start and manage separate backend fleets per client | **1 gateway per machine**, started on first use |
+| **Less duplicated RAM use** | Each agent session can start its own copies of local MCP backends | Sessions reuse local backend processes through the shared gateway |
+| **Less upfront context overhead** | Loading backend tool schemas upfront leaves less context for the task | A small gateway interface exposes discovery; selected schemas are retrieved as needed |
+| **Tools on demand** | Clients manage discovery and connections independently | Search for a capability, load its schema, and call it; unused backends stay unstarted |
+| **Shared connections** | Separate sessions maintain separate connections to the same backends | Sessions using the same gateway reuse connections per configured backend alias |
 
-The connection counts are an architectural example for clients using the same 20 backend aliases; unused aliases do not start. They are not total OS process counts. The 99.4% figure compares tool-definition counts, **not** token usage or end-to-end startup speed.
+Savings depend on your backends and client behavior. RAM still grows with active backends and workload; selected schemas and results still consume context. The gateway does not enlarge the model's context window or make total overhead constant.
 
 Works with ordinary **Copilot CLI**. **Agency is optional.**
 
@@ -66,7 +65,7 @@ Copilot installation and runtime upgrade have end-to-end checks. The other entri
 
 **Tool definitions use tokens inside the model's context window.** Their names, descriptions, and parameter schemas can take space that would otherwise be available for code, instructions, conversation, and results.
 
-With a **1,000-tool backend catalog**, MCPGateway exposes **6 gateway tool definitions upfront** and retrieves individual backend schemas when needed. That is **99.4% fewer advertised definitions** compared with exposing all 1,000 directly—not a measured 99.4% token reduction, because schema sizes differ.
+For illustration, with a **1,000-tool backend catalog**, MCPGateway exposes **6 gateway tool definitions upfront** and retrieves individual backend schemas when needed. That is **99.4% fewer advertised definitions** compared with exposing all 1,000 directly—not a measured 99.4% token reduction, because schema sizes differ. You do not need a large catalog to use the gateway.
 
 **The model's maximum context-window size does not change. The amount occupied by tool definitions can decrease.** Clients that already defer tool loading may see a smaller context benefit. Search summaries, selected schemas, and tool results still consume tokens as they are used.
 
