@@ -271,7 +271,9 @@ export async function synchronizeBackendTransaction(options) {
     return publicResult(plan, { ...base, status: 'synchronized', synchronizationStatus: 'synchronized', restartRequired: plan.restartRequired,
       message: plan.restartRequired
         ? 'Backend synchronization completed. Restart the gateway explicitly after active work finishes.'
-        : 'Backend synchronization completed; duplicate native entries were removed without changing the gateway catalog.' });
+        : plan.duplicates.length > 0
+          ? 'Backend synchronization completed; duplicate native entries were removed without changing the gateway catalog.'
+          : 'Client configuration completed without adding connections; no gateway restart is required.' });
   } finally {
     await releaseLock(lock);
   }

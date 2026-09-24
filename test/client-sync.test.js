@@ -207,4 +207,11 @@ test('repeated migration is a no-op with no additional backup or restart', async
   assert.deepEqual(await readFile(item.configPath), clientAfter);
   assert.deepEqual(await readFile(item.privatePath), privateAfter);
   assert.deepEqual(await readdir(join(item.stateDir, 'backups')), backups);
+  await writeFile(item.configPath, JSON.stringify({ mcpServers: {} }));
+  const empty = await connectClient({ ...options(item), apply: true, tokenLoader: fastToken });
+  assert.equal(empty.addedCount, 0);
+  assert.equal(empty.identicalDuplicateCount, 0);
+  assert.equal(empty.restartRequired, false);
+  assert.match(empty.message, /Client configuration completed/);
+  assert.doesNotMatch(empty.message, /duplicate native entries were removed/);
 });
