@@ -136,6 +136,7 @@ test('semantic duplicates ignore object key order, deduplicate source, and repea
   const first = await synchronizeBackends({ sourcePath: item.sourcePath, privatePath: item.privatePath, stateDir: item.stateDir,
     apply: true, tokenLoader: fastToken });
   assert.deepEqual(first.identicalDuplicates, ['duplicate']);
+  assert.equal(first.restartRequired, false);
   assert.deepEqual(Object.keys(JSON.parse(await readFile(item.sourcePath, 'utf8')).mcpServers), ['shared-mcp-gateway']);
   const sourceAfter = await readFile(item.sourcePath);
   const privateAfter = await readFile(item.privatePath);

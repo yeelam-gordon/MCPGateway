@@ -71,13 +71,14 @@ async function stableImplementation(options) {
   const connector = gateway.mcpServers?.['shared-mcp-gateway'] ?? gateway.servers?.['shared-mcp-gateway'];
   const selected = await ownedRuntime(connector);
   const trustedRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-  if (!samePath(selected.runtimePath, trustedRoot)) {
-    try {
-      const verifier = await import(pathToFileURL(join(trustedRoot, 'tools', 'plugin-setup.mjs')).href);
+  try {
+    const verifier = await import(pathToFileURL(join(trustedRoot, 'tools', 'plugin-setup.mjs')).href);
+    if (!samePath(selected.runtimePath, trustedRoot)) {
       await verifier.verifyTrustedRuntimeSelection({ trustedRoot, runtimePath: selected.runtimePath });
-    } catch (error) {
-      throw new Error('The selected gateway runtime is not trusted by this installed plugin payload. Run gateway setup with --apply to install or upgrade the stable runtime, then retry.', { cause: error });
     }
+    await verifier.verifyTrustedClientDependencies({ trustedRoot, runtimePath: selected.runtimePath });
+  } catch (error) {
+    throw new Error('The selected gateway runtime is not trusted by this installed plugin payload. Run gateway setup with --apply to install or upgrade the stable runtime, then retry.', { cause: error });
   }
   const helperPath = join(selected.runtimePath, 'src', 'client-connect.js');
   try { await access(helperPath); }

@@ -139,7 +139,7 @@ function inspect(sourceBytes, privateBytes, sourcePath, privatePath) {
   const replacementSourceBytes = Buffer.from(`${JSON.stringify(replacementSource, null, 2)}\n`);
   const wouldChange = additions.length > 0 || duplicates.length > 0;
   return {
-    additions, duplicates, conflicts, wouldChange,
+    additions, duplicates, conflicts, wouldChange, restartRequired: additions.length > 0 && conflicts.length === 0,
     sourceExtraCount: Object.keys(sourceExtras).length,
     privateBackendCount: Object.keys(backendServers).length,
     resultingBackendCount: Object.keys(mergedServers).length,
@@ -263,13 +263,15 @@ export async function synchronizeBackendTransaction(options) {
       if (!backendBeforeSource.equals(plan.replacementPrivateBytes)) throw new Error(`Private backend config changed after publication; refusing to overwrite ${privatePath}`);
       await (options.sourceWriter ?? atomicWrite)(sourcePath, plan.replacementSourceBytes, platform);
     } catch (error) {
-      error.setupResult = publicResult(plan, { ...base, status: 'partial-failure', synchronizationStatus: 'partial-failure', restartRequired: true,
+      error.setupResult = publicResult(plan, { ...base, status: 'partial-failure', synchronizationStatus: 'partial-failure', restartRequired: plan.restartRequired,
         message: 'The merged backend catalog was published, but the client config was not changed. Finish active work first, then manually restore both backups or rerun setup; no concurrent edits were overwritten.' });
       throw error;
     }
 
-    return publicResult(plan, { ...base, status: 'synchronized', synchronizationStatus: 'synchronized', restartRequired: true,
-      message: 'Backend synchronization completed. Restart the gateway explicitly after active work finishes.' });
+    return publicResult(plan, { ...base, status: 'synchronized', synchronizationStatus: 'synchronized', restartRequired: plan.restartRequired,
+      message: plan.restartRequired
+        ? 'Backend synchronization completed. Restart the gateway explicitly after active work finishes.'
+        : 'Backend synchronization completed; duplicate native entries were removed without changing the gateway catalog.' });
   } finally {
     await releaseLock(lock);
   }

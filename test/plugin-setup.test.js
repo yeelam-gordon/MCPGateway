@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -6,7 +7,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, test } from 'node:test';
-import { parseSetupArgs, pluginSetup } from '../tools/plugin-setup.mjs';
+import { parseSetupArgs, pluginSetup, verifyTrustedClientDependencies } from '../tools/plugin-setup.mjs';
 
 const execute = promisify(execFile);
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -34,6 +35,8 @@ async function pluginFixture() {
   await cp(new URL('../tools/migrate-config.mjs', import.meta.url), join(root, 'tools', 'migrate-config.mjs'));
   await cp(new URL('../tools/connector.mjs', import.meta.url), join(root, 'tools', 'connector.mjs'));
   await cp(new URL('../tools/connect-client.mjs', import.meta.url), join(root, 'tools', 'connect-client.mjs'));
+  await mkdir(join(root, 'integrity'), { recursive: true });
+  await cp(new URL('../integrity/client-runtime-dependencies.json', import.meta.url), join(root, 'integrity', 'client-runtime-dependencies.json'));
   await mkdir(join(root, 'src'), { recursive: true });
   await cp(new URL('../src/config.js', import.meta.url), join(root, 'src', 'config.js'));
   await cp(new URL('../src/config-schema.js', import.meta.url), join(root, 'src', 'config-schema.js'));
@@ -53,6 +56,8 @@ async function publishedRuntimeFixture(sourceRoot, item) {
   await mkdir(join(preview.runtimePath, 'tools'), { recursive: true });
   for (const file of ['LICENSE', 'package.json', 'package-lock.json']) await cp(join(sourceRoot, file), join(preview.runtimePath, file));
   for (const file of ['connector.mjs', 'connect-client.mjs', 'migrate-config.mjs']) await cp(join(sourceRoot, 'tools', file), join(preview.runtimePath, 'tools', file));
+  await mkdir(join(preview.runtimePath, 'integrity'), { recursive: true });
+  await cp(join(sourceRoot, 'integrity', 'client-runtime-dependencies.json'), join(preview.runtimePath, 'integrity', 'client-runtime-dependencies.json'));
   await cp(join(sourceRoot, 'src'), join(preview.runtimePath, 'src'), { recursive: true });
   await cp(join(sourceRoot, 'adapters'), join(preview.runtimePath, 'adapters'), { recursive: true });
   await writeJson(join(preview.runtimePath, '.plugin-runtime.json'), { version: 1, contentHash: preview.contentHash });
@@ -149,6 +154,7 @@ test('dependency-free plugin bootstrap delegates migration preview and apply to 
   for (const file of ['LICENSE', 'package.json', 'package-lock.json']) await cp(join(repositoryRoot, file), join(isolated, file));
   await cp(join(repositoryRoot, 'src'), join(isolated, 'src'), { recursive: true });
   await cp(join(repositoryRoot, 'adapters'), join(isolated, 'adapters'), { recursive: true });
+  await cp(join(repositoryRoot, 'integrity'), join(isolated, 'integrity'), { recursive: true });
   for (const file of ['connector.mjs', 'connect-client.mjs', 'migrate-config.mjs', 'plugin-setup.mjs']) {
     await cp(join(repositoryRoot, 'tools', file), join(isolated, 'tools', file));
   }
@@ -159,6 +165,34 @@ test('dependency-free plugin bootstrap delegates migration preview and apply to 
     existing: { command: 'node', args: ['existing.mjs'], cwd: repositoryRoot, env: { TOKEN: 'fixture' } },
     added: { command: 'node', args: ['added.mjs'], cwd: repositoryRoot }
   } });
+  const dependencyEntry = join(installed.runtimePath, 'node_modules', 'smol-toml', 'dist', 'index.js');
+  const originalDependency = await readFile(dependencyEntry);
+  const dependencySentinel = join(item.root, 'tampered-dependency-executed.txt');
+  const maliciousDependency = Buffer.concat([Buffer.from(`import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(dependencySentinel)}, 'executed');\n`), originalDependency]);
+  await writeFile(dependencyEntry, maliciousDependency);
+  await writeJson(join(installed.runtimePath, 'client-runtime-dependencies.json'), {
+    forged: true, sha256: createHash('sha256').update(maliciousDependency).digest('hex')
+  });
+  for (const migrate of [false, true]) {
+    const protectedClient = join(item.root, `tampered-dependency-${migrate}.json`);
+    await writeJson(protectedClient, { keep: true, mcpServers: {} });
+    const before = await readFile(protectedClient);
+    const protectedArgs = [bootstrap, '--client', 'claude', '--config', protectedClient, '--gateway-config', item.sourcePath];
+    if (migrate) protectedArgs.push('--migrate');
+    await assert.rejects(() => execute(process.execPath, protectedArgs, { timeout: 30000, windowsHide: true }),
+      error => /not trusted by this installed plugin payload/.test(error.stderr));
+    assert.deepEqual(await readFile(protectedClient), before);
+    await assert.rejects(() => stat(dependencySentinel), error => error.code === 'ENOENT');
+  }
+  await writeFile(dependencyEntry, originalDependency);
+  await rm(join(installed.runtimePath, 'client-runtime-dependencies.json'));
+
+  const shadowRoot = join(installed.runtimePath, 'src', 'node_modules', 'smol-toml');
+  await mkdir(shadowRoot, { recursive: true });
+  await writeJson(join(shadowRoot, 'package.json'), { name: 'smol-toml', version: '1.8.0', type: 'module' });
+  await assert.rejects(() => verifyTrustedClientDependencies({ trustedRoot: isolated, runtimePath: installed.runtimePath }), /shadow smol-toml dependency/);
+  await rm(join(installed.runtimePath, 'src', 'node_modules'), { recursive: true });
+
   const args = [bootstrap, '--client', 'claude', '--config', clientPath, '--gateway-config', item.sourcePath, '--migrate'];
   const preview = JSON.parse((await execute(process.execPath, args, { timeout: 30000, windowsHide: true })).stdout);
   assert.equal(preview.status, 'planned-sync');

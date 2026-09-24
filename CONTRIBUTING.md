@@ -9,6 +9,10 @@ Use Node.js 24. From the repository root:
 ```powershell
 npm ci --ignore-scripts --no-audit --no-fund
 npm test
+npm run test:sync
+npm run test:clients
+npm run test:migration
+npm run test:lifecycle
 ```
 
 Keep paths portable across Ubuntu and Windows. In particular, test paths containing spaces and avoid assumptions about shell quoting or path separators.
@@ -21,7 +25,18 @@ Keep paths portable across Ubuntu and Windows. In particular, test paths contain
 - Preserve dependency hygiene: prefer existing platform or project capabilities, keep dependency ranges intentional, and explain new runtime dependencies.
 - Do not add a formatter or formatting dependency solely for a contribution. Follow the surrounding style.
 
-Run the full test command before opening a pull request. Describe user-visible changes, security implications, compatibility impact, and any required restart or migration steps.
+Run the test commands above before opening a pull request. Describe user-visible changes, security implications, compatibility impact, and any required restart or migration steps.
+
+## Client dependency integrity
+
+Client setup previews validate executable parser files before loading them. When updating the pinned `smol-toml` dependency, regenerate the trusted file-hash manifest from its locked public npm tarball:
+
+```powershell
+node tools\generate-client-dependency-integrity.mjs
+```
+
+The generator checks the tarball's SHA-512 against `package-lock.json` before recording SHA-256 hashes in `integrity\client-runtime-dependencies.json`. Review and commit both lockfile and manifest changes, then run the client, migration, and installation tests. Do not regenerate hashes from an installed runtime or weaken validation to accept altered files. Normal setup previews never run the generator or download dependencies.
+
 ## Engineering references
 
 These upstream examples informed the repository's proportionate release checks; they are references, not additional project requirements:
@@ -29,4 +44,3 @@ These upstream examples informed the repository's proportionate release checks; 
 - [GitHub MCP Server CI](https://github.com/github/github-mcp-server/blob/85598ba6e1256f7ebf4867b95d63b833c4549264/.github/workflows/go.yml) for multi-platform CI and pinned workflow dependencies.
 - [Playwright MCP publish workflow](https://github.com/microsoft/playwright-mcp/blob/f1257a5a67aff872f947fae274759f7d54853862/.github/workflows/publish.yml) for release-version consistency checks.
 - [Model Context Protocol TypeScript SDK dependency policy](https://github.com/modelcontextprotocol/typescript-sdk/blob/7f7a94c22017e121a960e071bb50ec75e34450bd/DEPENDENCY_POLICY.md) for dependency hygiene and review principles.
-

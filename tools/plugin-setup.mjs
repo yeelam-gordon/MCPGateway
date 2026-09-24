@@ -10,7 +10,7 @@ const SELF_NAME = 'shared-mcp-gateway';
 const MIN_NODE_MAJOR = 24;
 const CLIENT_REQUEST_TIMEOUT_MS = 210_000;
 const SETUP_USAGE = 'Usage: node tools/plugin-setup.mjs [--apply] [--adopt-existing] [--source-config PATH] [--state-dir PATH] [--port PORT] [--agency-adapters]';
-const STATIC_FILES = ['LICENSE', 'package.json', 'package-lock.json', 'tools/connector.mjs', 'tools/connect-client.mjs', 'tools/migrate-config.mjs'];
+const STATIC_FILES = ['LICENSE', 'package.json', 'package-lock.json', 'integrity/client-runtime-dependencies.json', 'tools/connector.mjs', 'tools/connect-client.mjs', 'tools/migrate-config.mjs'];
 const STATIC_TREES = ['src'];
 const JSON_TREES = ['adapters'];
 
@@ -297,6 +297,73 @@ async function verifyRuntimeDependencies(runtimePath) {
       throw new Error(`Published runtime dependency ${name} does not match package-lock.json: ${runtimePath}`);
     }
   }
+}
+
+async function collectDependencyFiles(packageRoot) {
+  const files = [];
+  async function walk(directory, prefix = '') {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const path = join(directory, entry.name);
+      const details = await lstat(path);
+      if (details.isSymbolicLink()) throw new Error(`Client runtime dependency must not contain symlinks or junctions: ${path}`);
+      if (details.isDirectory()) await walk(path, relativePath);
+      else if (details.isFile()) files.push(relativePath);
+      else throw new Error(`Client runtime dependency contains an unsupported filesystem entry: ${path}`);
+    }
+  }
+  await walk(packageRoot);
+  return files.sort();
+}
+
+export async function verifyTrustedClientDependencies({ trustedRoot, runtimePath }) {
+  const trusted = resolve(trustedRoot);
+  const selected = resolve(runtimePath);
+  const integrityPath = await safeRuntimePath(trusted, 'integrity/client-runtime-dependencies.json', 'file', 'Trusted client dependency manifest');
+  const lockPath = await safeRuntimePath(trusted, 'package-lock.json', 'file', 'Trusted package lock');
+  const [{ value: integrity }, { value: lock }] = await Promise.all([
+    readJson(integrityPath, 'Trusted client dependency manifest'),
+    readJson(lockPath, 'Trusted package lock')
+  ]);
+  const name = 'smol-toml';
+  const expected = integrity?.version === 1 ? integrity.packages?.[name] : null;
+  const locked = lock?.packages?.[`node_modules/${name}`];
+  if (!expected || typeof expected.files !== 'object' || Array.isArray(expected.files) || Object.keys(expected.files).length === 0) {
+    throw new Error(`Trusted client dependency manifest is invalid for ${name}`);
+  }
+  if (!locked?.version || !locked?.resolved || !locked?.integrity
+      || expected.version !== locked.version || expected.resolved !== locked.resolved || expected.integrity !== locked.integrity) {
+    throw new Error(`Trusted ${name} dependency metadata does not match package-lock.json`);
+  }
+  const shadowPath = join(selected, 'src', 'node_modules', name);
+  try {
+    await lstat(shadowPath);
+    throw new Error(`Client runtime contains a shadow ${name} dependency: ${shadowPath}`);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  let packageRoot;
+  try { packageRoot = await safeRuntimePath(selected, join('node_modules', name), 'directory', `Client runtime dependency ${name}`); }
+  catch (error) {
+    if (error.code === 'ENOENT') throw new Error(`Client runtime is missing required dependency ${name}: ${selected}`);
+    throw error;
+  }
+  const expectedFiles = Object.keys(expected.files).sort();
+  const actualFiles = await collectDependencyFiles(packageRoot);
+  if (actualFiles.length !== expectedFiles.length || actualFiles.some((file, index) => file !== expectedFiles[index])) {
+    throw new Error(`Client runtime dependency ${name} file set does not match the trusted package`);
+  }
+  for (const relativePath of expectedFiles) {
+    const filePath = await safeRuntimePath(packageRoot, relativePath, 'file', `Client runtime dependency ${name}`);
+    if (digest(await readFile(filePath)) !== expected.files[relativePath]) {
+      throw new Error(`Client runtime dependency ${name} content does not match the trusted package: ${relativePath}`);
+    }
+  }
+  const installed = await readJson(join(packageRoot, 'package.json'), `Client runtime dependency ${name}`);
+  if (installed.value?.name !== name || installed.value?.version !== expected.version) {
+    throw new Error(`Client runtime dependency ${name} package metadata does not match the trusted package`);
+  }
+  return { name, version: expected.version, fileCount: expectedFiles.length };
 }
 
 async function verifyPublishedRuntime(runtimePath, plan) {
