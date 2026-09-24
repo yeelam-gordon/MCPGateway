@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, writeFile, rm, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, access, link, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -94,6 +94,49 @@ test('registration rejects gateway edits after bootstrap verification and during
     tokenLoader: async () => writeFile(gatewayPath, JSON.stringify(changedGateway)) }), /changed after bootstrap verification/);
   assert.equal(await readFile(target, 'utf8'), original);
   await assert.rejects(() => access(join(stateDir, 'backups')), { code: 'ENOENT' });
+});
+
+test('registration rejects private catalog and gateway aliases before state preparation', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'gateway-registration-alias-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const stateDir = join(root, 'state');
+  const privatePath = join(stateDir, 'backends.json');
+  const gatewayPath = join(root, 'copilot.json');
+  await mkdir(stateDir);
+  const catalog = JSON.stringify({ mcpServers: { existing: { command: process.execPath, args: ['--version'] } } });
+  const connector = { command: process.execPath, args: [
+    connectorScript, '--auto-start', '--config', privatePath, '--state-dir', stateDir, '--port', '7319'
+  ] };
+  await writeFile(privatePath, catalog);
+  await writeFile(gatewayPath, JSON.stringify({ mcpServers: { 'shared-mcp-gateway': connector } }));
+  const gatewayBytes = await readFile(gatewayPath);
+  const targets = [privatePath];
+  for (const [name, source] of [['catalog', privatePath], ['gateway', gatewayPath]]) {
+    const hard = join(root, `${name}-hardlink.json`);
+    await link(source, hard);
+    targets.push(hard);
+    const symbolic = join(root, `${name}-symlink.json`);
+    try {
+      await symlink(source, symbolic, 'file');
+      targets.push(symbolic);
+    } catch (error) {
+      if (process.platform !== 'win32' || !['EPERM', 'EACCES'].includes(error.code)) throw error;
+      t.diagnostic(`${name} symlink creation unavailable; exact-path and hardlink checks remain active`);
+    }
+  }
+  for (const client of ['claude', 'vscode', 'opencode', 'qwen', 'kimi', 'antigravity', 'codex']) {
+    for (const config of targets) {
+      for (const apply of [false, true]) {
+        await assert.rejects(() => connectClient({ client, config, 'gateway-config': gatewayPath, apply,
+          tokenLoader: async () => assert.fail('Aliased input must be rejected before token preparation')
+        }), /Client configuration must (?:differ|not resolve)/);
+        assert.equal(await readFile(privatePath, 'utf8'), catalog);
+        assert.deepEqual(await readFile(gatewayPath), gatewayBytes);
+      }
+    }
+  }
+  await assert.rejects(access(join(stateDir, 'owner.token')), { code: 'ENOENT' });
+  await assert.rejects(access(join(stateDir, 'backups')), { code: 'ENOENT' });
 });
 
 test('Codex uses an explicit native registration plan, not a fabricated TOML writer', async () => {

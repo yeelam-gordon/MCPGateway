@@ -37,11 +37,19 @@ export function inspectGatewayConnector(connector, platform = process.platform) 
   return { connectorPath: resolve(connectorPath), privatePath, stateDir, port };
 }
 
-async function assertDifferentFiles(leftPath, rightPath, leftLabel, rightLabel, platform) {
+export async function assertDifferentFiles(leftPath, rightPath, leftLabel, rightLabel, platform, { allowMissing = false } = {}) {
   if (samePath(leftPath, rightPath, platform)) throw new Error(`${leftLabel} must differ from ${rightLabel}`);
-  const [leftReal, rightReal, leftStat, rightStat] = await Promise.all([
-    realpath(leftPath), realpath(rightPath), stat(leftPath, { bigint: true }), stat(rightPath, { bigint: true })
-  ]);
+  const identity = async path => {
+    try { return await Promise.all([realpath(path), stat(path, { bigint: true })]); }
+    catch (error) {
+      if (allowMissing && error.code === 'ENOENT') return null;
+      throw error;
+    }
+  };
+  const [left, right] = await Promise.all([identity(leftPath), identity(rightPath)]);
+  if (!left || !right) return;
+  const [leftReal, leftStat] = left;
+  const [rightReal, rightStat] = right;
   if (samePath(leftReal, rightReal, platform)
       || (leftStat.ino !== 0n && leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino)) {
     throw new Error(`${leftLabel} must not resolve to the same file as ${rightLabel}`);

@@ -29,6 +29,13 @@ export async function connectClient(options) {
     }
   };
   await assertGatewayUnchanged();
+  const { inspectGatewayConnector, assertDifferentFiles } = await import('./client-sync.js');
+  const platform = options.platform ?? process.platform;
+  const owned = inspectGatewayConnector(connector, platform);
+  await assertDifferentFiles(configPath, owned.privatePath, 'Client configuration', 'private backend catalog',
+    platform, { allowMissing: !options.migrate });
+  await assertDifferentFiles(configPath, gatewayPath, 'Client configuration', 'gateway source configuration',
+    platform, { allowMissing: !options.migrate });
   let original = null;
   try { original = await readFile(configPath, 'utf8'); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
