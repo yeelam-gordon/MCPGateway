@@ -204,6 +204,11 @@ function extractQwen(alias, entry) {
 }
 
 function extractKimi(alias, entry) {
+  for (const field of ['enabled', 'disabled']) {
+    if (entry[field] !== undefined && typeof entry[field] !== 'boolean') {
+      throw new Error(`kimi MCP entry ${alias}.${field} must be a boolean`);
+    }
+  }
   if (entry.transport !== undefined && entry.transport !== 'stdio' && entry.transport !== 'http') {
     throw new Error(`kimi MCP entry ${alias}.transport cannot be represented safely; only stdio and http are supported`);
   }

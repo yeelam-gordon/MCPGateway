@@ -9,7 +9,7 @@ function absolutePath(value) {
 }
 
 function pathLike(value) {
-  return typeof value === 'string' && (/^\.\.?[\\/]/.test(value) || /[\\/]/.test(value));
+  return typeof value === 'string' && (/^[A-Za-z]:/.test(value) || /^\.\.?[\\/]/.test(value) || /[\\/]/.test(value));
 }
 
 function extension(value) {
@@ -23,11 +23,18 @@ function extension(value) {
 function scopedPackageSpecifier(value) {
   return typeof value === 'string' && /^@[^/\\]+\/[^/\\]+(?:@[^/\\]+)?$/.test(value);
 }
+function argumentValue(value) {
+  return typeof value === 'string' && value.startsWith('-') && value.includes('=')
+    ? value.slice(value.indexOf('=') + 1) : value;
+}
+function driveRelative(value) {
+  return typeof value === 'string' && /^[A-Za-z]:(?![\\/])/.test(value);
+}
 function hasRelativeScriptArgument(entry) {
   if (!Array.isArray(entry.args)) return false;
   for (const argument of entry.args) {
     if (typeof argument !== 'string' || /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(argument)) continue;
-    const candidate = argument.startsWith('-') && argument.includes('=') ? argument.slice(argument.indexOf('=') + 1) : argument;
+    const candidate = argumentValue(argument);
     if (candidate.startsWith('-') || absolutePath(candidate) || scopedPackageSpecifier(candidate)) continue;
     if (pathLike(candidate)) return true;
     if (SCRIPT_EXTENSIONS.has(extension(candidate))) return true;
@@ -39,10 +46,12 @@ export function assertPortableBackendPaths(config) {
   if (!object(config) || !object(config.mcpServers)) throw new Error('Canonical backend config must contain mcpServers before path validation.');
   for (const entry of Object.values(config.mcpServers)) {
     if (!object(entry) || entry.url !== undefined) continue;
+    if (driveRelative(entry.command) || entry.args?.some(argument => driveRelative(argumentValue(argument))))
+      throw new Error('Migrated local backends cannot use Windows drive-relative commands or arguments; use absolute paths.');
     if (entry.cwd !== undefined && !absolutePath(entry.cwd))
       throw new Error('Migrated local backends require cwd to be an explicit absolute Windows or POSIX path.');
     if (absolutePath(entry.cwd)) continue;
-    if (pathLike(entry.command) && !absolutePath(entry.command))
+    if ((pathLike(entry.command) || SCRIPT_EXTENSIONS.has(extension(entry.command))) && !absolutePath(entry.command))
       throw new Error('Migrated local backends with relative command paths require an explicit absolute cwd or an absolute command path.');
     if (hasRelativeScriptArgument(entry))
       throw new Error('Migrated local backend script or relative path arguments require an explicit absolute cwd or absolute paths.');

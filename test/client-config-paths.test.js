@@ -21,6 +21,18 @@ test('rejects relative cwd, command paths, and script arguments without absolute
   assert.throws(() => assertPortableBackendPaths(config({ command: 'node', args: ['./worker.mjs'] })), /script or relative path arguments/);
   assert.throws(() => assertPortableBackendPaths(config({ command: 'node', args: ['worker.mjs'] })), /script or relative path arguments/);
   assert.throws(() => assertPortableBackendPaths(config({ command: 'node', args: ['--config=./settings.json'] })), /script or relative path arguments/);
+  for (const command of ['worker.mjs', 'server.py']) {
+    assert.throws(() => assertPortableBackendPaths(config({ command, args: [] })), /relative command paths/);
+    assert.doesNotThrow(() => assertPortableBackendPaths(config({ command, args: [], cwd: '/srv/project' })));
+  }
+  for (const cwd of [undefined, 'C:\\project', 'D:\\project']) {
+    assert.throws(() => assertPortableBackendPaths(config({ command: 'C:worker.exe', args: [], cwd })), /drive-relative commands/);
+  }
+  for (const cwd of [undefined, 'C:\\project', 'D:\\project']) {
+    for (const argument of ['C:worker.mjs', '--config=C:settings.json']) {
+      assert.throws(() => assertPortableBackendPaths(config({ command: 'node', args: [argument], cwd })), /drive-relative/);
+    }
+  }
 });
 
 test('dispatcher applies path guard to extracted canonical backends', () => {

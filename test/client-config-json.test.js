@@ -377,6 +377,14 @@ test('official JSON field semantics are preserved or rejected explicitly', () =>
     worker: { transport: 'stdio', command: 'node', args: [], enabled: false }
   } }) });
   assert.equal(kimi.mcpServers.worker.disabled, true);
+  for (const flags of [
+    { enabled: 'false' }, { enabled: 0 }, { enabled: null },
+    { disabled: 'false' }, { disabled: 0 }, { enabled: true, disabled: 'false' }
+  ]) {
+    assert.throws(() => extractClientBackends({ client: 'kimi', configText: JSON.stringify({
+      mcpServers: { worker: { command: 'node', args: [], ...flags } }
+    }) }), /must be a boolean/);
+  }
   for (const [client, entry, pattern] of [
     ['qwen', { url: 'https://example.test/sse' }, /SSE semantics/],
     ['qwen', { command: 'node', discoveryTimeoutMs: 1000 }, /discoveryTimeoutMs requires client-managed interpretation/],
