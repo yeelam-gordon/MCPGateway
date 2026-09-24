@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
-const aclTimeoutMs = 5_000;
+const pwshAclTimeoutMs = 5_000;
+const windowsPowerShellAclTimeoutMs = 10_000;
 const tokenWriteWaitMs = 2_000;
 const tokenWritePollMs = 20;
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -59,11 +60,11 @@ async function secureOwnerOnly(items) {
   }
   const payload = Buffer.from(JSON.stringify({ items }), 'utf8').toString('base64');
   const encodedCommand = Buffer.from(windowsAclScript.replace('__PAYLOAD__', payload), 'utf16le').toString('base64');
-  const options = { windowsHide: true, timeout: aclTimeoutMs };
   let lastError;
   for (const shell of ['pwsh.exe', 'powershell.exe']) {
+    const timeout = shell === 'pwsh.exe' ? pwshAclTimeoutMs : windowsPowerShellAclTimeoutMs;
     try {
-      await execFileAsync(shell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand], options);
+      await execFileAsync(shell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand], { windowsHide: true, timeout });
       return;
     } catch (error) {
       lastError = error;

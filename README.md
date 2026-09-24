@@ -83,7 +83,7 @@ The value is avoiding repeated backend overhead **and** keeping the initial tool
 ### What has been verified?
 
 - **1,000-tool synthetic catalog, 2 clients:** both see exactly **6 gateway tools**; a focused search returns **1 matching summary**, and a second client reuses the cached catalog instead of fetching it again. [Test](test/catalog-scale.test.js)
-- **186 local checks** passed for v0.5.0 across the core, recurring-sync, client/documentation, and real installation/upgrade suites, covering sharing, ownership, cancellation, migration, recovery, and platform behavior.
+- **188 local checks** passed for v0.5.0 across the core, recurring-sync, client/documentation, and real installation/upgrade suites, covering sharing, ownership, cancellation, migration, recovery, and platform behavior.
 - **2 CI platforms:** Windows and Ubuntu on Node.js 24, plus CodeQL analysis.
 
 These checks demonstrate the mechanism, not unlimited capacity. Real startup time still includes authentication, network calls, and Copilot's own initialization.

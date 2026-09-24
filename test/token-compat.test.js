@@ -178,6 +178,70 @@ test('Windows token ACL supports PowerShell 7 and Windows PowerShell 5.1 fallbac
     }
   });
 
+  await t.test('gives Windows PowerShell 5.1 a longer bounded cold-start budget', async () => {
+    const childProcess = require('node:child_process');
+    const originalExecFile = childProcess.execFile;
+    const invocations = [];
+    childProcess.execFile = function coldStartExecFile(file, args, options, callback) {
+      invocations.push({ file, timeout: options.timeout });
+      queueMicrotask(() => {
+        if (file === 'pwsh.exe') callback(Object.assign(new Error('spawn pwsh.exe ENOENT'), { code: 'ENOENT' }));
+        else if (options.timeout > 5_000) callback(null, '', '');
+        else callback(Object.assign(new Error('Windows PowerShell cold start exceeded 5 seconds'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' }));
+      });
+      return undefined;
+    };
+    syncBuiltinESMExports();
+    const root = await mkdtemp(join(tmpdir(), 'mcp-gateway-token-cold-start-'));
+    try {
+      const { loadOrCreateToken } = await import('../src/token.js?cold-start=' + Date.now());
+      await loadOrCreateToken(join(root, 'state'));
+      assert.deepEqual(invocations, [
+        { file: 'pwsh.exe', timeout: 5_000 },
+        { file: 'powershell.exe', timeout: 10_000 },
+        { file: 'pwsh.exe', timeout: 5_000 },
+        { file: 'powershell.exe', timeout: 10_000 }
+      ]);
+    } finally {
+      childProcess.execFile = originalExecFile;
+      syncBuiltinESMExports();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test('Windows PowerShell fallback timeout remains finite and fails closed', async () => {
+    const childProcess = require('node:child_process');
+    const originalExecFile = childProcess.execFile;
+    const invocations = [];
+    const timeoutError = Object.assign(new Error('command timed out after 10000ms'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' });
+    childProcess.execFile = function timedOutExecFile(file, args, options, callback) {
+      invocations.push({ file, timeout: options.timeout });
+      queueMicrotask(() => file === 'pwsh.exe'
+        ? callback(Object.assign(new Error('spawn pwsh.exe ENOENT'), { code: 'ENOENT' }))
+        : callback(timeoutError));
+      return undefined;
+    };
+    syncBuiltinESMExports();
+    const root = await mkdtemp(join(tmpdir(), 'mcp-gateway-token-timeout-'));
+    try {
+      const { loadOrCreateToken } = await import('../src/token.js?timeout=' + Date.now());
+      await assert.rejects(() => loadOrCreateToken(join(root, 'state')), error => {
+        assert.match(error.message, /Cannot apply owner-only ACL/);
+        assert.equal(error.cause, timeoutError);
+        assert.equal(error.cause.killed, true);
+        assert.equal(error.cause.signal, 'SIGTERM');
+        return true;
+      });
+      assert.deepEqual(invocations, [
+        { file: 'pwsh.exe', timeout: 5_000 },
+        { file: 'powershell.exe', timeout: 10_000 }
+      ]);
+    } finally {
+      childProcess.execFile = originalExecFile;
+      syncBuiltinESMExports();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   await t.test('surfaces PowerShell 7 ACL failures without changing shell semantics', async () => {
     const childProcess = require('node:child_process');
     const originalExecFile = childProcess.execFile;

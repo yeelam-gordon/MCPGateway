@@ -17,6 +17,7 @@ All notable changes to this project are documented here. This project follows se
 ### Fixed
 
 - Runtime publication retries transient Windows file-access failures within a short bounded window, without deleting an existing runtime or changing its permissions.
+- Windows PowerShell 5.1 fallback allows a bounded 10-second cold start for owner-only permission checks; PowerShell 7 retains its 5-second limit, and failures still stop setup.
 - Recurring sync preserves reserved object-property names as server aliases and refuses configuration changes detected during preparation rather than writing to a stale catalog.
 
 ## [0.4.1] - 2026-09-24
