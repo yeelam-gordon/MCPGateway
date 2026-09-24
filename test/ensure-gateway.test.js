@@ -63,6 +63,32 @@ async function ensureInSeparateProcess(ensureOptions) {
   return JSON.parse(stdout.trim());
 }
 
+async function gatewayProcessIdsForStateDir(stateDir) {
+  const cliPath = join(process.cwd(), 'src', 'cli.js');
+  if (process.platform === 'win32') {
+    const payload = Buffer.from(JSON.stringify({ cliPath, stateDir, pid: process.pid }), 'utf8').toString('base64');
+    const script = `$payload=ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}')));$ids=@(Get-CimInstance Win32_Process|Where-Object{$_.ProcessId -ne $payload.pid -and $_.CommandLine -and $_.CommandLine.Contains([string]$payload.cliPath) -and $_.CommandLine.Contains('--state-dir') -and $_.CommandLine.Contains([string]$payload.stateDir)}|ForEach-Object{[int]$_.ProcessId});ConvertTo-Json -InputObject @($ids) -Compress`;
+    const encoded = Buffer.from(script, 'utf16le').toString('base64');
+    let lastError;
+    for (const shell of ['pwsh.exe', 'powershell.exe']) {
+      try {
+        const { stdout } = await execFileAsync(shell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true, timeout: 5000 });
+        return JSON.parse(stdout.trim());
+      } catch (error) {
+        lastError = error;
+        if (error.code === 'ENOENT' && shell === 'pwsh.exe') continue;
+        throw error;
+      }
+    }
+    throw lastError;
+  }
+  const { stdout } = await execFileAsync('ps', ['-eo', 'pid=,args='], { timeout: 5000 });
+  return stdout.split('\n').flatMap(line => {
+    const match = line.trim().match(/^(\d+)\s+(.+)$/);
+    return match && match[2].includes(cliPath) && match[2].includes('--state-dir') && match[2].includes(stateDir) ? [Number(match[1])] : [];
+  });
+}
+
 for (let round = 1; round <= 3; round += 1) {
   test(`concurrent callers start exactly one persistent gateway (round ${round})`, { timeout: 60_000 }, async () => {
     const item = await fixture();
@@ -169,13 +195,22 @@ test('rejects reuse when persisted settings do not match', { timeout: 60_000 }, 
 test('launch failure is bounded and cleans up only its owned process', { timeout: 20_000 }, async () => {
   const item = await fixture({ invalid: true });
   const startedAt = Date.now();
-  // On a busy Windows host, process-provenance checks can exhaust this short budget before spawn.
+  let launchError;
   await assert.rejects(
-    () => ensureGateway(options(item, { startupTimeoutMs: 2500 })),
-    /exited|did not become ready|Timed out checking process|startup deadline/i
+    () => ensureGateway(options(item, { startupTimeoutMs: 12_000 })),
+    error => { launchError = error; return true; },
   );
-  assert.ok(Date.now() - startedAt < 10_000, 'launch failure exceeded its bounded deadline');
+
+  assert.match(launchError.message, /^Gateway process exited (?:with code \d+; see .+gateway\.stderr\.log|or its provenance could not be recorded: spawned process is no longer running)$/i);
+  const stderr = await readFile(join(item.stateDir, 'gateway.stderr.log'), 'utf8');
+  assert.match(stderr, /Invalid MCP config .*config: must contain exactly one of mcpServers or servers/i);
+  assert.deepEqual(await gatewayProcessIdsForStateDir(item.stateDir), [], 'owned gateway process remained after launch failure');
+  await assert.rejects(
+    () => readFile(join(item.stateDir, 'gateway-instance.json'), 'utf8'),
+    error => error.code === 'ENOENT',
+  );
   assert.equal(await stopOwnedGateway({ stateDir: item.stateDir, port: item.port, timeoutMs: 1000 }), false);
+  assert.ok(Date.now() - startedAt < 20_000, 'launch failure and cleanup exceeded the test bound');
 });
 
 test('stopping an owned daemon observes process exit and removes its manifest', { timeout: 30_000 }, async () => {

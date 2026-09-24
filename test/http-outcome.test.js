@@ -87,6 +87,8 @@ test('HTTP 502 after mutation dispatch latches an exclusive workflow without ret
     await dispatched.promise;
     const failure = decode(await failed);
     assert.equal(failure.error, 'call_failed');
+    assert.match(failure.message, /downstream outcome is unknown; request was not retried/);
+    assert.match(failure.message, /server remains blocked; review active work and restart gateway before another workflow/);
     assert.equal(mutationCalls, 1);
 
     assert.equal(decode(await ownerA.callTool({ name: 'release_server', arguments: { server: 'exclusive' } })).error, 'server_outcome_unknown');
@@ -100,4 +102,34 @@ test('HTTP 502 after mutation dispatch latches an exclusive workflow without ret
     await Promise.allSettled([...sessions.values()].map(session => session.transport.close()));
     await new Promise(resolve => listener.close(resolve));
   }
+});
+
+
+test('nonexclusive post-dispatch failure reports uncertainty without exclusive recovery guidance', async () => {
+  let calls = 0;
+  const client = {
+    async callTool() {
+      calls += 1;
+      throw new Error('Streamable HTTP error: 503 Service Unavailable');
+    },
+    async close() {}
+  };
+  const registry = new BackendRegistry(new Map([['open', {
+    name: 'open', command: 'unused', tools: ['mutate'], requiresExclusiveAccess: false
+  }]]), { closeTimeoutMs: 50 });
+  registry.entries.set('open', {
+    state: 'ready', client, transport: null,
+    tools: new Map([['mutate', { name: 'mutate', inputSchema: { type: 'object' } }]]),
+    discovery: null, connecting: null, closing: null, transportError: null, retireScheduled: null
+  });
+
+  await assert.rejects(() => registry.callTool('open', 'mutate', { value: 'echo' }), error => {
+    assert.equal(error.code, 'call_failed');
+    assert.equal(error.outcomeUnknown, true);
+    assert.match(error.message, /downstream outcome is unknown; request was not retried/);
+    assert.doesNotMatch(error.message, /server remains blocked|restart gateway/);
+    return true;
+  });
+  assert.equal(calls, 1);
+  await registry.close();
 });

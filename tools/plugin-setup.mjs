@@ -69,8 +69,17 @@ async function atomicCreate(path, bytes, platform) {
   try { await link(staged, path); } finally { await rm(staged, { force: true }); }
 }
 
-function isWithin(path, parent) {
-  const rel = relative(resolve(parent), resolve(path));
+function comparablePath(path, platform = process.platform) {
+  const normalized = resolve(path);
+  return platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function samePath(left, right, platform = process.platform) {
+  return comparablePath(left, platform) === comparablePath(right, platform);
+}
+
+function isWithin(path, parent, platform = process.platform) {
+  const rel = relative(comparablePath(parent, platform), comparablePath(path, platform));
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
@@ -131,13 +140,13 @@ async function inspectExistingGateway(servers, requested) {
   if (Object.keys(servers).length !== 1) throw new Error('Source config mixes the gateway connector with additional server entries');
   const args = own && Array.isArray(own.args) ? own.args : [];
   const connectorPath = args[0];
-  if (own.disabled || typeof own.command !== 'string' || resolve(own.command) !== resolve(process.execPath) || !connectorPath || basename(connectorPath).toLowerCase() !== 'connector.mjs' || !args.includes('--auto-start')) {
+  if (own.disabled || typeof own.command !== 'string' || !samePath(own.command, process.execPath, requested.platform) || !connectorPath || basename(connectorPath).toLowerCase() !== 'connector.mjs' || !args.includes('--auto-start')) {
     throw new Error(`Source config reserves ${SELF_NAME} for a different gateway command`);
   }
   const backendPath = resolve(argValue(args, '--config'));
   const entryStateDir = resolve(argValue(args, '--state-dir'));
   const entryPort = Number(argValue(args, '--port'));
-  if (backendPath !== requested.privatePath || entryStateDir !== requested.stateDir || entryPort !== requested.port) {
+  if (!samePath(backendPath, requested.privatePath, requested.platform) || !samePath(entryStateDir, requested.stateDir, requested.platform) || entryPort !== requested.port) {
     throw new Error('Existing gateway connector settings do not match the requested setup settings');
   }
   const adapterIndexes = args.map((value, index) => value === '--adapters' ? index : -1).filter(index => index >= 0);
@@ -383,7 +392,7 @@ async function adoptExistingGateway({ source, sourcePath, stateDir, port, existi
   const runtimePath = join(stateDir, 'runtime', contentHash);
   const connectorPath = join(runtimePath, 'tools', 'connector.mjs');
   const oldRuntimePath = existing.runtimePath;
-  const copyAdapter = existing.adapterPath !== null && !isWithin(existing.adapterPath, stateDir);
+  const copyAdapter = existing.adapterPath !== null && !isWithin(existing.adapterPath, stateDir, platform);
   const adaptersPath = copyAdapter ? join(stateDir, 'adopted-agency-adapters.json') : existing.adapterPath;
   if (copyAdapter && await exists(adaptersPath)) {
     const current = await readFile(adaptersPath);
@@ -500,13 +509,13 @@ export async function pluginSetup(options = {}) {
   const adoptExisting = options.adoptExisting === true;
   const agencyAdapters = options.agencyAdapters === true;
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('--port must be an integer from 1 to 65535');
-  if (sourcePath === privatePath) throw new Error('Source config and private backend config must be different files');
+  if (samePath(sourcePath, privatePath, options.platform ?? process.platform)) throw new Error('Source config and private backend config must be different files');
 
   const source = await readJson(sourcePath, 'Source config');
   const collection = configCollection(source.value, sourcePath);
   const { servers } = collection;
   const existing = await inspectExistingGateway(servers, {
-    stateDir, privatePath, port, agencyAdapters: options.agencyAdapters, adoptExisting
+    stateDir, privatePath, port, agencyAdapters: options.agencyAdapters, adoptExisting, platform: options.platform ?? process.platform
   });
   if (existing && adoptExisting) {
     const files = await runtimeFiles(sourceRoot);

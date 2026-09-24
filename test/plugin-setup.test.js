@@ -291,6 +291,43 @@ test('existing migrated entry and private config are detected and preserved with
   assert.deepEqual(await readdir(item.stateDir), ['backends.json']);
 });
 
+test('Windows path case variants preserve an existing install in default and adoption flows', { skip: process.platform !== 'win32' }, async () => {
+  const variant = path => [...path].map(character => {
+    const lower = character.toLowerCase();
+    const upper = character.toUpperCase();
+    return lower === upper ? character : character === lower ? upper : lower;
+  }).join('');
+  for (const adoptExisting of [false, true]) {
+    const item = await existingGatewayFixture();
+    const entry = item.source.mcpServers['shared-mcp-gateway'];
+    entry.command = variant(entry.command);
+    entry.args = entry.args.map((value, index, args) => index === 0 || ['--config', '--state-dir', '--adapters'].includes(args[index - 1]) ? variant(value) : value);
+    await writeJson(item.sourcePath, item.source);
+    const result = await pluginSetup({
+      sourceRoot: item.sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir,
+      platform: 'win32', adoptExisting
+    });
+    assert.equal(result.status, adoptExisting ? 'planned-adoption' : 'already-configured');
+  }
+});
+
+test('Windows path comparison still rejects genuinely different existing-install paths', async () => {
+  for (const target of ['command', 'config', 'state']) {
+    const item = await existingGatewayFixture();
+    const entry = item.source.mcpServers['shared-mcp-gateway'];
+    if (target === 'command') entry.command = join(item.root, 'different-node.exe');
+    else {
+      const flag = target === 'config' ? '--config' : '--state-dir';
+      entry.args[entry.args.indexOf(flag) + 1] = join(item.root, `different-${target}`);
+    }
+    await writeJson(item.sourcePath, item.source);
+    await assert.rejects(() => pluginSetup({
+      sourceRoot: item.sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir,
+      platform: 'win32', adoptExisting: true
+    }), target === 'command' ? /different gateway command/ : /settings do not match/);
+  }
+});
+
 test('mixed or different shared gateway aliases are rejected explicitly', async () => {
   const item = await sourceFixture({ mcpServers: {
     'shared-mcp-gateway': { command: process.execPath, args: ['connector.mjs', '--auto-start', '--config', 'x', '--port', '7319', '--state-dir', 'y'] },

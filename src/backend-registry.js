@@ -310,8 +310,16 @@ export class BackendRegistry {
       );
     } catch (error) {
       if (isRequestTimeout(error)) throw downstreamTimeout(`Call ${name}.${toolName}`, this.callTimeoutMs, error);
-      const failure = error instanceof GatewayError ? error : new GatewayError('call_failed', `Call ${name}.${toolName} failed: ${error.message}`, error);
-      if (!isKnownNonExecutionFailure(error)) failure.outcomeUnknown = true;
+      const failure = error instanceof GatewayError
+        ? error
+        : new GatewayError('call_failed', `Call ${name}.${toolName} did not return a confirmed completion: ${error.message}`, error);
+      if (!isKnownNonExecutionFailure(error)) {
+        failure.outcomeUnknown = true;
+        failure.message += '; downstream outcome is unknown; request was not retried';
+        if (this.requiresExclusiveAccess(name)) {
+          failure.message += '; server remains blocked; review active work and restart gateway before another workflow';
+        }
+      }
       try { await this.#retire(name, entry); }
       catch (cleanupError) { failure.cleanupError = cleanupError; }
       throw failure;

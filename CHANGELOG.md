@@ -13,6 +13,9 @@ All notable changes to this project are documented here. This project follows se
 - Runtime reuse verifies packaged file contents rather than trusting only an installation marker.
 - Ambiguous post-dispatch HTTP failures retain exclusive ownership until the outcome can be resolved.
 - Windows owner-only permissions are applied atomically, avoiding temporary access failures during simultaneous gateway startup.
+- Warm Windows permission checks are batched into one process, with tested PowerShell 7 and Windows PowerShell 5.1 handling.
+- Existing-installation checks accept equivalent Windows path casing while continuing to reject different locations.
+- The first uncertain HTTP failure explains the unknown outcome, lack of retry, and required exclusive-server recovery.
 
 ## [0.4.0] - 2026-09-24
 
