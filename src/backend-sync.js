@@ -31,16 +31,25 @@ function parse(bytes, label, path) {
 function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (object(value)) {
-    const defaultType = (typeof value.command === 'string' && (value.type === 'stdio' || value.type === 'local'))
-      || (typeof value.url === 'string' && value.type === 'http');
-    const keys = Object.keys(value).filter(key => (key !== 'disabled' || value[key] !== false) && (key !== 'type' || !defaultType));
+    const keys = Object.keys(value);
     return `{${keys.sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
   }
   return JSON.stringify(value);
 }
 
 function semanticEqual(left, right) {
-  return canonical(left) === canonical(right);
+  const normalized = entry => {
+    const result = { ...entry };
+    if (result.disabled === false) delete result.disabled;
+    if ((typeof result.command === 'string' && ['stdio', 'local'].includes(result.type))
+        || (typeof result.url === 'string' && result.type === 'http')) delete result.type;
+    if (Array.isArray(result.tools)) {
+      if (result.tools.includes('*')) delete result.tools;
+      else result.tools = [...new Set(result.tools)].sort();
+    }
+    return result;
+  };
+  return canonical(normalized(left)) === canonical(normalized(right));
 }
 
 export function classifyBackendMerge(sourceServers, backendServers) {

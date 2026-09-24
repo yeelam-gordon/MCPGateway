@@ -100,7 +100,9 @@ test('seven native client formats merge into one catalog and two SDK clients sha
     args: [echoScript],
     env: { COUNTER_FILE: counterPath, SYNTHETIC_SECRET: 'fixture-only-do-not-print' }
   };
-  const initialEntries = Object.fromEntries(Array.from({ length: 10 }, (_, index) => [`shared-${index}`, entry]));
+  const initialEntries = Object.fromEntries(Array.from({ length: 10 }, (_, index) => [
+    `shared-${index}`, { ...entry, tools: ['*'] }
+  ]));
   await writeFile(catalogPath, JSON.stringify({ catalog_marker: 'preserved', mcpServers: initialEntries }));
   const connector = {
     command: process.execPath,
@@ -130,7 +132,7 @@ test('seven native client formats merge into one catalog and two SDK clients sha
     assert.equal(Object.keys(catalog.mcpServers).length, 12, `${client}: ten plus two, never duplicated`);
     assert.equal(catalog.catalog_marker, 'preserved', client);
     for (const alias of [...Object.keys(initialEntries), 'added-one', 'added-two']) {
-      assert.deepEqual(catalog.mcpServers[alias], entry, `${client}: ${alias}`);
+      assert.deepEqual(catalog.mcpServers[alias], initialEntries[alias] ?? entry, `${client}: ${alias}`);
     }
     const updated = await readFile(configPath, 'utf8');
     assert.ok(updated.includes('keep-this-setting'), `${client}: unrelated native setting`);
