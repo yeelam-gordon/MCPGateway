@@ -2,20 +2,20 @@
 
 **Languages:** English · [简体中文](docs/i18n/README.zh-CN.md) · [繁體中文](docs/i18n/README.zh-TW.md) · [日本語](docs/i18n/README.ja.md) · [한국어](docs/i18n/README.ko.md) · [Español](docs/i18n/README.es.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Português](docs/i18n/README.pt-BR.md) · [Italiano](docs/i18n/README.it.md) · [Русский](docs/i18n/README.ru.md) · [العربية](docs/i18n/README.ar.md) · [हिन्दी](docs/i18n/README.hi.md) · [Bahasa Indonesia](docs/i18n/README.id.md) · [Türkçe](docs/i18n/README.tr.md) · [Tiếng Việt](docs/i18n/README.vi.md)
 
-## Less RAM and context overhead. Tools on demand.
+## Less duplicated MCP overhead. Tools on demand.
 
-**Share MCP backends across agent sessions to reduce duplicate memory use. Discover tool schemas only when needed to keep context overhead down.**
+**Share MCP connections across agents to reduce RAM use. Load tool schemas only when needed to reduce context overhead.**
 
-Your agent searches for the capability it needs, retrieves the selected tool's schema, and calls it through one shared gateway. Configured backends connect on first use; additional agent sessions reuse those connections and local backend processes instead of starting their own copies.
+Configure one gateway connection in each agent CLI. Sessions using the same configured MCP entries reuse their connections and local server processes instead of starting separate copies. Your agent searches for the capability it needs, retrieves the selected tool's schema, and calls it through the gateway; unused MCP servers stay unstarted.
 
 | Benefit | Without shared routing | With MCPGateway |
 |---|---|---|
-| **Less duplicated RAM use** | Each agent session can start its own copies of local MCP backends | Sessions reuse local backend processes through the shared gateway |
-| **Less upfront context overhead** | Loading backend tool schemas upfront leaves less context for the task | A small gateway interface exposes discovery; selected schemas are retrieved as needed |
-| **Tools on demand** | Clients manage discovery and connections independently | Search for a capability, load its schema, and call it; unused backends stay unstarted |
-| **Shared connections** | Separate sessions maintain separate connections to the same backends | Sessions using the same gateway reuse connections per configured backend alias |
+| **Less duplicated RAM use** | Each agent session can start its own copies of local MCP servers | Sessions reuse local server processes through the shared gateway |
+| **Less upfront context overhead** | Loading MCP tool schemas upfront leaves less context for the task | A small gateway interface exposes discovery; selected schemas are retrieved as needed |
+| **Tools on demand** | Clients manage discovery and connections independently | Search for a capability, load its schema, and call it; unused MCP servers stay unstarted |
+| **Shared connections** | Separate sessions maintain separate connections to the same MCP servers | Sessions using the same gateway reuse connections per configured MCP entry |
 
-Savings depend on your backends and client behavior. RAM still grows with active backends and workload; selected schemas and results still consume context. The gateway does not enlarge the model's context window or make total overhead constant.
+Shared MCP server processes do not multiply with the number of agent sessions. Each CLI still has its own memory, lightweight connector, and model context; active workloads, retrieved schemas, and results add overhead. Savings depend on your MCP setup and client behavior, not a larger model context window or constant total RAM use.
 
 Works with ordinary **Copilot CLI**. **Agency is optional.**
 
