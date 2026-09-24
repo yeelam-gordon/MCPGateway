@@ -13,6 +13,7 @@ test('accepts absolute commands and absolute cwd with relative scripts on Window
   assert.doesNotThrow(() => assertPortableBackendPaths(config({ command: 'node', args: ['worker.mjs'], cwd: 'C:\\project' })));
   assert.doesNotThrow(() => assertPortableBackendPaths(config({ command: 'node', args: ['./worker.mjs'], cwd: '/srv/project' })));
   assert.doesNotThrow(() => assertPortableBackendPaths(config({ command: 'node', args: ['https://example.test/config.json'] })));
+  assert.doesNotThrow(() => assertPortableBackendPaths(config({ command: 'node', args: ['--config=https://example.test/config.json'] })));
 });
 
 test('rejects relative cwd, command paths, and script arguments without absolute cwd', () => {
