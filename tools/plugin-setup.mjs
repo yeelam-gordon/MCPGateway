@@ -10,7 +10,7 @@ const SELF_NAME = 'shared-mcp-gateway';
 const MIN_NODE_MAJOR = 24;
 const CLIENT_REQUEST_TIMEOUT_MS = 210_000;
 const SETUP_USAGE = 'Usage: node tools/plugin-setup.mjs [--apply] [--adopt-existing] [--source-config PATH] [--state-dir PATH] [--port PORT] [--agency-adapters]';
-const STATIC_FILES = ['LICENSE', 'package.json', 'package-lock.json', 'tools/connector.mjs', 'tools/migrate-config.mjs'];
+const STATIC_FILES = ['LICENSE', 'package.json', 'package-lock.json', 'tools/connector.mjs', 'tools/connect-client.mjs', 'tools/migrate-config.mjs'];
 const STATIC_TREES = ['src'];
 const JSON_TREES = ['adapters'];
 

@@ -28,6 +28,12 @@ test('release metadata stays consistent', async () => {
   assert.equal(lock.packages[''].version, pkg.version);
   assert.deepEqual(lock.packages[''].dependencies, pkg.dependencies);
   assert.deepEqual(lock.packages[''].engines, pkg.engines);
+  for (const [name, dependency] of Object.entries(lock.packages)) {
+    if (dependency.resolved) {
+      assert.equal(new URL(dependency.resolved).origin, 'https://registry.npmjs.org',
+        `${name}: published dependencies must not require a private registry`);
+    }
+  }
 
   assert.equal(marketplace.metadata.version, pkg.version);
   assert.ok(Array.isArray(marketplace.plugins) && marketplace.plugins.length > 0);
@@ -50,4 +56,6 @@ test('CI keeps fresh setup and upgrade verification as an explicit gate', async 
   assert.match(pkg.scripts['test:clients'], /test\/client-config\.test\.js/);
   assert.match(pkg.scripts['test:clients'], /test\/localization\.test\.js/);
   assert.match(workflow, /run: npm run test:clients/);
+  assert.match(pkg.scripts['test:migration'], /test\/cross-client-migration\.test\.js/);
+  assert.match(workflow, /run: npm run test:migration/);
 });

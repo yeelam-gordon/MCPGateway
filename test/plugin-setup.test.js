@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { afterEach, test } from 'node:test';
 import { parseSetupArgs, pluginSetup } from '../tools/plugin-setup.mjs';
 
+const execute = promisify(execFile);
+const repositoryRoot = fileURLToPath(new URL('..', import.meta.url));
 const currentPackageVersion = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
 const roots = [];
 afterEach(async () => Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))));
@@ -28,6 +33,7 @@ async function pluginFixture() {
   await mkdir(join(root, 'tools'), { recursive: true });
   await cp(new URL('../tools/migrate-config.mjs', import.meta.url), join(root, 'tools', 'migrate-config.mjs'));
   await cp(new URL('../tools/connector.mjs', import.meta.url), join(root, 'tools', 'connector.mjs'));
+  await cp(new URL('../tools/connect-client.mjs', import.meta.url), join(root, 'tools', 'connect-client.mjs'));
   await mkdir(join(root, 'src'), { recursive: true });
   await cp(new URL('../src/config.js', import.meta.url), join(root, 'src', 'config.js'));
   await cp(new URL('../src/config-schema.js', import.meta.url), join(root, 'src', 'config-schema.js'));
@@ -46,7 +52,7 @@ async function publishedRuntimeFixture(sourceRoot, item) {
   const preview = await pluginSetup({ sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir });
   await mkdir(join(preview.runtimePath, 'tools'), { recursive: true });
   for (const file of ['LICENSE', 'package.json', 'package-lock.json']) await cp(join(sourceRoot, file), join(preview.runtimePath, file));
-  for (const file of ['connector.mjs', 'migrate-config.mjs']) await cp(join(sourceRoot, 'tools', file), join(preview.runtimePath, 'tools', file));
+  for (const file of ['connector.mjs', 'connect-client.mjs', 'migrate-config.mjs']) await cp(join(sourceRoot, 'tools', file), join(preview.runtimePath, 'tools', file));
   await cp(join(sourceRoot, 'src'), join(preview.runtimePath, 'src'), { recursive: true });
   await cp(join(sourceRoot, 'adapters'), join(preview.runtimePath, 'adapters'), { recursive: true });
   await writeJson(join(preview.runtimePath, '.plugin-runtime.json'), { version: 1, contentHash: preview.contentHash });
@@ -130,6 +136,34 @@ test('apply publishes a stable runtime then invokes copied migration with exact 
   assert.match(result.recoveryPrompt, /If the migrated MCP setup does not work/);
   assert.match(result.restartNewCli, /start a new Copilot CLI session/);
   assert.match(result.runtimeHealthPowerShell, /--check/);
+});
+
+test('dependency-free plugin bootstrap delegates migration preview and apply to the installed stable runtime', { timeout: 120000 }, async () => {
+  const item = await sourceFixture({ mcpServers: {
+    existing: { command: 'node', args: ['existing.mjs'], cwd: repositoryRoot, env: { TOKEN: 'fixture' } }
+  } });
+  const installed = await pluginSetup({ sourceRoot: repositoryRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir,
+    apply: true, tokenLoader: injectedToken });
+  const isolated = await temporary('plugin-cache-isolated-');
+  await mkdir(join(isolated, 'tools'), { recursive: true });
+  const bootstrap = join(isolated, 'tools', 'connect-client.mjs');
+  await cp(new URL('../tools/connect-client.mjs', import.meta.url), bootstrap);
+  await assert.rejects(() => stat(join(isolated, 'node_modules')), error => error.code === 'ENOENT');
+  const clientPath = join(item.root, 'claude.json');
+  await writeJson(clientPath, { keep: true, mcpServers: {
+    existing: { command: 'node', args: ['existing.mjs'], cwd: repositoryRoot, env: { TOKEN: 'fixture' } },
+    added: { command: 'node', args: ['added.mjs'], cwd: repositoryRoot }
+  } });
+  const args = [bootstrap, '--client', 'claude', '--config', clientPath, '--gateway-config', item.sourcePath, '--migrate'];
+  const preview = JSON.parse((await execute(process.execPath, args, { timeout: 30000, windowsHide: true })).stdout);
+  assert.equal(preview.status, 'planned-sync');
+  assert.deepEqual(preview.addedAliases, ['added']);
+  const applied = JSON.parse((await execute(process.execPath, [...args, '--apply'], { timeout: 30000, windowsHide: true })).stdout);
+  assert.equal(applied.status, 'synchronized');
+  assert.equal(applied.runtimePath, undefined);
+  const catalog = JSON.parse(await readFile(installed.privatePath, 'utf8'));
+  assert.deepEqual(Object.keys(catalog.mcpServers).sort(), ['added', 'existing']);
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(clientPath, 'utf8')).mcpServers), ['shared-mcp-gateway']);
 });
 
 test('dependency failure leaves user config untouched and cleans only staging runtime', async () => {

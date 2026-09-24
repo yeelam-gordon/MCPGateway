@@ -129,9 +129,9 @@ test('reserved object property names are preserved as aliases without prototype 
 });
 
 test('semantic duplicates ignore object key order, deduplicate source, and repeated apply is a no-op', async () => {
-  const stored = backend(2);
-  const reordered = { tools: stored.tools, requiresExclusiveAccess: stored.requiresExclusiveAccess, disabled: stored.disabled,
-    env: stored.env, args: stored.args, command: stored.command };
+  const { disabled: _defaultDisabled, ...stored } = backend(2);
+  const reordered = { tools: stored.tools, requiresExclusiveAccess: stored.requiresExclusiveAccess, disabled: false,
+    type: 'local', env: stored.env, args: stored.args, command: stored.command };
   const item = await fixture({ sourceExtras: { duplicate: reordered }, privateServers: { duplicate: stored } });
   const first = await synchronizeBackends({ sourcePath: item.sourcePath, privatePath: item.privatePath, stateDir: item.stateDir,
     apply: true, tokenLoader: fastToken });

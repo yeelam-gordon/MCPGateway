@@ -3,8 +3,11 @@ import { mkdtemp, readFile, writeFile, rm, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { clientCapabilities, prepareConnectorRegistration, extractConfiguredBackends } from '../src/client-config.js';
+import { fileURLToPath } from 'node:url';
+import { clientCapabilities, prepareConnectorRegistration, extractConfiguredBackends, prepareClientMigration } from '../src/client-config.js';
 import { connectClient } from '../tools/connect-client.mjs';
+
+const connectorScript = fileURLToPath(new URL('../tools/connector.mjs', import.meta.url));
 
 test('one adapter boundary describes supported client formats explicitly', () => {
   for (const client of ['claude', 'vscode', 'opencode', 'qwen', 'kimi', 'antigravity']) {
@@ -13,9 +16,24 @@ test('one adapter boundary describes supported client formats explicitly', () =>
     });
   }
   assert.equal(clientCapabilities('codex').format, 'toml');
-  assert.equal(clientCapabilities('codex').backendExtraction, false);
+  assert.equal(clientCapabilities('codex').backendExtraction, true);
   assert.throws(() => clientCapabilities('unknown'), /Unsupported client/);
-  assert.throws(() => extractConfiguredBackends({ client: 'codex', configText: '' }), /TOML/);
+  assert.deepEqual(extractConfiguredBackends({ client: 'codex', configText: '' }), { mcpServers: {} });
+});
+
+test('client migration adapter returns canonical backends and preserves non-MCP fields', () => {
+  const connector = { command: process.execPath, args: ['connector.mjs', '--auto-start', '--config', 'state/backends.json', '--port', '7319', '--state-dir', 'state'] };
+  const existing = { command: 'node', args: ['existing.mjs'], cwd: tmpdir(), tools: ['allowed'], disabled: true };
+  const configText = JSON.stringify({ theme: 'keep', mcpServers: {
+    existing
+  } });
+  const prepared = prepareClientMigration({ client: 'claude', configText, connector });
+  assert.equal(prepared.client, 'claude');
+  assert.equal(prepared.changed, true);
+  assert.deepEqual(prepared.backends.mcpServers.existing, existing);
+  const updated = JSON.parse(prepared.updatedText);
+  assert.equal(updated.theme, 'keep');
+  assert.deepEqual(Object.keys(updated.mcpServers), ['shared-mcp-gateway']);
 });
 
 test('client registration previews without writes then backs up only the selected client configuration', async t => {
@@ -28,7 +46,7 @@ test('client registration previews without writes then backs up only the selecte
     existing: { type: 'local', command: ['node', 'server.mjs'], enabled: true }
   } });
   const connector = { command: process.execPath, args: [
-    join(root, 'runtime', 'tools', 'connector.mjs'),
+    connectorScript,
     '--auto-start', '--config', join(state, 'backends.json'),
     '--port', '7319', '--state-dir', state
   ], tools: ['*'], timeout: 210000 };

@@ -24,6 +24,10 @@ test('localized quickstarts retain the numbered benefits and canonical client na
       }
     }
     assert.ok(text.includes('../REFERENCE.md'), language.code);
+    assert.ok(text.includes('../CLIENTS.md#cross-client-migration'), language.code);
+    for (const count of ['10', '2', '12']) {
+      assert.ok(text.includes(`**${count}**`), `${language.code}: cross-client merge count`);
+    }
     assert.ok(!text.includes('copilot plugin install'), `${language.code}: use the canonical install guide`);
     const firstTable = text.match(/^\|.+(?:\r?\n\|.+)+/m)?.[0];
     assert.ok(firstTable, `${language.code}: benefits table`);

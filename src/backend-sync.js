@@ -30,12 +30,36 @@ function parse(bytes, label, path) {
 
 function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (object(value)) return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+  if (object(value)) {
+    const defaultType = (typeof value.command === 'string' && (value.type === 'stdio' || value.type === 'local'))
+      || (typeof value.url === 'string' && value.type === 'http');
+    const keys = Object.keys(value).filter(key => (key !== 'disabled' || value[key] !== false) && (key !== 'type' || !defaultType));
+    return `{${keys.sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`;
+  }
   return JSON.stringify(value);
 }
 
 function semanticEqual(left, right) {
   return canonical(left) === canonical(right);
+}
+
+export function classifyBackendMerge(sourceServers, backendServers) {
+  const additions = [];
+  const duplicates = [];
+  const conflicts = [];
+  for (const [name, entry] of Object.entries(sourceServers)) {
+    if (!Object.hasOwn(backendServers, name)) additions.push(name);
+    else if (semanticEqual(entry, backendServers[name])) duplicates.push(name);
+    else conflicts.push(name);
+  }
+  additions.sort();
+  duplicates.sort();
+  conflicts.sort();
+  const mergedServers = Object.fromEntries(Object.entries(backendServers));
+  for (const name of additions) Object.defineProperty(mergedServers, name, {
+    value: sourceServers[name], enumerable: true, configurable: true, writable: true
+  });
+  return { additions, duplicates, conflicts, mergedServers };
 }
 
 function powershellLiteral(value) {
@@ -106,20 +130,7 @@ function inspect(sourceBytes, privateBytes, sourcePath, privatePath) {
   const backendServers = validateConfig(privateConfig).servers;
   if (Object.hasOwn(backendServers, SELF_NAME)) throw new Error(`Private backend config must not contain ${SELF_NAME}; a gateway self-loop is blocked`);
 
-  const additions = [];
-  const duplicates = [];
-  const conflicts = [];
-  for (const [name, entry] of Object.entries(sourceExtras)) {
-    if (!Object.hasOwn(backendServers, name)) additions.push(name);
-    else if (semanticEqual(entry, backendServers[name])) duplicates.push(name);
-    else conflicts.push(name);
-  }
-  additions.sort();
-  duplicates.sort();
-  conflicts.sort();
-
-  const mergedServers = Object.fromEntries(Object.entries(backendServers));
-  for (const name of additions) Object.defineProperty(mergedServers, name, { value: sourceExtras[name], enumerable: true, configurable: true, writable: true });
+  const { additions, duplicates, conflicts, mergedServers } = classifyBackendMerge(sourceExtras, backendServers);
   const replacementPrivate = { ...privateConfig, [backend.key]: mergedServers };
   const replacementSource = { ...sourceConfig, [source.key]: { [SELF_NAME]: connector } };
   validateConfig(replacementPrivate);
@@ -146,6 +157,7 @@ function publicResult(plan, options = {}) {
     addedAliases: plan.additions,
     identicalDuplicates: plan.duplicates,
     conflicts: plan.conflicts,
+    warnings: plan.warnings ?? [],
     addedCount: plan.additions.length,
     identicalDuplicateCount: plan.duplicates.length,
     conflictCount: plan.conflicts.length,
@@ -153,7 +165,7 @@ function publicResult(plan, options = {}) {
     privateBackendCount: plan.privateBackendCount,
     resultingBackendCount: plan.resultingBackendCount,
     backendCount: plan.resultingBackendCount,
-    restartRequired: options.restartRequired ?? (plan.wouldChange && plan.conflicts.length === 0),
+    restartRequired: options.restartRequired ?? plan.restartRequired ?? (plan.wouldChange && plan.conflicts.length === 0),
     backupPath: options.backupPath ?? null,
     sourceBackupPath: options.sourceBackupPath ?? null,
     backendBackupPath: options.backendBackupPath ?? null,
@@ -165,7 +177,7 @@ function publicResult(plan, options = {}) {
   };
 }
 
-export async function synchronizeBackends(options) {
+export async function synchronizeBackendTransaction(options) {
   const sourcePath = options.sourcePath;
   const privatePath = options.privatePath;
   const stateDir = options.stateDir;
@@ -175,7 +187,8 @@ export async function synchronizeBackends(options) {
   const initialPrivateBytes = await readFile(privatePath);
   if (options.expectedSourceBytes && !initialSourceBytes.equals(options.expectedSourceBytes)) throw new Error(`Source config changed after gateway inspection; refusing synchronization: ${sourcePath}`);
   if (options.expectedPrivateBytes && !initialPrivateBytes.equals(options.expectedPrivateBytes)) throw new Error(`Private backend config changed after gateway inspection; refusing synchronization: ${privatePath}`);
-  const initialPlan = inspect(initialSourceBytes, initialPrivateBytes, sourcePath, privatePath);
+  const inspectPlan = options.inspectPlan ?? inspect;
+  const initialPlan = inspectPlan(initialSourceBytes, initialPrivateBytes, sourcePath, privatePath);
   const preview = publicResult(initialPlan, { apply, sourcePath, privatePath });
   if (!apply) return preview;
   if (initialPlan.conflicts.length > 0) {
@@ -199,7 +212,7 @@ export async function synchronizeBackends(options) {
         message: 'Backend synchronization stopped before backups or writes because configuration changed during state preparation.' };
       throw error;
     }
-    const plan = inspect(sourceBytes, privateBytes, sourcePath, privatePath);
+    const plan = inspectPlan(sourceBytes, privateBytes, sourcePath, privatePath);
     if (plan.conflicts.length > 0) {
       const error = new Error(`Backend synchronization conflicts require manual resolution: ${plan.conflicts.join(', ')}`);
       error.setupResult = { ...publicResult(plan, { apply, sourcePath, privatePath }), status: 'conflict', synchronizationStatus: 'conflict', restartRequired: false };
@@ -219,7 +232,7 @@ export async function synchronizeBackends(options) {
     await atomicCreate(backendBackupPath, privateBytes, platform);
     const manifest = {
       version: 1,
-      operation: 'backend-sync',
+      operation: options.operation ?? 'backend-sync',
       sourcePath,
       privatePath,
       files: {
@@ -260,4 +273,8 @@ export async function synchronizeBackends(options) {
   } finally {
     await releaseLock(lock);
   }
+}
+
+export function synchronizeBackends(options) {
+  return synchronizeBackendTransaction({ ...options, inspectPlan: inspect });
 }

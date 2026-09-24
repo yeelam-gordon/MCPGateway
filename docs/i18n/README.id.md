@@ -25,6 +25,8 @@
 
 Gateway selalu menampilkan 6 alat kepada agen: 4 untuk menemukan dan memanggil kemampuan, serta 2 untuk integrasi yang memerlukan alur kerja eksklusif. Menambah koneksi tidak memperbesar antarmuka awal ini; skema lengkap hanya dimuat untuk alat yang dipilih. Koneksi yang sudah Anda konfigurasi dan autentikasi digunakan kembali, tanpa memasang layanan atau menyediakan kredensial.
 
+Satu katalog MCP bersama dapat melayani beberapa agen: mulai dengan **10** koneksi di Copilot, lalu migrasikan secara eksplisit konfigurasi Claude yang didukung dengan **2** koneksi baru agar kedua agen memakai **12** koneksi yang sama; memasang plugin saja tidak menggabungkannya secara otomatis. Entri bernama sama hanya dideduplikasi jika definisi aliasnya identik, bukan sekadar karena mengarah ke layanan yang sama, dan konflik menghentikan proses untuk ditinjau. Migrasi menampilkan pratinjau terlebih dahulu, membuat cadangan, dan menolak pengaturan native yang tidak didukung; ini juga bukan klaim bahwa setiap klien native telah diuji dari awal hingga akhir, jadi lihat [panduan migrasi (bahasa Inggris)](../CLIENTS.md#cross-client-migration).
+
 **Prasyarat:** Node.js 24 atau lebih baru, npm, Git, dan Copilot CLI dengan dukungan plugin untuk proses awal saat ini. Agency bersifat opsional.
 
 ## Instalasi dan peningkatan berdasarkan klien

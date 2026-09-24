@@ -23,6 +23,7 @@ Set up the installed `shared-mcp-gateway` plugin without relying on the current 
 - Preview or apply migration of an existing Copilot MCP configuration.
 - Verify an existing gateway installation or explain rollback.
 - Import newly added entries from the selected user MCP configuration into an existing gateway without reinstalling its runtime.
+- Connect another agent client or migrate its supported native MCP entries into the same shared catalog.
 - Add eligible Agency adapters when the user explicitly requests them.
 
 ## Prerequisites
@@ -88,6 +89,26 @@ Use `--agency-adapters` only when the user asks to add Agency support and the lo
 - Do not modify unrelated shell profiles during runtime adoption. If other client configurations still reference the old runtime, report them and update only their connector paths when the user has authorized that integration.
 - For a newly configured installation, execute the returned `readinessCommand` exactly. For `already-configured`, run `connectorPath` with the returned `stateDir`, the requested or default port that setup verified, and `--check`. Do not invent paths or rely on the plugin cache.
 - Discovery proves only that an alias is configured. Report exactly which backend and harmless read-only tool, if any, were exercised.
+
+## Migrating another agent client
+
+Use this workflow only for an existing shared gateway. Confirm the selected client and exact configuration file; do not infer scopes or merge every configuration found on the machine. Read the [client guide](../../docs/CLIENTS.md) for supported fields and current native-client validation limits.
+
+1. Resolve [the client helper](../../tools/connect-client.mjs) from this installed plugin. If it reports that the configured stable runtime is too old, complete an explicitly approved runtime adoption first; do not install dependencies into the plugin cache.
+2. Preview the selected native file using `claude`, `vscode`, `codex`, `opencode`, `qwen`, `kimi`, or `antigravity`:
+
+   ```powershell
+   node "<plugin-root>\tools\connect-client.mjs" --client "<client>" --config "<native-config>" --gateway-config "<copilot-mcp-config>" --migrate
+   ```
+
+3. Explain additions, identical same-name duplicates, conflicts, and format warnings. Codex TOML changes regenerate comments/formatting; original bytes are backed up. Unsupported authentication, variable references, client policies, or syntax must be resolved explicitly, never stripped to make migration succeed.
+4. Obtain approval to change both the selected client file and shared catalog before appending `--apply`. This makes imported aliases available to other clients of that gateway. Different aliases remain distinct; do not silently merge organization-specific connections.
+5. Inspect the result and provide both backup paths and exact restore commands. If publication is partial, identify which file changed and retain both backups; never automatically roll back over later user edits.
+6. If a restart is required, finish active work, restart only the verified owned gateway, and reopen affected clients. Verify catalog additions and an approved harmless call before claiming runtime success. Migration itself does not install a new runtime or restart it.
+
+Without `--migrate`, the helper only registers the connector and leaves existing native MCP entries in place. Do not describe registration-only mode as importing or deduplicating those entries. Do not use the Copilot-only setup script to rewrite another client's native format.
+
+OpenCode migration conservatively rejects every root or agent-level `permission` or legacy `tools` key containing `*` or `?`, even when it appears unrelated to the selected aliases. Do not remove restrictive policies to bypass this guard; keep those configurations client-managed until equivalent controls can be preserved.
 
 ## Transferring a backend catalog
 

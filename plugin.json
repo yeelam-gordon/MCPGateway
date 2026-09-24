@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "shared-mcp-gateway",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "MIT",
   "description": "Guide setup of one shared local MCP gateway with explicit, backed-up client configuration changes.",
   "repository": "https://github.com/yeelam-gordon/MCPGateway",

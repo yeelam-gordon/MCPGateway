@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { CLIENT_CONFIG_DEFAULT_PATHS, extractClientBackends, prepareClientConfig } from '../src/client-config-json.js';
+import { CLIENT_CONFIG_DEFAULT_PATHS, extractClientBackends, prepareClientConfig, prepareClientMigration } from '../src/client-config-json.js';
 import { assertLiteralClientValues } from '../src/client-config-values.js';
 
 const connector = {
@@ -160,13 +164,14 @@ test('does not turn gateway tools into client trust, permission, or allowlist se
   }
 });
 
-test('reports documented user config paths without performing filesystem access', () => {
+test('reports only verified default paths and requires an explicit Kimi path', () => {
   assert.deepEqual(CLIENT_CONFIG_DEFAULT_PATHS, {
     opencode: '~/.config/opencode/opencode.json',
     qwen: '~/.qwen/settings.json',
-    kimi: '~/.kimi/mcp.json',
     antigravity: '~/.gemini/config/mcp_config.json'
   });
+  assert.equal(Object.hasOwn(CLIENT_CONFIG_DEFAULT_PATHS, 'kimi'), false);
+  assert.equal(prepareClientConfig({ client: 'kimi', configText: '{}', connector: { command: 'node', args: [] } }).changed, true);
 });
 
 test('extracts OpenCode local and remote entries into validated canonical backends', () => {
@@ -302,4 +307,204 @@ test('shared literal guard rejects general braced placeholders for VS Code and Q
       error => /native variable or file-reference syntax/.test(error.message) && !error.message.includes(forbidden)
     );
   }
+});
+test('migration extracts ten native backends and leaves only one matching gateway entry', () => {
+  const migrationConnector = { command: 'node', args: ['connector.mjs'], env: { MODE: '${env:GATEWAY_MODE}' } };
+  const native = Object.fromEntries(Array.from({ length: 10 }, (_, index) => [`backend-${index + 1}`, {
+    command: 'node', args: [`backend-${index + 1}.mjs`], env: { MODE: `literal-${index + 1}` }
+  }]));
+  const source = JSON.stringify({ theme: 'preserved', mcpServers: native });
+  const result = prepareClientMigration({ client: 'qwen', configText: source, connector: migrationConnector });
+  assert.equal(result.client, 'qwen');
+  assert.equal(result.changed, true);
+  assert.equal(Object.keys(result.backends.mcpServers).length, 10);
+  assert.deepEqual(result.backends.mcpServers['backend-1'], native['backend-1']);
+  const updated = JSON.parse(result.updatedText);
+  assert.equal(updated.theme, 'preserved');
+  assert.deepEqual(Object.keys(updated.mcpServers), ['shared-mcp-gateway']);
+  assert.deepEqual(updated.mcpServers['shared-mcp-gateway'], {
+    command: migrationConnector.command, args: migrationConnector.args, env: migrationConnector.env
+  });
+  const rerun = prepareClientMigration({ client: 'qwen', configText: result.updatedText, connector: migrationConnector });
+  assert.deepEqual(rerun, { client: 'qwen', changed: false, updatedText: result.updatedText, backends: { mcpServers: {} } });
+});
+
+test('migration normalizes and removes native entries for every JSON adapter', () => {
+  const migrationConnector = { command: 'node', args: ['connector.mjs'] };
+  const cases = [
+    ['opencode', 'mcp', { worker: { type: 'local', command: ['node', 'worker.mjs'], enabled: false } }, { type: 'local', command: 'node', args: ['worker.mjs'], disabled: true }],
+    ['qwen', 'mcpServers', { worker: { type: 'stdio', command: 'node', args: ['worker.mjs'] } }, { type: 'stdio', command: 'node', args: ['worker.mjs'] }],
+    ['kimi', 'mcpServers', { worker: { transport: 'stdio', command: 'node', args: ['worker.mjs'] } }, { command: 'node', args: ['worker.mjs'], type: 'stdio' }],
+    ['antigravity', 'mcpServers', { worker: { serverUrl: 'https://example.test/mcp', headers: { Authorization: 'literal' } } }, { url: 'https://example.test/mcp', headers: { Authorization: 'literal' } }]
+  ];
+  for (const [client, key, servers, expected] of cases) {
+    const original = JSON.stringify({ keep: { nested: true }, [key]: servers });
+    const result = prepareClientMigration({ client, configText: original, connector: migrationConnector });
+    assert.deepEqual(result.backends, { mcpServers: { worker: expected } });
+    const updated = JSON.parse(result.updatedText);
+    assert.deepEqual(updated.keep, { nested: true });
+    assert.deepEqual(Object.keys(updated[key]), ['shared-mcp-gateway']);
+    assert.deepEqual(JSON.parse(original), { keep: { nested: true }, [key]: servers });
+  }
+});
+
+test('migration skips the gateway during extraction and rejects conflicts or unsupported entries', () => {
+  const migrationConnector = { command: 'node', args: ['connector.mjs'], env: { TOKEN: '${workspaceFolder}' } };
+  const registered = prepareClientConfig({ client: 'kimi', configText: '{}', connector: migrationConnector }).updatedText;
+  assert.deepEqual(extractClientBackends({ client: 'kimi', configText: registered }), { mcpServers: {} });
+  assert.deepEqual(prepareClientMigration({ client: 'kimi', configText: registered, connector: migrationConnector }), {
+    client: 'kimi', changed: false, updatedText: registered, backends: { mcpServers: {} }
+  });
+  assert.throws(
+    () => prepareClientMigration({ client: 'kimi', configText: JSON.stringify({ mcpServers: {
+      'shared-mcp-gateway': { command: 'other', args: [] }
+    } }), connector: migrationConnector }),
+    /different settings; refusing migration/
+  );
+  assert.throws(
+    () => prepareClientMigration({ client: 'qwen', configText: JSON.stringify({ mcpServers: {
+      unsupported: { command: 'node', args: [], futureField: true }
+    } }), connector: migrationConnector }),
+    /futureField is not supported/
+  );
+});
+test('official JSON field semantics are preserved or rejected explicitly', () => {
+  const openCode = extractClientBackends({ client: 'opencode', configText: JSON.stringify({ mcp: {
+    remote: { type: 'remote', url: 'https://example.test/mcp', headers: { Authorization: 'literal' }, timeout: 45000 }
+  } }) });
+  assert.equal(openCode.mcpServers.remote.timeout, 45000);
+  const kimi = extractClientBackends({ client: 'kimi', configText: JSON.stringify({ mcpServers: {
+    worker: { transport: 'stdio', command: 'node', args: [], enabled: false }
+  } }) });
+  assert.equal(kimi.mcpServers.worker.disabled, true);
+  for (const [client, entry, pattern] of [
+    ['qwen', { url: 'https://example.test/sse' }, /SSE semantics/],
+    ['qwen', { command: 'node', discoveryTimeoutMs: 1000 }, /discoveryTimeoutMs requires client-managed interpretation/],
+    ['qwen', { command: 'node', versionNegotiation: true }, /versionNegotiation requires client-managed interpretation/],
+    ['kimi', { command: 'node', startupTimeoutMs: 1000 }, /startupTimeoutMs requires client-managed interpretation/],
+    ['kimi', { command: 'node', toolTimeoutMs: 2000 }, /toolTimeoutMs requires client-managed interpretation/],
+    ['kimi', { command: 'node', deferred: true }, /deferred requires client-managed interpretation/],
+    ['kimi', { command: 'node', bearerTokenEnvVar: 'TOKEN' }, /bearerTokenEnvVar requires client-managed interpretation/],
+    ['kimi', { command: 'node', executor: 'custom' }, /executor requires client-managed interpretation/],
+    ['kimi', { command: 'node', runtime_id: 'runtime' }, /runtime_id requires client-managed interpretation/]
+  ]) {
+    assert.throws(
+      () => extractClientBackends({ client, configText: JSON.stringify({ mcpServers: { worker: entry } }) }),
+      pattern
+    );
+  }
+});
+
+test('Qwen migration rejects root allow and exclude policies that would become ineffective', () => {
+  const connector = { command: 'node', args: ['connector.mjs'] };
+  for (const mcp of [{ allowed: ['worker'] }, { excluded: ['worker'] }]) {
+    assert.throws(
+      () => prepareClientMigration({ client: 'qwen', configText: JSON.stringify({ mcp, mcpServers: {
+        worker: { command: 'node', args: [] }
+      } }), connector }),
+      /root mcp\.allowed or mcp\.excluded policy/
+    );
+  }
+});
+test('OpenCode migration rejects only MCP-applicable root and agent policies', () => {
+  const migrationConnector = { command: 'node', args: ['connector.mjs'] };
+  const worker = { type: 'local', command: ['node', 'worker.mjs'] };
+  const blocked = [
+    { permission: { 'payments_*': 'deny' }, mcp: { payments: worker } },
+    { permission: { 'payments*': 'deny' }, mcp: { payments: worker } },
+    { permission: { 'pay?ents_*': 'deny' }, mcp: { payments: worker } },
+    { tools: { 'worker_*': false }, mcp: { worker } },
+    { agent: { reviewer: { tools: { 'pay*': false } } }, mcp: { payments: worker } },
+    { permission: { '*': 'ask' }, mcp: { worker } },
+    { permission: ['unknown-nested-policy'], mcp: { worker } },
+    { agent: { reviewer: { permission: { 'worker_*': { nested: 'deny' } } } }, mcp: { worker } },
+    { agent: { reviewer: { tools: { '*': false } } }, mcp: { worker } }
+  ];
+  for (const config of blocked) {
+    assert.throws(
+      () => prepareClientMigration({ client: 'opencode', configText: JSON.stringify(config), connector: migrationConnector }),
+      /permission or tools policy applies to migrated MCP aliases/
+    );
+  }
+  const allowed = prepareClientMigration({ client: 'opencode', configText: JSON.stringify({
+    permission: { bash: 'deny', read: 'allow' }, tools: { bash: false },
+    agent: { reviewer: { permission: { read: 'allow' }, tools: { bash: false } } },
+    mcp: { worker }
+  }), connector: migrationConnector });
+  assert.deepEqual(Object.keys(allowed.backends.mcpServers), ['worker']);
+});
+
+test('reserved aliases survive canonical extraction and migration for all four JSON clients', () => {
+  const connector = { command: 'node', args: ['connector.mjs'] };
+  const aliases = ['__proto__', 'constructor', 'prototype'];
+  const cases = [
+    ['opencode', 'mcp', alias => ({ type: 'local', command: ['node', `${alias}.mjs`] })],
+    ['qwen', 'mcpServers', alias => ({ command: 'node', args: [`${alias}.mjs`] })],
+    ['kimi', 'mcpServers', alias => ({ transport: 'stdio', command: 'node', args: [`${alias}.mjs`] })],
+    ['antigravity', 'mcpServers', alias => ({ command: 'node', args: [`${alias}.mjs`] })]
+  ];
+  for (const [client, key, makeEntry] of cases) {
+    const rawEntries = aliases.map(alias => `${JSON.stringify(alias)}:${JSON.stringify(makeEntry(alias))}`).join(',');
+    const configText = `{"keep":true,"${key}":{${rawEntries}}}`;
+    const result = prepareClientMigration({ client, configText, connector });
+    for (const alias of aliases) {
+      assert.equal(Object.hasOwn(result.backends.mcpServers, alias), true);
+      assert.equal(result.backends.mcpServers[alias].command, 'node');
+    }
+    const updated = JSON.parse(result.updatedText);
+    assert.equal(updated.keep, true);
+    assert.deepEqual(Object.keys(updated[key]), ['shared-mcp-gateway']);
+    assert.equal({}.polluted, undefined);
+  }
+});
+
+test('OpenCode local timeout is retained in canonical milliseconds', () => {
+  const extracted = extractClientBackends({ client: 'opencode', configText: JSON.stringify({ mcp: {
+    worker: { type: 'local', command: ['node', 'worker.mjs'], timeout: 45000 }
+  } }) });
+  assert.equal(extracted.mcpServers.worker.timeout, 45000);
+});
+
+test('actual OpenCode migration apply preserves reserved aliases and blocks applicable policies before writes', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'json-migration-apply-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const stateDir = join(root, 'state');
+  const privatePath = join(stateDir, 'backends.json');
+  const gatewayPath = join(root, 'copilot.json');
+  const configPath = join(root, 'opencode.json');
+  const connectorScript = fileURLToPath(new URL('../tools/connector.mjs', import.meta.url));
+  const connector = { command: process.execPath, args: [connectorScript, '--auto-start', '--config', privatePath,
+    '--port', '7319', '--state-dir', stateDir], timeout: 210000 };
+  const aliases = ['__proto__', 'constructor', 'prototype'];
+  const rawEntries = aliases.map(alias => `${JSON.stringify(alias)}:${JSON.stringify({ type: 'local', command: [process.execPath, join(root, `${alias}.mjs`)] })}`).join(',');
+  const original = `{"theme":"keep","mcp":{${rawEntries}}}`;
+  await mkdir(dirname(privatePath), { recursive: true });
+  await writeFile(privatePath, '{"mcpServers":{}}\n');
+  await writeFile(gatewayPath, `${JSON.stringify({ mcpServers: { 'shared-mcp-gateway': connector } })}\n`);
+  await writeFile(configPath, original);
+  const { connectClient } = await import('../src/client-connect.js');
+  const fastToken = async directory => {
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'owner.token'), 'token\n', { flag: 'wx' }).catch(error => {
+      if (error.code !== 'EEXIST') throw error;
+    });
+  };
+  const options = { client: 'opencode', config: configPath, 'gateway-config': gatewayPath, migrate: true };
+  const applied = await connectClient({ ...options, apply: true, tokenLoader: fastToken });
+  assert.equal(applied.status, 'synchronized');
+  const catalog = JSON.parse(await readFile(privatePath, 'utf8'));
+  for (const alias of aliases) assert.equal(Object.hasOwn(catalog.mcpServers, alias), true);
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(configPath, 'utf8')).mcp), ['shared-mcp-gateway']);
+
+  const blocked = JSON.stringify({ permission: { 'payments*': 'deny' }, mcp: {
+    payments: { type: 'local', command: [process.execPath, join(root, 'payments.mjs')] }
+  } });
+  await writeFile(configPath, blocked);
+  const privateBefore = await readFile(privatePath);
+  await assert.rejects(() => connectClient(options), /permission or tools policy applies/);
+  assert.equal(await readFile(configPath, 'utf8'), blocked);
+  assert.deepEqual(await readFile(privatePath), privateBefore);
+  await assert.rejects(() => connectClient({ ...options, apply: true, tokenLoader: fastToken }), /permission or tools policy applies/);
+  assert.equal(await readFile(configPath, 'utf8'), blocked);
+  assert.deepEqual(await readFile(privatePath), privateBefore);
 });
