@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import { afterEach, test } from 'node:test';
 import { ensureGateway, stopOwnedGateway } from '../src/ensure-gateway.js';
+import { loadOrCreateToken } from '../src/token.js';
+
+const execFileAsync = promisify(execFile);
 
 const fixtures = [];
 const owned = [];
@@ -59,21 +63,80 @@ async function ensureInSeparateProcess(ensureOptions) {
   return JSON.parse(stdout.trim());
 }
 
-test('concurrent callers start exactly one persistent gateway and later calls reuse it', { timeout: 60_000 }, async () => {
+for (let round = 1; round <= 3; round += 1) {
+  test(`concurrent callers start exactly one persistent gateway (round ${round})`, { timeout: 60_000 }, async () => {
+    const item = await fixture();
+    owned.push({ stateDir: item.stateDir, port: item.port, timeoutMs: 5000 });
+
+    const results = await Promise.all(Array.from({ length: 4 }, () => ensureInSeparateProcess(options(item))));
+    const pids = new Set(results.map(result => result.pid));
+    assert.equal(pids.size, 1);
+    assert.equal([...pids][0] > 0, true);
+    assert.equal(results.filter(result => result.reused === false).length, 1);
+    assert.equal(results.filter(result => result.reused === true).length, 3);
+
+    const subsequent = await ensureGateway(options(item));
+    assert.deepEqual(subsequent, { pid: results[0].pid, reused: true });
+    const stdout = await readFile(join(item.stateDir, 'gateway.stdout.log'), 'utf8');
+    assert.equal(stdout.match(/Shared MCP gateway listening/g)?.length, 1);
+  });
+}
+
+async function inspectWindowsAcl(path, directory) {
+  const payload = Buffer.from(JSON.stringify({ path, directory }), 'utf8').toString('base64');
+  const script = `$payload=ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}')));$item=if($payload.directory){[IO.DirectoryInfo]::new([string]$payload.path)}else{[IO.FileInfo]::new([string]$payload.path)};$acl=[IO.FileSystemAclExtensions]::GetAccessControl($item);$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User;$rules=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])|ForEach-Object{[pscustomobject]@{sid=$_.IdentityReference.Value;type=[int]$_.AccessControlType;rights=[int]$_.FileSystemRights;inheritance=[int]$_.InheritanceFlags;propagation=[int]$_.PropagationFlags}});[pscustomobject]@{owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value;current=$sid.Value;protected=$acl.AreAccessRulesProtected;rules=$rules}|ConvertTo-Json -Compress -Depth 4`;
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  let lastError;
+  for (const shell of ['pwsh.exe', 'powershell.exe']) {
+    try {
+      const { stdout } = await execFileAsync(shell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true, timeout: 5000 });
+      return JSON.parse(stdout.trim());
+    } catch (error) {
+      lastError = error;
+      if (error.code === 'ENOENT' && shell === 'pwsh.exe') continue;
+      throw error;
+    }
+  }
+  throw lastError;
+}
+
+async function hardenTokenInSeparateProcess(stateDir, repetitions) {
+  const moduleUrl = pathToFileURL(join(process.cwd(), 'src', 'token.js')).href;
+  const script = `import { loadOrCreateToken } from ${JSON.stringify(moduleUrl)}; for (let index = 0; index < Number(process.argv[2]); index += 1) await loadOrCreateToken(process.argv[1]);`;
+  const child = spawn(process.execPath, ['--input-type=module', '--eval', script, stateDir, String(repetitions)], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const result = await new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));
+  assert.equal(result.code, 0, stderr || `token hardener exited by ${result.signal}`);
+}
+
+test('Windows owner-only ACL hardening preserves concurrent runtime access', { skip: process.platform !== 'win32', timeout: 60_000 }, async () => {
   const item = await fixture();
-  owned.push({ stateDir: item.stateDir, port: item.port, timeoutMs: 5000 });
+  const { path: tokenPath } = await loadOrCreateToken(item.stateDir);
+  let hardeningComplete = false;
+  const hardening = Promise.all(Array.from({ length: 4 }, () => hardenTokenInSeparateProcess(item.stateDir, 3)))
+    .finally(() => { hardeningComplete = true; });
 
-  const results = await Promise.all(Array.from({ length: 4 }, () => ensureInSeparateProcess(options(item))));
-  const pids = new Set(results.map(result => result.pid));
-  assert.equal(pids.size, 1);
-  assert.equal([...pids][0] > 0, true);
-  assert.equal(results.filter(result => result.reused === false).length, 1);
-  assert.equal(results.filter(result => result.reused === true).length, 3);
+  let writes = 0;
+  while (!hardeningComplete || writes < 50) {
+    const temporary = join(item.stateDir, `gateway-instance.json.${process.pid}.${writes}.tmp`);
+    const manifest = join(item.stateDir, 'gateway-instance.json');
+    const content = `${writes}\n`;
+    await writeFile(temporary, content, { flag: 'wx' });
+    await rename(temporary, manifest);
+    assert.equal(await readFile(manifest, 'utf8'), content);
+    writes += 1;
+  }
+  await hardening;
 
-  const subsequent = await ensureGateway(options(item));
-  assert.deepEqual(subsequent, { pid: results[0].pid, reused: true });
-  const stdout = await readFile(join(item.stateDir, 'gateway.stdout.log'), 'utf8');
-  assert.equal(stdout.match(/Shared MCP gateway listening/g)?.length, 1);
+  for (const [path, directory, inheritance] of [[item.stateDir, true, 3], [tokenPath, false, 0]]) {
+    const acl = await inspectWindowsAcl(path, directory);
+    assert.equal(acl.owner, acl.current);
+    assert.equal(acl.protected, true);
+    assert.equal(acl.rules.length, 1);
+    assert.deepEqual(acl.rules[0], { sid: acl.current, type: 0, rights: 2032127, inheritance, propagation: 0 });
+  }
 });
 
 test('rejects an unrelated or wrong-token listener without replacing it', { timeout: 20_000 }, async () => {

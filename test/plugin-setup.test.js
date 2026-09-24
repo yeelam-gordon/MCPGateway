@@ -41,6 +41,17 @@ async function pluginFixture() {
   return root;
 }
 
+async function publishedRuntimeFixture(sourceRoot, item) {
+  const preview = await pluginSetup({ sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir });
+  await mkdir(join(preview.runtimePath, 'tools'), { recursive: true });
+  for (const file of ['LICENSE', 'package.json', 'package-lock.json']) await cp(join(sourceRoot, file), join(preview.runtimePath, file));
+  for (const file of ['connector.mjs', 'migrate-config.mjs']) await cp(join(sourceRoot, 'tools', file), join(preview.runtimePath, 'tools', file));
+  await cp(join(sourceRoot, 'src'), join(preview.runtimePath, 'src'), { recursive: true });
+  await cp(join(sourceRoot, 'adapters'), join(preview.runtimePath, 'adapters'), { recursive: true });
+  await writeJson(join(preview.runtimePath, '.plugin-runtime.json'), { version: 1, contentHash: preview.contentHash });
+  return preview;
+}
+
 async function sourceFixture(config) {
   const root = await temporary('plugin-setup-config-');
   const sourcePath = join(root, 'mcp-config.json');
@@ -136,6 +147,95 @@ test('dependency failure leaves user config untouched and cleans only staging ru
   assert.deepEqual(await readFile(item.sourcePath), item.bytes);
   assert.deepEqual((await readdir(item.stateDir)).sort(), ['owner.token', 'runtime']);
   assert.deepEqual(await readdir(join(item.stateDir, 'runtime')), []);
+});
+
+test('matching published runtime is rehashed and reused without overwriting it', async () => {
+  const sourceRoot = await pluginFixture();
+  const item = await sourceFixture({ mcpServers: aliases(1) });
+  const published = await publishedRuntimeFixture(sourceRoot, item);
+  const connectorPath = join(published.runtimePath, 'tools', 'connector.mjs');
+  const connectorBytes = await readFile(connectorPath);
+  const connectorStats = await stat(connectorPath);
+  let npmCalled = false;
+  const result = await pluginSetup({
+    sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir, apply: true,
+    tokenLoader: async () => {},
+    npmRunner: async () => { npmCalled = true; },
+    migrationRunner: async () => ({ status: 'migrated', backupPath: null, manifestPath: null })
+  });
+  assert.equal(result.runtimePath, published.runtimePath);
+  assert.equal(npmCalled, false);
+  assert.deepEqual(await readFile(connectorPath), connectorBytes);
+  assert.equal((await stat(connectorPath)).mtimeMs, connectorStats.mtimeMs);
+});
+
+test('tampered published connector is rejected before reuse or migration', async () => {
+  const sourceRoot = await pluginFixture();
+  const item = await sourceFixture({ mcpServers: aliases(1) });
+  const published = await publishedRuntimeFixture(sourceRoot, item);
+  await writeFile(join(published.runtimePath, 'tools', 'connector.mjs'), '// tampered\n');
+  let npmCalled = false;
+  let migrationCalled = false;
+  await assert.rejects(() => pluginSetup({
+    sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir, apply: true,
+    tokenLoader: async () => {},
+    npmRunner: async () => { npmCalled = true; },
+    migrationRunner: async () => { migrationCalled = true; }
+  }), /content hash does not match/);
+  assert.equal(npmCalled, false);
+  assert.equal(migrationCalled, false);
+  assert.deepEqual(await readFile(item.sourcePath), item.bytes);
+});
+
+test('published runtime missing a required file is rejected before reuse or migration', async () => {
+  const sourceRoot = await pluginFixture();
+  const item = await sourceFixture({ mcpServers: aliases(1) });
+  const published = await publishedRuntimeFixture(sourceRoot, item);
+  await rm(join(published.runtimePath, 'tools', 'connector.mjs'));
+  let npmCalled = false;
+  let migrationCalled = false;
+  await assert.rejects(() => pluginSetup({
+    sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir, apply: true,
+    tokenLoader: async () => {},
+    npmRunner: async () => { npmCalled = true; },
+    migrationRunner: async () => { migrationCalled = true; }
+  }), /missing required file: tools[\\/]connector\.mjs/);
+  assert.equal(npmCalled, false);
+  assert.equal(migrationCalled, false);
+  assert.deepEqual(await readFile(item.sourcePath), item.bytes);
+});
+
+test('published runtime missing an installed dependency is rejected before reuse', async () => {
+  const sourceRoot = await pluginFixture();
+  await writeJson(join(sourceRoot, 'package.json'), {
+    name: 'fixture-runtime', version: '1.0.0', type: 'module', dependencies: { 'fixture-dependency': '2.3.4' }
+  });
+  await writeJson(join(sourceRoot, 'package-lock.json'), {
+    name: 'fixture-runtime', version: '1.0.0', lockfileVersion: 3,
+    packages: {
+      '': { name: 'fixture-runtime', version: '1.0.0', dependencies: { 'fixture-dependency': '2.3.4' } },
+      'node_modules/fixture-dependency': { version: '2.3.4' }
+    }
+  });
+  const item = await sourceFixture({ mcpServers: aliases(1) });
+  await publishedRuntimeFixture(sourceRoot, item);
+  await assert.rejects(() => pluginSetup({
+    sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir, apply: true,
+    tokenLoader: async () => {}
+  }), /missing required dependency fixture-dependency/);
+  assert.deepEqual(await readFile(item.sourcePath), item.bytes);
+});
+
+test('published runtime with a mismatched marker is rejected explicitly', async () => {
+  const sourceRoot = await pluginFixture();
+  const item = await sourceFixture({ mcpServers: aliases(1) });
+  const published = await publishedRuntimeFixture(sourceRoot, item);
+  await writeJson(join(published.runtimePath, '.plugin-runtime.json'), { version: 1, contentHash: 'f'.repeat(64) });
+  await assert.rejects(() => pluginSetup({
+    sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir, apply: true,
+    tokenLoader: async () => {}
+  }), /Runtime marker does not match its directory/);
+  assert.deepEqual(await readFile(item.sourcePath), item.bytes);
 });
 
 test('migration-stage failure returns the exact backup and copyable manual restore command', async () => {

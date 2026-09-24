@@ -1,6 +1,6 @@
 {
   "name": "shared-mcp-gateway",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "license": "MIT",
   "description": "Install one shared local MCP gateway and safely migrate existing Copilot MCP configuration with backups and rollback instructions.",
   "repository": "https://github.com/yeelam-gordon/MCPGateway",

@@ -59,7 +59,7 @@ const sourceConfig = {
   }
 };
 
-test('export redacts credentials and machine paths while preserving aliases, tools, flags, orgs, and ordinary URLs', async () => {
+test('export redacts credentials, machine paths, and endpoint URLs while preserving aliases, tools, flags, and orgs', async () => {
   const item = await exported(sourceConfig);
   assert.equal(item.result.serverCount, 4);
   assert.deepEqual(Object.keys(item.template.config.mcpServers), ['WorkIQ', 'Remote', 'CredentialUrl', 'Linux']);
@@ -73,7 +73,7 @@ test('export redacts credentials and machine paths while preserving aliases, too
   assert.match(workiq.cwd, /^\{\{MCP_GATEWAY_VALUE_/);
   assert.deepEqual(workiq.tools, ['search', 'profile']);
   assert.equal(workiq.disabled, false);
-  assert.equal(item.template.config.mcpServers.Remote.url, 'https://mcp.example.test/service');
+  assert.match(item.template.config.mcpServers.Remote.url, /^\{\{MCP_GATEWAY_VALUE_/);
   assert.deepEqual(item.template.config.mcpServers.Remote.tools, ['lookup']);
   assert.match(item.template.config.mcpServers.CredentialUrl.url, /^\{\{MCP_GATEWAY_VALUE_/);
   assert.match(item.template.config.mcpServers.Linux.command, /^\{\{MCP_GATEWAY_VALUE_/);
@@ -82,6 +82,35 @@ test('export redacts credentials and machine paths while preserving aliases, too
   assert.equal(item.template.config.mcpServers.Linux.args[3], '--mode');
   assert.match(item.template.config.mcpServers.Linux.args[4], /^\{\{MCP_GATEWAY_VALUE_/);
   assert.equal(item.template.placeholderCount, item.requirements.length);
+});
+
+test('export redacts benign, opaque, and signed endpoint URLs and roundtrip requires their values', async () => {
+  const urls = {
+    BenignEndpoint: 'https://mcp.example.test/service',
+    OpaqueEndpoint: 'https://example.invalid/mcp/FAKE_CAPABILITY_SECRET',
+    SignedEndpoint: 'https://example.invalid/mcp?sig=FAKE_SIGNATURE_SECRET'
+  };
+  const config = {
+    mcpServers: Object.fromEntries(Object.entries(urls).map(([alias, url]) => [alias, { type: 'http', url, tools: ['lookup'] }]))
+  };
+  const item = await exported(config);
+  assert.deepEqual(Object.keys(item.template.config.mcpServers), Object.keys(urls));
+  assert.equal(item.requirements.length, 3);
+  for (const [alias, originalUrl] of Object.entries(urls)) {
+    assert.match(item.template.config.mcpServers[alias].url, /^\{\{MCP_GATEWAY_VALUE_/);
+    assert.deepEqual(item.template.config.mcpServers[alias].tools, ['lookup']);
+    const requirement = item.requirements.find(value => value.server === alias && value.field === 'url');
+    assert.ok(requirement);
+    assert.equal(JSON.stringify(item.template).includes(originalUrl), false);
+    assert.equal(JSON.stringify(item.requirements).includes(originalUrl), false);
+  }
+
+  const values = Object.fromEntries(item.requirements.map(requirement => [requirement.id, urls[requirement.server]]));
+  const valuesPath = join(item.root, 'endpoint-values.json');
+  const outputPath = join(item.root, 'endpoint-restored.json');
+  await writeJson(valuesPath, values);
+  await importConfig({ input: item.output, output: outputPath, values: valuesPath });
+  assert.deepEqual(JSON.parse(await readFile(outputPath, 'utf8')), config);
 });
 
 test('exported package contains no original secret values, hashes, or source machine paths', async () => {
@@ -109,7 +138,7 @@ test('import requires every and only requirement value and materializes a normal
   assert.deepEqual(Object.keys(restored.mcpServers), Object.keys(sourceConfig.mcpServers));
   assert.equal(restored.mcpServers.WorkIQ.args[2], 'explicit-microsoft');
   assert.deepEqual(restored.mcpServers.WorkIQ.tools, ['search', 'profile']);
-  assert.equal(restored.mcpServers.Remote.url, 'https://mcp.example.test/service');
+  assert.equal(restored.mcpServers.Remote.url, 'https://restored.example.test/mcp');
   const tenantRequirement = item.requirements.find(value => value.server === 'WorkIQ' && value.field === 'env.TENANT');
   assert.equal(restored.mcpServers.WorkIQ.env.TENANT, values[tenantRequirement.id]);
 });
@@ -147,7 +176,10 @@ test('17-alias config sanitizes absolute Node and Agency adapter paths and resto
     'args[0]': connectorPath,
     'args[2]': adapterPath
   };
-  const values = Object.fromEntries(item.requirements.map(requirement => [requirement.id, originalValues[requirement.field]]));
+  const values = Object.fromEntries(item.requirements.map(requirement => [
+    requirement.id,
+    requirement.field === 'url' ? servers[requirement.server].url : originalValues[requirement.field]
+  ]));
   const valuesPath = join(item.root, '17-values.json');
   const outputPath = join(item.root, '17-restored.json');
   await writeJson(valuesPath, values);

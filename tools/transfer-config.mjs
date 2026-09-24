@@ -116,7 +116,9 @@ function sanitizer() {
     const output = {};
     for (const [key, child] of Object.entries(value)) {
       const field = context.field ? `${context.field}.${key}` : key;
-      if (isSensitiveKey(key)) output[key] = redact(context.server, field, 'credential or authentication field');
+      if (normalizedKey(key) === 'url' && typeof child === 'string') {
+        output[key] = redact(context.server, field, 'endpoint URL requires explicit materialization');
+      } else if (isSensitiveKey(key)) output[key] = redact(context.server, field, 'credential or authentication field');
       else output[key] = walk(child, { ...context, field });
     }
     return output;
@@ -141,7 +143,9 @@ function sanitizer() {
         continue;
       }
       if (['tools', 'type', 'disabled', 'timeout', 'requiresExclusiveAccess'].includes(key)) output[key] = child;
-      else if (['command', 'url', 'cwd'].includes(key) && typeof child === 'string') output[key] = knownString(child, { server, field: key });
+      else if (normalizedKey(key) === 'url' && typeof child === 'string') {
+        output[key] = redact(server, key, 'endpoint URL requires explicit materialization');
+      } else if (['command', 'cwd'].includes(key) && typeof child === 'string') output[key] = knownString(child, { server, field: key });
       else if (isSensitiveKey(key)) output[key] = redact(server, key, 'credential or authentication field');
       else output[key] = walk(child, { server, field: key });
     }

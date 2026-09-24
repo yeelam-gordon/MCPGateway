@@ -175,7 +175,7 @@ node "<plugin-root>\tools\transfer-config.mjs" import `
   --input ".\gateway-transfer" --values ".\values.json" --output ".\backends.ready.json"
 ```
 
-`<plugin-root>` is the installed plugin directory reported by Copilot; ask the setup skill to locate it rather than guessing. The export replaces credentials, local paths, and unclassified argument values with placeholders. Review it before sharing because ordinary endpoints and organization names may still be private.
+`<plugin-root>` is the installed plugin directory reported by Copilot; ask the setup skill to locate it rather than guessing. The export replaces credentials, all endpoint URLs, local paths, and unclassified argument values with placeholders. A URL can itself contain a secret even when no query parameter is named "token". Supply endpoint URLs locally on the destination. Review the package before sharing because aliases and organization names may still be private.
 
 Back up and merge the materialized definitions into the destination's configuration before running setup. For an already-migrated destination, merge into its private backend catalog instead. Never copy gateway tokens, process manifests, locks, browser profiles, or OAuth caches between machines.
 

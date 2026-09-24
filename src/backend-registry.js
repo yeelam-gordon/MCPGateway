@@ -46,14 +46,9 @@ function catalogTimeout(name, milliseconds, cause) {
   return new GatewayError('timeout', `List tools for ${name} timed out after ${milliseconds}ms`, cause);
 }
 
-function hasAmbiguousTransportFailure(error) {
+function isKnownNonExecutionFailure(error) {
   for (let current = error; current; current = current.cause) {
-    const message = String(current.message ?? '');
-    if (/session not found/i.test(message)) return false;
-    const code = String(current.code ?? '').toUpperCase();
-    if (['ECONNRESET', 'EPIPE', 'ECONNABORTED', 'ENETRESET'].includes(code)) return true;
-    if (/^UND_ERR_(?:SOCKET|CONNECT_TIMEOUT|HEADERS_TIMEOUT|BODY_TIMEOUT|ABORTED)$/.test(code)) return true;
-    if (/connection (?:was )?(?:closed|reset|aborted)|socket hang up|network (?:request )?aborted/i.test(message)) return true;
+    if (/session not found/i.test(String(current.message ?? ''))) return true;
   }
   return false;
 }
@@ -229,8 +224,7 @@ export class BackendRegistry {
     return discovery;
   }
 
-  #awaitDiscovery(name, discovery, signal) {
-    if (signal?.aborted) return Promise.reject(new GatewayError('cancelled', `Tool discovery for ${name} was cancelled`));
+  #awaitDiscovery(name, entry, discovery, signal) {
     const waiter = {};
     discovery.waiters.add(waiter);
     return new Promise((resolve, reject) => {
@@ -243,7 +237,10 @@ export class BackendRegistry {
       };
       const onAbort = () => {
         cleanup();
-        if (!discovery.settled && discovery.waiters.size === 0) discovery.controller.abort();
+        if (!discovery.settled && discovery.waiters.size === 0) {
+          if (entry.discovery === discovery) entry.discovery = null;
+          discovery.controller.abort();
+        }
         reject(new GatewayError('cancelled', `Tool discovery for ${name} was cancelled`));
       };
       signal?.addEventListener('abort', onAbort, { once: true });
@@ -260,7 +257,7 @@ export class BackendRegistry {
     const entry = await this.connect(name);
     if (entry.tools) return entry.tools;
     const discovery = entry.discovery ?? this.#startDiscovery(name, config, entry);
-    return this.#awaitDiscovery(name, discovery, signal);
+    return this.#awaitDiscovery(name, entry, discovery, signal);
   }
 
   async searchTools(server, query = '', signal) {
@@ -314,7 +311,7 @@ export class BackendRegistry {
     } catch (error) {
       if (isRequestTimeout(error)) throw downstreamTimeout(`Call ${name}.${toolName}`, this.callTimeoutMs, error);
       const failure = error instanceof GatewayError ? error : new GatewayError('call_failed', `Call ${name}.${toolName} failed: ${error.message}`, error);
-      if (hasAmbiguousTransportFailure(error)) failure.outcomeUnknown = true;
+      if (!isKnownNonExecutionFailure(error)) failure.outcomeUnknown = true;
       try { await this.#retire(name, entry); }
       catch (cleanupError) { failure.cleanupError = cleanupError; }
       throw failure;

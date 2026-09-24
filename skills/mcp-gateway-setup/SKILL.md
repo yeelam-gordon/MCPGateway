@@ -85,7 +85,7 @@ Use `--agency-adapters` only when the user asks to add Agency support and the lo
 
 ## Transferring a backend catalog
 
-Use the plugin's [transfer utility](../../tools/transfer-config.mjs) when asked to prepare configuration for another machine. Export from the backend catalog, never from a connector-only MCP configuration. Inspect the exported template before sharing; placeholders exclude credentials and local paths, but ordinary endpoints and organization names may still be private.
+Use the plugin's [transfer utility](../../tools/transfer-config.mjs) when asked to prepare configuration for another machine. Export from the backend catalog, never from a connector-only MCP configuration. Endpoint URLs are always materialized locally on the destination because URL paths and signed query strings can themselves be credentials. Inspect the exported template before sharing; aliases and organization names may still be private.
 
 On the destination, collect replacement values locally for every requirement. Do not print them, copy OAuth caches, or guess credentials. Import into a new file, compare its aliases and tool allowlists with the intended catalog, then preview setup against the chosen destination MCP configuration. Back up and merge any destination servers before replacing them. A transfer package is configuration data, not a copy of a running gateway.
 

@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { access, chmod, cp, link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, chmod, link, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createRequire } from 'node:module';
@@ -171,17 +171,43 @@ async function inspectExistingGateway(servers, requested) {
   };
 }
 
+async function safeRuntimePath(root, relativePath, expectedType, label) {
+  const rootPath = resolve(root);
+  if (!isWithin(resolve(rootPath, relativePath), rootPath)) throw new Error(`${label} escapes its root: ${relativePath}`);
+  let current = rootPath;
+  const segments = relativePath.split(/[\\/]/).filter(Boolean);
+  for (let index = 0; index < segments.length; index += 1) {
+    current = join(current, segments[index]);
+    const details = await lstat(current);
+    if (details.isSymbolicLink()) throw new Error(`${label} must not contain symlinks or junctions: ${current}`);
+    const final = index === segments.length - 1;
+    if (!final && !details.isDirectory()) throw new Error(`${label} path component is not a directory: ${current}`);
+    if (final && expectedType === 'file' && !details.isFile()) throw new Error(`${label} is not a regular file: ${current}`);
+    if (final && expectedType === 'directory' && !details.isDirectory()) throw new Error(`${label} is not a directory: ${current}`);
+  }
+  const [canonicalRoot, canonicalPath] = await Promise.all([realpath(rootPath), realpath(current)]);
+  if (!isWithin(canonicalPath, canonicalRoot)) throw new Error(`${label} resolves outside its root: ${current}`);
+  return current;
+}
+
 async function collectTree(root, directory, predicate = () => true) {
   const base = join(root, directory);
   const output = [];
   async function walk(path) {
     for (const entry of await readdir(path, { withFileTypes: true })) {
       const child = join(path, entry.name);
-      if (entry.isDirectory()) await walk(child);
-      else if (entry.isFile() && predicate(child)) output.push(relative(root, child));
+      const childRelative = relative(root, child);
+      const details = await lstat(child);
+      if (details.isSymbolicLink()) throw new Error(`Plugin runtime source must not contain symlinks or junctions: ${child}`);
+      if (details.isDirectory()) await walk(child);
+      else if (details.isFile() && predicate(child)) output.push(childRelative);
+      else if (!details.isFile()) throw new Error(`Plugin runtime source contains an unsupported filesystem entry: ${child}`);
     }
   }
-  if (await exists(base)) await walk(base);
+  if (await exists(base)) {
+    await safeRuntimePath(root, directory, 'directory', 'Plugin runtime source directory');
+    await walk(base);
+  }
   return output;
 }
 
@@ -190,23 +216,31 @@ async function runtimeFiles(sourceRoot) {
   for (const tree of STATIC_TREES) files.push(...await collectTree(sourceRoot, tree));
   for (const tree of JSON_TREES) files.push(...await collectTree(sourceRoot, tree, path => path.toLowerCase().endsWith('.json')));
   const unique = [...new Set(files)].sort();
-  for (const path of unique) if (!(await exists(join(sourceRoot, path)))) throw new Error(`Plugin runtime source is missing required file: ${path}`);
+  for (const path of unique) {
+    try { await safeRuntimePath(sourceRoot, path, 'file', 'Plugin runtime source file'); }
+    catch (error) {
+      if (error.code === 'ENOENT') throw new Error(`Plugin runtime source is missing required file: ${path}`);
+      throw error;
+    }
+  }
   return unique;
 }
 
 async function contentHash(sourceRoot, files) {
   const hash = createHash('sha256');
   for (const path of files) {
-    hash.update(path.split(sep).join('/')); hash.update('\0'); hash.update(await readFile(join(sourceRoot, path))); hash.update('\0');
+    const source = await safeRuntimePath(sourceRoot, path, 'file', 'Plugin runtime file');
+    hash.update(path.split(sep).join('/')); hash.update('\0'); hash.update(await readFile(source)); hash.update('\0');
   }
   return hash.digest('hex');
 }
 
 async function copyRuntime(sourceRoot, destination, files) {
   for (const path of files) {
+    const source = await safeRuntimePath(sourceRoot, path, 'file', 'Plugin runtime source file');
     const target = join(destination, path);
     await mkdir(dirname(target), { recursive: true });
-    await cp(join(sourceRoot, path), target, { force: false, errorOnExist: true });
+    await writeFile(target, await readFile(source), { flag: 'wx' });
   }
 }
 
@@ -235,16 +269,54 @@ async function installDependencies(runtimePath, options = {}) {
   });
 }
 
-async function publishedRuntime(runtimeRoot, hash, allowDifferentRuntime = false) {
+async function verifyRuntimeDependencies(runtimePath) {
+  const packageManifest = await readJson(await safeRuntimePath(runtimePath, 'package.json', 'file', 'Published runtime package manifest'), 'Runtime package manifest');
+  const lockManifest = await readJson(await safeRuntimePath(runtimePath, 'package-lock.json', 'file', 'Published runtime package lock'), 'Runtime package lock');
+  const dependencies = packageManifest.value?.dependencies ?? {};
+  if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) throw new Error(`Published runtime dependencies are invalid: ${runtimePath}`);
+  for (const name of Object.keys(dependencies).sort()) {
+    const locked = lockManifest.value?.packages?.[`node_modules/${name}`];
+    if (!locked?.version) throw new Error(`Published runtime package lock is missing dependency ${name}: ${runtimePath}`);
+    const manifestRelative = join('node_modules', ...name.split('/'), 'package.json');
+    let installedPath;
+    try { installedPath = await safeRuntimePath(runtimePath, manifestRelative, 'file', `Published runtime dependency ${name}`); }
+    catch (error) {
+      if (error.code === 'ENOENT') throw new Error(`Published runtime is missing required dependency ${name}: ${runtimePath}`);
+      throw error;
+    }
+    const installed = await readJson(installedPath, `Runtime dependency ${name}`);
+    if (installed.value?.name !== name || installed.value?.version !== locked.version) {
+      throw new Error(`Published runtime dependency ${name} does not match package-lock.json: ${runtimePath}`);
+    }
+  }
+}
+
+async function verifyPublishedRuntime(runtimePath, plan) {
+  const files = await runtimeFiles(runtimePath);
+  if (files.length !== plan.files.length || files.some((file, index) => file !== plan.files[index])) {
+    throw new Error(`Published runtime file manifest does not match the expected runtime: ${runtimePath}`);
+  }
+  const hash = await contentHash(runtimePath, files);
+  if (hash !== plan.contentHash) throw new Error(`Published runtime content hash does not match its directory: ${runtimePath}`);
+  await verifyRuntimeDependencies(runtimePath);
+}
+
+async function publishedRuntime(runtimeRoot, plan, allowDifferentRuntime = false) {
   if (!(await exists(runtimeRoot))) return null;
   for (const entry of await readdir(runtimeRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.startsWith('.staging-')) continue;
+    if (entry.name.startsWith('.staging-')) continue;
     const path = join(runtimeRoot, entry.name);
+    if (entry.isSymbolicLink()) throw new Error(`Refusing a symlinked or junction runtime directory: ${path}`);
+    if (!entry.isDirectory()) continue;
     const markerPath = join(path, '.plugin-runtime.json');
     if (!(await exists(markerPath))) throw new Error(`Refusing to overwrite an unowned runtime directory: ${path}`);
+    await safeRuntimePath(path, '.plugin-runtime.json', 'file', 'Runtime marker');
     const marker = await readJson(markerPath, 'Runtime marker');
-    if (marker.value?.contentHash !== entry.name) throw new Error(`Runtime marker does not match its directory: ${path}`);
-    if (entry.name === hash) return path;
+    if (marker.value?.version !== 1 || marker.value?.contentHash !== entry.name) throw new Error(`Runtime marker does not match its directory: ${path}`);
+    if (entry.name === plan.contentHash) {
+      await verifyPublishedRuntime(path, plan);
+      return path;
+    }
     if (!allowDifferentRuntime) throw new Error(`A different plugin runtime is already installed at ${path}; updates require a separate explicit operation`);
   }
   return null;
@@ -252,7 +324,7 @@ async function publishedRuntime(runtimeRoot, hash, allowDifferentRuntime = false
 
 async function deployRuntime(plan, options) {
   const runtimeRoot = join(plan.stateDir, 'runtime');
-  const existing = await publishedRuntime(runtimeRoot, plan.contentHash, options.allowDifferentRuntime === true);
+  const existing = await publishedRuntime(runtimeRoot, plan, options.allowDifferentRuntime === true);
   if (existing) return existing;
   await mkdir(runtimeRoot, { recursive: true });
   const staging = join(runtimeRoot, `.staging-${plan.contentHash}-${process.pid}-${randomBytes(6).toString('hex')}`);
@@ -265,7 +337,7 @@ async function deployRuntime(plan, options) {
     try { await rename(staging, destination); }
     catch (error) {
       if (error.code !== 'EEXIST' && error.code !== 'ENOTEMPTY') throw error;
-      const raced = await publishedRuntime(runtimeRoot, plan.contentHash, options.allowDifferentRuntime === true);
+      const raced = await publishedRuntime(runtimeRoot, plan, options.allowDifferentRuntime === true);
       if (!raced) throw error;
       await rm(staging, { recursive: true, force: true });
       return raced;

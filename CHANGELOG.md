@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here. This project follows semantic versioning while recognizing that pre-1.0 releases may introduce breaking changes.
 
+## [0.4.1] - 2026-09-24
+
+### Fixed
+
+- Immediately retrying discovery after its last caller cancels now starts a fresh discovery instead of inheriting the cancelled request.
+- Added boundary regressions for stale catalog generations, pending-release uncertainty, and heartbeat failure preserving an unknown-outcome server lock.
+- Shortened setup autocomplete text and user-facing setup summaries while retaining approval and recovery instructions.
+- Default transfer exports redact all endpoint URLs, including capability paths and signed query strings.
+- Runtime reuse verifies packaged file contents rather than trusting only an installation marker.
+- Ambiguous post-dispatch HTTP failures retain exclusive ownership until the outcome can be resolved.
+- Windows owner-only permissions are applied atomically, avoiding temporary access failures during simultaneous gateway startup.
+
 ## [0.4.0] - 2026-09-24
 
 ### Added
