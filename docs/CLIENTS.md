@@ -76,7 +76,7 @@ copilot plugin marketplace add yeelam-gordon/MCPGateway
 copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
-Then start Copilot CLI and invoke `/mcp-gateway-setup`. Review its preview before approving changes. The setup skill installs the runtime outside the plugin cache, backs up the selected Copilot MCP configuration, and writes the `shared-mcp-gateway` connector used as the source for other clients.
+Then start Copilot CLI and invoke `/mcp-gateway-setup`. Review its preview before approving changes. The setup skill installs the runtime outside the plugin cache, backs up the selected Copilot MCP configuration, and writes the `shared-mcp-gateway` connector used as the source for other clients. Run the exact `readinessCommand` returned by setup; after it succeeds, close and reopen Copilot before using the connector. Preserve the printed backup and rollback commands. See [setup recovery](REFERENCE.md#setup-recovery) if readiness or restart fails.
 
 Installing the plugin alone does not migrate configuration. The gateway does not install backend MCP servers or provide their credentials.
 
@@ -94,7 +94,7 @@ copilot plugin marketplace update mcp-gateway
 copilot plugin update shared-mcp-gateway@mcp-gateway
 ```
 
-After the plugin update, invoke `/mcp-gateway-setup` and explicitly request adoption of the updated runtime. Review the reported backup, readiness, and rollback commands. Existing client entries continue to point to the old stable connector until they are deliberately repointed.
+After the plugin update, invoke `/mcp-gateway-setup` and explicitly request adoption of the updated runtime. Review the preview and approve the backed-up switch. Finish active work and have the setup skill stop only the old gateway verified as owned by the reported state directory and port. Then run the exact readiness command for the new connector and restart clients after it succeeds. Never stop unrelated Node processes. Other client entries continue to point to the old stable connector until they are deliberately repointed. If the Windows updater reports `Access denied`, use the tested [cache-only recovery](REFERENCE.md#windows-plugin-cache-access-denied); it does not replace or modify the stable runtime.
 
 <a id="register-or-repoint-one-client"></a>
 ### Register or repoint one client
@@ -141,14 +141,16 @@ copilot plugin marketplace add yeelam-gordon/MCPGateway
 copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
-Run `/mcp-gateway-setup` inside Copilot CLI. The normal user configuration is `$COPILOT_HOME/mcp-config.json` when `COPILOT_HOME` is set, otherwise `~/.copilot/mcp-config.json`.
+Run `/mcp-gateway-setup` inside Copilot CLI. The normal user configuration is `$COPILOT_HOME/mcp-config.json` when `COPILOT_HOME` is set, otherwise `~/.copilot/mcp-config.json`. Run its readiness command, then restart Copilot.
+
+If another tool later adds MCP entries beside the gateway entry, rerun setup even when no newer plugin version exists. Preview makes no changes. After approval, apply backs up both configurations, imports new definitions with their settings and allowlists preserved, deduplicates identical entries, and refuses same-name conflicts. It does not reinstall the runtime for a configuration-only sync or automatically absorb repository/plugin-supplied entries. After applying, finish active work and ask the setup skill to restart only the owned gateway so the new configuration takes effect. With no additions, setup reports that nothing changed.
 
 A local checkout install was verified with `copilot plugin install "<checkout>"` in an isolated `COPILOT_HOME`, but the current CLI warns that direct local/repository installs are deprecated. Do not use that as the published upgrade path.
 
 <a id="copilot-cli-upgrade"></a>
 ### Upgrade
 
-Run the commands in [Upgrade the shared core](#shared-core-upgrade), then invoke `/mcp-gateway-setup` to preview and adopt the updated runtime. `copilot plugin update` updates the cached plugin; it does not silently switch the stable runtime or migrate newly conflicting entries.
+Run the commands in [Upgrade the shared core](#shared-core-upgrade), then invoke `/mcp-gateway-setup` to preview and adopt the updated runtime. `copilot plugin update` updates the cached plugin; it does not silently switch the stable runtime or migrate newly conflicting entries. Keep the old runtime available until the new readiness check succeeds.
 
 <a id="vs-code"></a>
 ## VS Code

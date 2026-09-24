@@ -1,60 +1,49 @@
-# Bắt đầu nhanh với Shared MCP Gateway
+# Shared MCP Gateway
 
 [English](../../README.md)
 
-> Đây là hướng dẫn bắt đầu nhanh đã được bản địa hóa. Bản [README](../../README.md) tiếng Anh là nguồn chính thức cho cách dùng nâng cao và thông tin kỹ thuật mới nhất.
+> Đây là phần tổng quan đã được bản địa hóa. Bản [README](../../README.md) tiếng Anh và hướng dẫn ứng dụng khách tiếng Anh được liên kết bên dưới là nguồn chính thức cho cài đặt đầy đủ, nâng cấp và chi tiết kỹ thuật.
 
-## Một gateway cho các backend MCP hiện có
+## Tiết kiệm RAM. Giữ ngữ cảnh cho công việc. Công cụ khi cần.
 
-Shared MCP Gateway giúp Copilot ban đầu chỉ tải một giao diện cố định gồm **6 công cụ gateway**, sau đó tìm và gọi theo nhu cầu các công cụ từ backend mà bạn đã cấu hình. Ngay cả khi danh mục có khoảng **1.000 công cụ**, ứng dụng khách cũng không cần nhận toàn bộ định nghĩa ngay từ đầu.
+**Nhiều tác nhân hơn phải mang lại nhiều công việc hoàn thành hơn, không phải nhiều bản sao của cùng một cấu hình MCP.**
 
-Danh mục và kết nối backend được dùng lại giữa nhiều phiên Copilot CLI, nhờ đó giảm việc khởi động trùng lặp các máy chủ cục bộ. Gateway không cài đặt máy chủ MCP và không cung cấp thông tin xác thực; hãy tiếp tục dùng cách hiện tại của bạn để cấu hình máy chủ và xác thực.
+### 5 tác nhân. 12 kết nối MCP. Một cấu hình dùng chung.
 
-6 công cụ gồm 4 công cụ khám phá/thực thi và 2 công cụ thuê máy chủ dùng chung. Cơ chế thuê áp dụng cho mọi backend cần trạng thái quy trình độc quyền, không chỉ dành cho tự động hóa trình duyệt.
+*Ví dụ minh họa: **12** kết nối này cung cấp **1,000** công cụ và mỗi cấu hình độc lập sử dụng **1.5 GB** RAM của tiến trình cục bộ.*
 
-## Điều kiện cần
+| Lợi ích | Cấu hình riêng cho từng tác nhân | Với MCPGateway |
+|---|---|---|
+| **Tiết kiệm RAM** | **7.5 GB** cho năm cấu hình MCP độc lập. | **1.5 GB dùng chung**, cộng thêm chi phí của gateway và trình kết nối. **Tránh 6 GB bộ nhớ trùng lặp.** |
+| **Giữ ngữ cảnh. Công cụ khi cần.** | Mỗi tác nhân tải trước **1,000 định nghĩa công cụ**; số lượng có thể tăng khi thêm kết nối MCP. | Ban đầu chỉ có **6 công cụ gateway—ít hơn 99.4% định nghĩa**. Cả **1,000** công cụ vẫn sẵn dùng; mỗi tác nhân chỉ khám phá và tải những gì cần thiết. Thêm kết nối mà không phải tải toàn bộ danh mục vào mọi tác nhân. |
 
-- Node.js 24 trở lên, npm và Git
-- Copilot CLI có hỗ trợ plugin
-- Cấu hình MCP hiện có của Copilot và thông tin xác thực mà backend yêu cầu
-- Agency là tùy chọn và không cần thiết khi sử dụng Copilot CLI thông thường
+**Giữ các tác nhân và kết nối MCP của bạn. Đừng bắt mỗi phiên mang theo một bản sao riêng.**
 
-## Cài đặt
-
-Chạy các lệnh này trong **terminal**, không chạy trong cuộc trò chuyện Copilot:
-
-```text
-copilot plugin marketplace add yeelam-gordon/MCPGateway
-copilot plugin install shared-mcp-gateway@mcp-gateway
-```
-
-Sau đó khởi động Copilot và chạy bên trong Copilot:
-
-```text
-/mcp-gateway-setup
-```
-
-Chỉ cài plugin sẽ không di chuyển cấu hình MCP. Quy trình thiết lập hiển thị bản xem trước trước; sau khi được phê duyệt, quy trình sẽ sao lưu cấu hình hiện có, lưu định nghĩa backend trong thư mục riêng tư và chuyển cấu hình ứng dụng khách sang trình kết nối gateway dùng chung.
-
-Hãy giữ lại đường dẫn sao lưu và lệnh khôi phục chính xác được hiển thị. Danh mục backend và bản sao lưu có thể chứa thông tin xác thực; đừng công khai hoặc commit chúng vào hệ thống quản lý phiên bản.
-
-Khi hoàn tất, hãy đóng rồi mở lại Copilot. Gateway tự khởi động khi trình kết nối được dùng lần đầu; bạn không cần duy trì một terminal riêng.
+*Số liệu RAM chỉ mang tính minh họa, không phải mức tiết kiệm đã đo; bộ nhớ của tác nhân là phần bổ sung. Số lượng định nghĩa không đồng nghĩa với tiết kiệm token, và ứng dụng khách đã trì hoãn tải có thể nhận được lợi ích ngữ cảnh nhỏ hơn. Việc dùng chung không mở rộng cửa sổ ngữ cảnh hoặc giữ tổng mức dùng RAM không đổi.*
 
 ## Cách hoạt động
 
-1. `list_servers` liệt kê các bí danh đã cấu hình mà không khởi động mọi backend.
-2. `search_tools` tìm phần tóm tắt công cụ phù hợp trong một backend cụ thể.
-3. `get_tool_schema` chỉ lấy lược đồ đầu vào đầy đủ của công cụ đã chọn.
-4. `call_tool` kiểm tra đối số và danh sách cho phép trước khi gọi công cụ.
-5. `claim_server` và `release_server` bảo vệ toàn bộ quy trình của máy chủ cần quyền truy cập độc quyền, rồi giải phóng lượt thuê sau khi các lệnh gọi đang hoạt động kết thúc.
+Gateway luôn cung cấp 6 công cụ cho tác nhân: 4 công cụ để tìm và gọi chức năng, cùng 2 công cụ cho tích hợp cần quy trình độc quyền. Thêm kết nối không làm tăng giao diện ban đầu; lược đồ đầy đủ chỉ được tải cho công cụ đã chọn. Các kết nối bạn đã cấu hình và xác thực được dùng lại, không cài đặt dịch vụ hoặc cung cấp thông tin xác thực.
 
-Ứng dụng khách MCP, gateway và máy chủ MCP có vai trò khác nhau, nhưng bạn không cần hiểu chi tiết giao thức khi sử dụng hằng ngày: cứ cấu hình backend như trước và để Copilot khám phá, gọi chúng thông qua gateway.
+**Điều kiện cần:** Node.js 24 trở lên, npm, Git và Copilot CLI hỗ trợ plugin cho quy trình khởi tạo hiện tại. Agency là tùy chọn.
 
-## Cập nhật và khôi phục
+## Cài đặt và nâng cấp theo ứng dụng khách
 
-Sau khi cập nhật plugin, hãy chạy `/mcp-gateway-setup` để chủ động áp dụng runtime mới. Chờ các lệnh gọi đang hoạt động kết thúc, áp dụng bản cập nhật rồi mở lại Copilot; chỉ tải plugin xuống sẽ không thay thế gateway đang chạy.
+Runtime dùng chung hiện được tạo qua Copilot CLI; các ứng dụng khách khác kết nối với cùng một trình kết nối ổn định. Các liên kết sau mở hướng dẫn ứng dụng khách tiếng Anh, nguồn chính thức cho cài đặt và nâng cấp.
 
-Nếu thiết lập thất bại, hãy đóng Copilot rồi dùng đúng đường dẫn sao lưu và lệnh khôi phục đã hiển thị. Đừng xóa thư mục backend riêng tư để cố khôi phục.
-Xem bản [README](../../README.md) tiếng Anh để biết thêm về đồng bộ cấu hình, tích hợp ứng dụng khách, cơ chế thuê và xử lý sự cố.
+| Ứng dụng khách | Cài đặt | Nâng cấp |
+|---|---|---|
+| GitHub Copilot CLI | [Cài đặt](../CLIENTS.md#copilot-cli-install) | [Nâng cấp](../CLIENTS.md#copilot-cli-upgrade) |
+| VS Code (trình soạn thảo) | [Cài đặt](../CLIENTS.md#vs-code-install) | [Nâng cấp](../CLIENTS.md#vs-code-upgrade) |
+| Claude Code | [Cài đặt](../CLIENTS.md#claude-code-install) | [Nâng cấp](../CLIENTS.md#claude-code-upgrade) |
+| Codex CLI | [Cài đặt](../CLIENTS.md#codex-install) | [Nâng cấp](../CLIENTS.md#codex-upgrade) |
+| OpenCode | [Cài đặt](../CLIENTS.md#opencode-install) | [Nâng cấp](../CLIENTS.md#opencode-upgrade) |
+| Qwen Code | [Cài đặt](../CLIENTS.md#qwen-code-install) | [Nâng cấp](../CLIENTS.md#qwen-code-upgrade) |
+| Kimi CLI | [Cài đặt](../CLIENTS.md#kimi-cli-install) | [Nâng cấp](../CLIENTS.md#kimi-cli-upgrade) |
+| Antigravity CLI | [Cài đặt](../CLIENTS.md#antigravity-cli-install) | [Nâng cấp](../CLIENTS.md#antigravity-cli-upgrade) |
+
+Thiết lập hiển thị bản xem trước trước khi thay đổi. Sau khi được phê duyệt, thiết lập tạo bản sao lưu riêng tư rồi trả về kiểm tra sẵn sàng và lệnh hoàn tác chính xác. Cấu hình và bản sao lưu có thể chứa thông tin xác thực; đừng công khai hoặc commit vào hệ thống quản lý phiên bản.
+
+**Tài liệu vận hành (tiếng Anh):** [Xem tài liệu vận hành](../REFERENCE.md)
 
 **Giấy phép:** [MIT](../../LICENSE)

@@ -1,60 +1,49 @@
-# Avvio rapido di Shared MCP Gateway
+# Shared MCP Gateway
 
 [English](../../README.md)
 
-> Questa è una guida rapida localizzata. Il [README](../../README.md) in inglese è la fonte autorevole per l'uso avanzato e i dettagli tecnici più recenti.
+> Questa è una panoramica localizzata. Il [README](../../README.md) inglese e la guida client inglese collegata più avanti sono le fonti autorevoli per installazione completa, aggiornamenti e dettagli tecnici.
 
-## Un gateway per i backend MCP esistenti
+## Risparmia RAM. Conserva il contesto per il tuo lavoro. Strumenti su richiesta.
 
-Shared MCP Gateway consente a Copilot di caricare inizialmente un'interfaccia fissa di **6 strumenti gateway**, quindi di cercare e richiamare su richiesta gli strumenti dei backend già configurati. Anche con circa **1.000 strumenti** nel catalogo, non è necessario fornire al client tutte le definizioni fin dall'inizio.
+**Più agenti devono significare più lavoro completato, non più copie della stessa configurazione MCP.**
 
-Il catalogo e le connessioni backend vengono riutilizzati tra più sessioni Copilot CLI, riducendo l'avvio duplicato dei server locali. Il gateway non installa server MCP e non fornisce credenziali: continua a usare il metodo abituale per configurare server e autenticazione.
+### 5 agenti. 12 connessioni MCP. Una configurazione condivisa.
 
-I 6 strumenti comprendono 4 strumenti di individuazione/esecuzione e 2 strumenti generici di lease del server. Il lease è adatto a qualsiasi backend che richieda uno stato di workflow esclusivo e non è limitato all'automazione del browser.
+*Esempio illustrativo: le **12** connessioni offrono **1,000** strumenti e ogni configurazione indipendente usa **1.5 GB** di RAM dei processi locali.*
 
-## Prerequisiti
+| Vantaggio | Configurazione separata per agente | Con MCPGateway |
+|---|---|---|
+| **Risparmia RAM** | **7.5 GB** per cinque configurazioni MCP indipendenti. | **1.5 GB condivisi**, oltre al sovraccarico di gateway e connettori. **6 GB di memoria duplicata evitati.** |
+| **Conserva il contesto. Strumenti su richiesta.** | Ogni agente carica in anticipo **1,000 definizioni di strumenti**, un numero che può crescere aggiungendo connessioni MCP. | Solo **6 strumenti gateway iniziali, il 99.4% di definizioni in meno**. Tutti i **1,000** strumenti restano disponibili; ogni agente individua e carica solo quelli necessari. Aggiungi connessioni senza caricarne l'intero catalogo in ogni agente. |
 
-- Node.js 24 o versione successiva, npm e Git
-- Copilot CLI con supporto per i plugin
-- Una configurazione MCP di Copilot esistente e l'autenticazione richiesta dai backend
-- Agency è facoltativo e non è necessario per il normale utilizzo di Copilot CLI
+**Mantieni agenti e connessioni MCP. Evita che ogni sessione porti con sé la propria copia.**
 
-## Installazione
-
-Esegui questi comandi nel **terminale**, non nella chat di Copilot:
-
-```text
-copilot plugin marketplace add yeelam-gordon/MCPGateway
-copilot plugin install shared-mcp-gateway@mcp-gateway
-```
-
-Avvia quindi Copilot ed esegui al suo interno:
-
-```text
-/mcp-gateway-setup
-```
-
-La sola installazione del plugin non migra la configurazione MCP. La procedura mostra prima un'anteprima; dopo l'approvazione, esegue il backup della configurazione esistente, salva le definizioni backend in una directory privata e imposta il connettore del gateway condiviso nella configurazione del client.
-
-Conserva il percorso del backup e il comando di ripristino esatto mostrati dalla procedura. Il catalogo e i backup possono contenere credenziali: non pubblicarli e non inserirli nel controllo versione.
-
-Al termine, chiudi e riapri Copilot. Il gateway si avvia automaticamente al primo utilizzo del connettore; non occorre lasciare aperto un altro terminale.
+*I valori RAM sono illustrativi, non risparmi misurati; la memoria degli agenti è aggiuntiva. Il numero di definizioni non equivale a un risparmio di token e i client che già rinviano il caricamento possono ottenere un vantaggio di contesto minore. La condivisione non amplia la finestra di contesto né rende costante la RAM totale.*
 
 ## Funzionamento
 
-1. `list_servers` elenca gli alias configurati senza avviare tutti i backend.
-2. `search_tools` cerca i riepiloghi degli strumenti pertinenti in un backend specifico.
-3. `get_tool_schema` recupera solo lo schema di input completo dello strumento scelto.
-4. `call_tool` convalida gli argomenti e l'elenco consentito prima di richiamare lo strumento.
-5. `claim_server` e `release_server` proteggono l'intero workflow di un server che richiede accesso esclusivo e rilasciano il lease al termine delle chiamate attive.
+Il gateway presenta sempre 6 strumenti all'agente: 4 per individuare e richiamare funzionalità e 2 per le integrazioni che richiedono un flusso esclusivo. Aggiungere connessioni non amplia questa interfaccia iniziale; lo schema completo viene caricato solo per lo strumento scelto. Le connessioni già configurate e autenticate vengono riutilizzate, senza installare servizi o fornire credenziali.
 
-Client MCP, gateway e server MCP hanno ruoli diversi, ma nell'uso quotidiano non è necessario conoscere i dettagli del protocollo: configura i backend come sempre e lascia che Copilot li individui e li richiami attraverso il gateway.
+**Prerequisiti:** Node.js 24 o versione successiva, npm, Git e Copilot CLI con plugin per l'avvio attuale. Agency è facoltativo.
 
-## Aggiornamento e ripristino
+## Installazione e aggiornamento per client
 
-Dopo aver aggiornato il plugin, esegui `/mcp-gateway-setup` per adottare esplicitamente il nuovo runtime. Attendi il completamento delle chiamate attive, applica l'aggiornamento e riapri Copilot; il solo download del plugin non sostituisce un gateway in esecuzione.
+Il runtime condiviso viene attualmente creato tramite Copilot CLI; gli altri client si collegano allo stesso connettore stabile. I link seguenti aprono la guida client inglese, fonte ufficiale per installazione e aggiornamento.
 
-Se la configurazione non riesce, chiudi Copilot e usa il percorso di backup e il comando di ripristino esatti mostrati. Non eliminare la directory privata dei backend per tentare il recupero.
-Consulta il [README](../../README.md) in inglese per sincronizzazione della configurazione, integrazione dei client, lease e risoluzione dei problemi.
+| Client | Installazione | Aggiornamento |
+|---|---|---|
+| GitHub Copilot CLI | [Installa](../CLIENTS.md#copilot-cli-install) | [Aggiorna](../CLIENTS.md#copilot-cli-upgrade) |
+| VS Code (editor) | [Installa](../CLIENTS.md#vs-code-install) | [Aggiorna](../CLIENTS.md#vs-code-upgrade) |
+| Claude Code | [Installa](../CLIENTS.md#claude-code-install) | [Aggiorna](../CLIENTS.md#claude-code-upgrade) |
+| Codex CLI | [Installa](../CLIENTS.md#codex-install) | [Aggiorna](../CLIENTS.md#codex-upgrade) |
+| OpenCode | [Installa](../CLIENTS.md#opencode-install) | [Aggiorna](../CLIENTS.md#opencode-upgrade) |
+| Qwen Code | [Installa](../CLIENTS.md#qwen-code-install) | [Aggiorna](../CLIENTS.md#qwen-code-upgrade) |
+| Kimi CLI | [Installa](../CLIENTS.md#kimi-cli-install) | [Aggiorna](../CLIENTS.md#kimi-cli-upgrade) |
+| Antigravity CLI | [Installa](../CLIENTS.md#antigravity-cli-install) | [Aggiorna](../CLIENTS.md#antigravity-cli-upgrade) |
+
+La configurazione mostra un'anteprima prima di ogni modifica. Dopo l'approvazione crea backup privati e restituisce controlli di disponibilità e comandi esatti di ripristino. Configurazione e backup possono contenere credenziali: non pubblicarli e non inserirli nel controllo versione.
+
+**Riferimento operativo (inglese):** [Consulta il riferimento operativo](../REFERENCE.md)
 
 **Licenza:** [MIT](../../LICENSE)

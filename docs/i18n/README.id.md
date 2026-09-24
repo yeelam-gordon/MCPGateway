@@ -1,60 +1,49 @@
-# Mulai cepat Shared MCP Gateway
+# Shared MCP Gateway
 
 [English](../../README.md)
 
-> Ini adalah panduan mulai cepat yang dilokalkan. [README](../../README.md) berbahasa Inggris merupakan sumber utama untuk penggunaan tingkat lanjut dan detail teknis terbaru.
+> Ini adalah ringkasan yang dilokalkan. [README](../../README.md) berbahasa Inggris dan panduan klien berbahasa Inggris yang ditautkan di bawah merupakan sumber resmi untuk instalasi lengkap, peningkatan, dan detail teknis.
 
-## Satu gateway untuk backend MCP yang sudah ada
+## Hemat RAM. Sisakan konteks untuk pekerjaan Anda. Alat sesuai kebutuhan.
 
-Shared MCP Gateway membuat Copilot hanya memuat antarmuka tetap berisi **6 alat gateway** di awal, lalu mencari dan memanggil alat dari backend yang sudah Anda konfigurasi saat diperlukan. Walaupun katalog berisi sekitar **1.000 alat**, semua definisinya tidak perlu diberikan kepada klien sejak awal.
+**Lebih banyak agen seharusnya berarti lebih banyak pekerjaan selesai, bukan lebih banyak salinan konfigurasi MCP yang sama.**
 
-Katalog dan koneksi backend digunakan kembali oleh beberapa sesi Copilot CLI sehingga mengurangi pengaktifan server lokal yang berulang. Gateway tidak memasang server MCP atau menyediakan kredensial; tetap gunakan cara Anda saat ini untuk mengonfigurasi server dan autentikasi.
+### 5 agen. 12 koneksi MCP. Satu konfigurasi bersama.
 
-Keenam alat tersebut terdiri dari 4 alat penemuan/eksekusi dan 2 alat sewa server umum. Sewa dapat dipakai untuk backend apa pun yang memerlukan status alur kerja eksklusif, bukan hanya untuk otomatisasi browser.
+*Contoh ilustratif: **12** koneksi tersebut menyediakan **1,000** alat dan setiap konfigurasi mandiri menggunakan **1.5 GB** RAM proses lokal.*
 
-## Prasyarat
+| Manfaat | Konfigurasi terpisah per agen | Dengan MCPGateway |
+|---|---|---|
+| **Hemat RAM** | **7.5 GB** untuk lima konfigurasi MCP mandiri. | **1.5 GB digunakan bersama**, ditambah overhead gateway/konektor. **6 GB memori duplikat dihindari.** |
+| **Sisakan konteks. Alat sesuai kebutuhan.** | Setiap agen memuat **1,000 definisi alat** di awal; jumlahnya dapat bertambah saat koneksi MCP ditambahkan. | Hanya **6 alat gateway di awal—99.4% lebih sedikit definisi**. Semua **1,000** alat tetap tersedia; setiap agen hanya menemukan dan memuat yang diperlukan. Tambahkan koneksi tanpa memuat seluruh katalognya ke setiap agen. |
 
-- Node.js 24 atau lebih baru, npm, dan Git
-- Copilot CLI dengan dukungan plugin
-- Konfigurasi MCP Copilot yang sudah ada dan autentikasi yang diperlukan backend
-- Agency bersifat opsional dan tidak diperlukan untuk penggunaan Copilot CLI biasa
+**Pertahankan agen dan koneksi MCP Anda. Jangan buat setiap sesi membawa salinannya sendiri.**
 
-## Instalasi
-
-Jalankan perintah ini di **terminal**, bukan di dalam percakapan Copilot:
-
-```text
-copilot plugin marketplace add yeelam-gordon/MCPGateway
-copilot plugin install shared-mcp-gateway@mcp-gateway
-```
-
-Kemudian mulai Copilot dan jalankan di dalam Copilot:
-
-```text
-/mcp-gateway-setup
-```
-
-Memasang plugin saja tidak memigrasikan konfigurasi MCP. Penyiapan menampilkan pratinjau terlebih dahulu; setelah disetujui, penyiapan mencadangkan konfigurasi lama, menyimpan definisi backend dalam direktori privat, dan mengalihkan konfigurasi klien ke konektor gateway bersama.
-
-Simpan jalur cadangan dan perintah pemulihan persis yang ditampilkan. Katalog backend dan cadangan mungkin berisi kredensial; jangan publikasikan atau masukkan ke kontrol versi.
-
-Setelah selesai, tutup lalu buka kembali Copilot. Gateway dimulai otomatis saat konektor pertama kali digunakan; tidak perlu membiarkan terminal lain tetap berjalan.
+*Angka RAM hanya ilustrasi, bukan penghematan terukur; memori agen merupakan tambahan. Jumlah definisi bukan penghematan token, dan klien yang sudah menunda pemuatan mungkin mendapat manfaat konteks lebih kecil. Berbagi tidak memperbesar jendela konteks model atau membuat total penggunaan RAM tetap.*
 
 ## Cara kerja
 
-1. `list_servers` menampilkan alias yang dikonfigurasi tanpa memulai semua backend.
-2. `search_tools` mencari ringkasan alat yang relevan dalam backend tertentu.
-3. `get_tool_schema` hanya mengambil skema input lengkap untuk alat yang dipilih.
-4. `call_tool` memvalidasi argumen dan daftar izin sebelum memanggil alat.
-5. `claim_server` dan `release_server` melindungi seluruh alur kerja server yang memerlukan akses eksklusif, lalu melepas sewa setelah panggilan aktif selesai.
+Gateway selalu menampilkan 6 alat kepada agen: 4 untuk menemukan dan memanggil kemampuan, serta 2 untuk integrasi yang memerlukan alur kerja eksklusif. Menambah koneksi tidak memperbesar antarmuka awal ini; skema lengkap hanya dimuat untuk alat yang dipilih. Koneksi yang sudah Anda konfigurasi dan autentikasi digunakan kembali, tanpa memasang layanan atau menyediakan kredensial.
 
-Klien MCP, gateway, dan server MCP memiliki peran berbeda, tetapi Anda tidak perlu memahami detail protokol untuk penggunaan sehari-hari: konfigurasikan backend seperti biasa dan biarkan Copilot menemukan serta memanggilnya melalui gateway.
+**Prasyarat:** Node.js 24 atau lebih baru, npm, Git, dan Copilot CLI dengan dukungan plugin untuk proses awal saat ini. Agency bersifat opsional.
 
-## Pembaruan dan pemulihan
+## Instalasi dan peningkatan berdasarkan klien
 
-Setelah memperbarui plugin, jalankan `/mcp-gateway-setup` untuk mengadopsi runtime baru secara eksplisit. Tunggu hingga panggilan aktif selesai, terapkan pembaruan, lalu buka kembali Copilot; mengunduh plugin saja tidak mengganti gateway yang sedang berjalan.
+Runtime bersama saat ini dibuat melalui Copilot CLI; klien lain terhubung ke konektor stabil yang sama. Tautan berikut membuka panduan klien berbahasa Inggris, sumber resmi untuk instalasi dan peningkatan.
 
-Jika penyiapan gagal, tutup Copilot dan gunakan jalur cadangan serta perintah pemulihan persis dari output. Jangan hapus direktori backend privat sebagai cara pemulihan.
-Lihat [README](../../README.md) berbahasa Inggris untuk sinkronisasi konfigurasi, integrasi klien, sewa, dan pemecahan masalah.
+| Klien | Instalasi | Peningkatan |
+|---|---|---|
+| GitHub Copilot CLI | [Instal](../CLIENTS.md#copilot-cli-install) | [Tingkatkan](../CLIENTS.md#copilot-cli-upgrade) |
+| VS Code (editor) | [Instal](../CLIENTS.md#vs-code-install) | [Tingkatkan](../CLIENTS.md#vs-code-upgrade) |
+| Claude Code | [Instal](../CLIENTS.md#claude-code-install) | [Tingkatkan](../CLIENTS.md#claude-code-upgrade) |
+| Codex CLI | [Instal](../CLIENTS.md#codex-install) | [Tingkatkan](../CLIENTS.md#codex-upgrade) |
+| OpenCode | [Instal](../CLIENTS.md#opencode-install) | [Tingkatkan](../CLIENTS.md#opencode-upgrade) |
+| Qwen Code | [Instal](../CLIENTS.md#qwen-code-install) | [Tingkatkan](../CLIENTS.md#qwen-code-upgrade) |
+| Kimi CLI | [Instal](../CLIENTS.md#kimi-cli-install) | [Tingkatkan](../CLIENTS.md#kimi-cli-upgrade) |
+| Antigravity CLI | [Instal](../CLIENTS.md#antigravity-cli-install) | [Tingkatkan](../CLIENTS.md#antigravity-cli-upgrade) |
+
+Penyiapan menampilkan pratinjau sebelum mengubah apa pun. Setelah disetujui, penyiapan membuat cadangan privat serta memberikan pemeriksaan kesiapan dan perintah pengembalian yang tepat. Konfigurasi dan cadangan dapat berisi kredensial; jangan publikasikan atau masukkan ke kontrol versi.
+
+**Referensi operasional (bahasa Inggris):** [Lihat referensi operasional](../REFERENCE.md)
 
 **Lisensi:** [MIT](../../LICENSE)

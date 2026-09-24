@@ -1,60 +1,49 @@
-# Shared MCP Gateway hızlı başlangıç
+# Shared MCP Gateway
 
 [English](../../README.md)
 
-> Bu, yerelleştirilmiş bir hızlı başlangıç kılavuzudur. Gelişmiş kullanım ve en güncel teknik ayrıntılar için İngilizce [README](../../README.md) yetkili kaynaktır.
+> Bu, yerelleştirilmiş bir genel bakıştır. Tam kurulum, yükseltme ve teknik ayrıntılar için İngilizce [README](../../README.md) ile aşağıda bağlantısı verilen İngilizce istemci kılavuzu yetkili kaynaklardır.
 
-## Mevcut MCP arka uçlarınız için tek ağ geçidi
+## RAM'den tasarruf edin. Bağlamı işinize ayırın. Araçlar gerektiğinde.
 
-Shared MCP Gateway, Copilot'ın başlangıçta yalnızca **6 ağ geçidi aracından** oluşan sabit bir arayüz yüklemesini; daha sonra önceden yapılandırdığınız arka uç araçlarını gerektiğinde arayıp çağırmasını sağlar. Katalogda yaklaşık **1.000 araç** olsa bile tüm tanımların en başta istemciye verilmesi gerekmez.
+**Daha fazla aracı, aynı MCP yapılandırmasının daha fazla kopyası değil, daha fazla tamamlanan iş anlamına gelmelidir.**
 
-Arka uç kataloğu ve bağlantıları birden fazla Copilot CLI oturumunda yeniden kullanılır; böylece yerel sunucuların tekrar tekrar başlatılması azalır. Ağ geçidi MCP sunucularını kurmaz veya kimlik bilgisi sağlamaz. Sunucuları ve kimlik doğrulamayı mevcut yönteminizle yapılandırmaya devam edin.
+### 5 aracı. 12 MCP bağlantısı. Tek paylaşılan yapılandırma.
 
-6 araç; keşif/yürütme için 4 araçtan ve genel sunucu kiralaması için 2 araçtan oluşur. Kiralama, özel iş akışı durumu gerektiren her arka uçta kullanılabilir ve tarayıcı otomasyonuyla sınırlı değildir.
+*Örnek: **12** bağlantı **1,000** araç sunuyor ve her bağımsız yapılandırma **1.5 GB** yerel işlem RAM'i kullanıyor.*
 
-## Ön koşullar
+| Fayda | Her aracı için ayrı yapılandırma | MCPGateway ile |
+|---|---|---|
+| **RAM tasarrufu** | Beş bağımsız MCP yapılandırmasında **7.5 GB**. | **1.5 GB paylaşımlı**, ağ geçidi/bağlayıcı ek yükü hariç. **6 GB yinelenen bellek önlenir.** |
+| **Bağlam işinize kalsın. Araçlar gerektiğinde.** | Her aracı önceden **1,000 araç tanımı** yükler; MCP bağlantıları eklendikçe sayı artabilir. | Önceden yalnızca **6 ağ geçidi aracı, 99.4% daha az tanım**. **1,000** aracın tamamı kullanılabilir; her aracı yalnızca gerekenleri bulup yükler. Yeni bağlantılar, tam katalogların tüm aracılara önceden yüklenmesini gerektirmez. |
 
-- Node.js 24 veya üzeri, npm ve Git
-- Eklenti desteğine sahip Copilot CLI
-- Mevcut bir Copilot MCP yapılandırması ve arka uçların gerektirdiği kimlik doğrulama
-- Agency isteğe bağlıdır; normal Copilot CLI kullanımı için gerekli değildir
+**Aracılarınızı ve MCP bağlantılarınızı koruyun. Her oturuma ayrı bir kopya taşıtmayın.**
 
-## Kurulum
-
-Bu komutları Copilot sohbetinde değil, **terminalde** çalıştırın:
-
-```text
-copilot plugin marketplace add yeelam-gordon/MCPGateway
-copilot plugin install shared-mcp-gateway@mcp-gateway
-```
-
-Ardından Copilot'ı başlatın ve Copilot içinde şunu çalıştırın:
-
-```text
-/mcp-gateway-setup
-```
-
-Yalnızca eklentiyi kurmak MCP yapılandırmasını taşımaz. Kurulum önce bir önizleme gösterir; onaydan sonra mevcut yapılandırmayı yedekler, arka uç tanımlarını özel bir dizinde saklar ve istemci yapılandırmasını paylaşılan ağ geçidi bağlayıcısına geçirir.
-
-Gösterilen yedekleme yolunu ve tam geri yükleme komutunu saklayın. Arka uç kataloğu ve yedekler kimlik bilgileri içerebilir; bunları yayımlamayın veya sürüm denetimine işlemeyin.
-
-Tamamlandıktan sonra Copilot'ı kapatıp yeniden açın. Bağlayıcı ilk kullanıldığında ağ geçidi otomatik başlar; ayrı bir terminali açık tutmanız gerekmez.
+*RAM değerleri örnektir, ölçülmüş tasarruf değildir; aracıların kendi belleği buna eklenir. Tanım sayıları token tasarrufu anlamına gelmez ve zaten gecikmeli yükleme yapan istemciler daha küçük bir bağlam avantajı görebilir. Paylaşım, modelin bağlam penceresini büyütmez veya toplam RAM kullanımını sabit tutmaz.*
 
 ## Nasıl çalışır
 
-1. `list_servers`, tüm arka uçları başlatmadan yapılandırılmış takma adları listeler.
-2. `search_tools`, belirli bir arka uçta ilgili araç özetlerini arar.
-3. `get_tool_schema`, yalnızca seçilen aracın tam giriş şemasını getirir.
-4. `call_tool`, aracı çağırmadan önce bağımsız değişkenleri ve izin listesini doğrular.
-5. `claim_server` ve `release_server`, özel erişim gerektiren sunucunun tüm iş akışını korur ve etkin çağrılar bittikten sonra kiralamayı serbest bırakır.
+Ağ geçidi aracıya her zaman 6 araç sunar: 4'ü yetenekleri bulup çağırmak, 2'si özel iş akışı gerektiren entegrasyonlar içindir. Bağlantı eklemek başlangıç arayüzünü büyütmez; tam şema yalnızca seçilen araç için yüklenir. Önceden yapılandırıp doğruladığınız bağlantılar yeniden kullanılır; hizmet kurulmaz veya kimlik bilgisi sağlanmaz.
 
-MCP istemcisi, ağ geçidi ve MCP sunucusu farklı rollere sahiptir; ancak günlük kullanımda protokol ayrıntılarını bilmeniz gerekmez. Arka uçlarınızı her zamanki gibi yapılandırın ve Copilot'ın bunları ağ geçidi üzerinden bulup çağırmasına izin verin.
+**Ön koşullar:** Node.js 24 veya üzeri, npm, Git ve mevcut ilk kurulum için eklenti destekli Copilot CLI. Agency isteğe bağlıdır.
 
-## Güncelleme ve geri yükleme
+## İstemciye göre kurulum ve yükseltme
 
-Eklentiyi güncelledikten sonra yeni çalışma zamanını açıkça benimsemek için `/mcp-gateway-setup` komutunu çalıştırın. Etkin çağrıların bitmesini bekleyin, güncellemeyi uygulayın ve Copilot'ı yeniden açın; yalnızca eklentiyi indirmek çalışan ağ geçidini değiştirmez.
+Paylaşılan çalışma zamanı şu anda Copilot CLI üzerinden oluşturulur; diğer istemciler aynı kararlı bağlayıcıya bağlanır. Aşağıdaki bağlantılar, kurulum ve yükseltmenin yetkili kaynağı olan İngilizce istemci kılavuzuna gider.
 
-Kurulum başarısız olursa Copilot'ı kapatın ve çıktıda gösterilen tam yedekleme yoluyla geri yükleme komutunu kullanın. Kurtarma amacıyla özel arka uç dizinini silmeyin.
-Yapılandırma eşitleme, istemci entegrasyonu, kiralamalar ve sorun giderme için İngilizce [README](../../README.md) dosyasına bakın.
+| İstemci | Kurulum | Yükseltme |
+|---|---|---|
+| GitHub Copilot CLI | [Kur](../CLIENTS.md#copilot-cli-install) | [Yükselt](../CLIENTS.md#copilot-cli-upgrade) |
+| VS Code (düzenleyici) | [Kur](../CLIENTS.md#vs-code-install) | [Yükselt](../CLIENTS.md#vs-code-upgrade) |
+| Claude Code | [Kur](../CLIENTS.md#claude-code-install) | [Yükselt](../CLIENTS.md#claude-code-upgrade) |
+| Codex CLI | [Kur](../CLIENTS.md#codex-install) | [Yükselt](../CLIENTS.md#codex-upgrade) |
+| OpenCode | [Kur](../CLIENTS.md#opencode-install) | [Yükselt](../CLIENTS.md#opencode-upgrade) |
+| Qwen Code | [Kur](../CLIENTS.md#qwen-code-install) | [Yükselt](../CLIENTS.md#qwen-code-upgrade) |
+| Kimi CLI | [Kur](../CLIENTS.md#kimi-cli-install) | [Yükselt](../CLIENTS.md#kimi-cli-upgrade) |
+| Antigravity CLI | [Kur](../CLIENTS.md#antigravity-cli-install) | [Yükselt](../CLIENTS.md#antigravity-cli-upgrade) |
+
+Kurulum önce önizleme gösterir ve yalnızca onaydan sonra değişiklik yapar. Özel yedekler oluşturur, hazırlık kontrolleri ve tam geri alma komutları verir. Yapılandırma ve yedekler kimlik bilgileri içerebilir; yayımlamayın veya sürüm denetimine işlemeyin.
+
+**Operasyon başvurusu (İngilizce):** [Operasyon başvurusunu aç](../REFERENCE.md)
 
 **Lisans:** [MIT](../../LICENSE)
