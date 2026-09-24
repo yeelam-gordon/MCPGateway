@@ -13,12 +13,22 @@ export async function connectClient(options) {
     ? configPath.toLowerCase() === gatewayPath.toLowerCase()
     : configPath === gatewayPath;
   if (samePath) throw new Error('Client destination must differ from the source gateway configuration');
-  let gateway;
-  let gatewayBytes;
-  try { gatewayBytes = await readFile(gatewayPath); gateway = JSON.parse(gatewayBytes.toString('utf8')); }
-  catch { throw new Error('Cannot read a valid source gateway configuration; configure the gateway first'); }
-  const connector = gateway.mcpServers?.['shared-mcp-gateway'] ?? gateway.servers?.['shared-mcp-gateway'];
+  let gatewayBytes = options.verifiedGatewayBytes;
+  let connector = options.verifiedConnector;
+  if (gatewayBytes !== undefined && !Buffer.isBuffer(gatewayBytes)) throw new TypeError('verifiedGatewayBytes must be a Buffer');
+  if (gatewayBytes === undefined || connector === undefined) {
+    let gateway;
+    try { gatewayBytes = await readFile(gatewayPath); gateway = JSON.parse(gatewayBytes.toString('utf8')); }
+    catch { throw new Error('Cannot read a valid source gateway configuration; configure the gateway first'); }
+    connector = gateway.mcpServers?.['shared-mcp-gateway'] ?? gateway.servers?.['shared-mcp-gateway'];
+  }
   if (!connector || !Array.isArray(connector.args)) throw new Error('Source configuration does not contain a stdio shared-mcp-gateway connector');
+  const assertGatewayUnchanged = async () => {
+    if (!(await readFile(gatewayPath)).equals(gatewayBytes)) {
+      throw new Error('Gateway source configuration changed after bootstrap verification; refusing client setup');
+    }
+  };
+  await assertGatewayUnchanged();
   let original = null;
   try { original = await readFile(configPath, 'utf8'); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
@@ -35,6 +45,7 @@ export async function connectClient(options) {
   const prepared = await prepareConnectorRegistration({
     client: options.client, configPath, configText: original ?? '{}', connector
   });
+  await assertGatewayUnchanged();
   if (capabilities.format === 'toml') {
     if (options.apply) throw new Error('Codex registration uses its native CLI. Preview the registration command and run it after reviewing the existing Codex configuration.');
     return { status: 'native-cli-required', client: options.client, configPath, registrationCommand: prepared.registrationCommand };
@@ -49,7 +60,8 @@ export async function connectClient(options) {
   const stateIndex = connector.args.indexOf('--state-dir');
   if (stateIndex < 0 || !connector.args[stateIndex + 1]) throw new Error('Gateway connector has no private state directory for backups');
   const stateDir = resolve(connector.args[stateIndex + 1]);
-  await loadOrCreateToken(stateDir);
+  await (options.tokenLoader ?? loadOrCreateToken)(stateDir);
+  await assertGatewayUnchanged();
   const backupDir = join(stateDir, 'backups', `client-${options.client}-${randomUUID()}`);
   await mkdir(backupDir, { recursive: false, mode: 0o700 }).catch(async error => {
     if (error.code !== 'ENOENT') throw error;
@@ -65,6 +77,7 @@ export async function connectClient(options) {
   try { current = await readFile(configPath, 'utf8'); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   if (current !== original) throw new Error(`Client configuration changed; refusing replacement. Backup: ${backupPath ?? backupDir}`);
+  await assertGatewayUnchanged();
   await mkdir(dirname(configPath), { recursive: true });
   const staged = `${configPath}.${randomUUID()}.tmp`;
   try {

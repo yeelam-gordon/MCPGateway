@@ -74,7 +74,7 @@ See the [operational reference](docs/REFERENCE.md) for workflow ownership, priva
 ## Verified scope
 
 - **1,000-tool synthetic catalog, 2 clients:** a focused search returns one matching summary, and the second client reuses the cached catalog. [Test](test/catalog-scale.test.js)
-- **234 local checks passed for v0.6.0:** core sharing, recurring synchronization, cross-client migration, client/documentation behavior, installation, upgrade, rollback, cancellation, and recovery.
+- **235 local checks passed for v0.6.0:** core sharing, recurring synchronization, cross-client migration, client/documentation behavior, installation, upgrade, rollback, cancellation, and recovery.
 - **10 existing connections + 2 new = 12 shared:** migration across seven native formats, with two SDK clients reusing the same imported local process. Claude Code also parsed the actual migrated configuration without starting a model or MCP connection.
 - **Windows and Ubuntu CI on Node.js 24**, plus CodeQL analysis.
 - **Copilot marketplace installation and setup-skill discovery** verified in an isolated home for v0.5.0.

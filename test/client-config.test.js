@@ -69,6 +69,33 @@ test('client registration previews without writes then backs up only the selecte
   assert.equal(repeated.status, 'already-configured');
 });
 
+test('registration rejects gateway edits after bootstrap verification and during token preparation', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'gateway-registration-race-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const target = join(root, 'opencode.json');
+  const gatewayPath = join(root, 'gateway.json');
+  const stateDir = join(root, 'state');
+  const privatePath = join(stateDir, 'backends.json');
+  const original = JSON.stringify({ theme: 'unchanged', mcp: {} });
+  const connector = { command: process.execPath, args: [connectorScript, '--auto-start', '--config', privatePath,
+    '--port', '7319', '--state-dir', stateDir] };
+  const validGateway = { mcpServers: { 'shared-mcp-gateway': connector } };
+  const changedGateway = { mcpServers: { 'shared-mcp-gateway': { ...connector, args: [...connector.args.slice(0, -1), `${stateDir}-changed`] } } };
+  await writeFile(target, original);
+  await writeFile(gatewayPath, JSON.stringify(validGateway));
+  const base = { client: 'opencode', config: target, 'gateway-config': gatewayPath };
+
+  await assert.rejects(() => connectClient({ ...base,
+    beforeRuntimeOperation: () => writeFile(gatewayPath, JSON.stringify(changedGateway)) }), /changed after bootstrap verification/);
+  assert.equal(await readFile(target, 'utf8'), original);
+
+  await writeFile(gatewayPath, JSON.stringify(validGateway));
+  await assert.rejects(() => connectClient({ ...base, apply: true,
+    tokenLoader: async () => writeFile(gatewayPath, JSON.stringify(changedGateway)) }), /changed after bootstrap verification/);
+  assert.equal(await readFile(target, 'utf8'), original);
+  await assert.rejects(() => access(join(stateDir, 'backups')), { code: 'ENOENT' });
+});
+
 test('Codex uses an explicit native registration plan, not a fabricated TOML writer', async () => {
   const connector = { command: 'node', args: ['connector.mjs', '--state-dir', 'private state'] };
   const plan = await prepareConnectorRegistration({ client: 'codex', configText: '', connector });

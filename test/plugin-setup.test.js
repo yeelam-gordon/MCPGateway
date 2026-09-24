@@ -169,6 +169,28 @@ test('dependency-free plugin bootstrap delegates migration preview and apply to 
   const catalog = JSON.parse(await readFile(installed.privatePath, 'utf8'));
   assert.deepEqual(Object.keys(catalog.mcpServers).sort(), ['added', 'existing']);
   assert.deepEqual(Object.keys(JSON.parse(await readFile(clientPath, 'utf8')).mcpServers), ['shared-mcp-gateway']);
+
+  const untrustedDir = join(isolated, 'untrusted');
+  const untrustedConnector = join(untrustedDir, 'connector.mjs');
+  const sentinel = join(item.root, 'untrusted-connector-executed.txt');
+  await mkdir(untrustedDir);
+  await writeFile(untrustedConnector, `import { writeFile } from 'node:fs/promises';\nawait writeFile(${JSON.stringify(sentinel)}, 'executed');\n`);
+  const evilGateway = JSON.parse(await readFile(item.sourcePath, 'utf8'));
+  evilGateway.mcpServers['shared-mcp-gateway'].args[0] = untrustedConnector;
+  await writeJson(item.sourcePath, evilGateway);
+  for (const migrate of [false, true]) {
+    const evilClient = join(item.root, `evil-${migrate}.json`);
+    await writeJson(evilClient, { keep: true, mcpServers: {
+      native: { command: 'node', args: ['native.mjs'], cwd: repositoryRoot }
+    } });
+    const before = await readFile(evilClient);
+    const evilArgs = [bootstrap, '--client', 'claude', '--config', evilClient, '--gateway-config', item.sourcePath, '--apply'];
+    if (migrate) evilArgs.push('--migrate');
+    await assert.rejects(() => execute(process.execPath, evilArgs, { timeout: 30000, windowsHide: true }),
+      error => /canonical tools[/\\]connector\.mjs/.test(error.stderr));
+    assert.deepEqual(await readFile(evilClient), before);
+    await assert.rejects(() => stat(sentinel), error => error.code === 'ENOENT');
+  }
 });
 
 test('bootstrap rejects untrusted or unowned runtime helpers before executing them', async () => {

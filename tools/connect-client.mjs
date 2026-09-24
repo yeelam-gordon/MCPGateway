@@ -1,4 +1,4 @@
-import { access, readFile } from 'node:fs/promises';
+import { access, lstat, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -33,7 +33,7 @@ function argValue(args, flag) {
   return args[indexes[0] + 1];
 }
 
-function ownedRuntime(connector) {
+async function ownedRuntime(connector) {
   if (!connector || connector.disabled || typeof connector.command !== 'string' || !samePath(connector.command, process.execPath)
       || !Array.isArray(connector.args) || !connector.args.includes('--auto-start')) {
     throw new Error('Source configuration does not contain an owned shared-mcp-gateway connector');
@@ -49,16 +49,27 @@ function ownedRuntime(connector) {
   if (!samePath(privatePath, join(stateDir, 'backends.json'))) {
     throw new Error('Gateway connector private catalog does not belong to its selected state directory');
   }
-  return { connectorPath: resolve(connectorPath), runtimePath: dirname(dirname(resolve(connectorPath))) };
+  const resolvedConnector = resolve(connectorPath);
+  const runtimePath = dirname(dirname(resolvedConnector));
+  const expectedConnector = join(runtimePath, 'tools', 'connector.mjs');
+  if (!samePath(resolvedConnector, expectedConnector)) {
+    throw new Error('Gateway connector must be the canonical tools/connector.mjs within its selected runtime');
+  }
+  const details = await lstat(resolvedConnector);
+  if (!details.isFile() || details.isSymbolicLink()) {
+    throw new Error('Gateway connector must be a regular non-symlinked runtime file');
+  }
+  return { connectorPath: resolvedConnector, runtimePath };
 }
 
 async function stableImplementation(options) {
   const gatewayPath = resolve(options['gateway-config'] ?? join(process.env.COPILOT_HOME || join(homedir(), '.copilot'), 'mcp-config.json'));
   let gateway;
-  try { gateway = JSON.parse(await readFile(gatewayPath, 'utf8')); }
+  let gatewayBytes;
+  try { gatewayBytes = await readFile(gatewayPath); gateway = JSON.parse(gatewayBytes.toString('utf8')); }
   catch { throw new Error('Cannot read a valid source gateway configuration; configure the gateway first'); }
   const connector = gateway.mcpServers?.['shared-mcp-gateway'] ?? gateway.servers?.['shared-mcp-gateway'];
-  const selected = ownedRuntime(connector);
+  const selected = await ownedRuntime(connector);
   const trustedRoot = dirname(dirname(fileURLToPath(import.meta.url)));
   if (!samePath(selected.runtimePath, trustedRoot)) {
     try {
@@ -79,7 +90,8 @@ async function stableImplementation(options) {
   if (typeof module.connectClient !== 'function') {
     throw new Error('The selected gateway runtime is missing its cross-client entry point. Run gateway setup with --apply to upgrade it, then retry.');
   }
-  return module.connectClient(options);
+  if (options.beforeRuntimeOperation) await options.beforeRuntimeOperation();
+  return module.connectClient({ ...options, verifiedGatewayBytes: gatewayBytes, verifiedConnector: connector });
 }
 
 export function connectClient(options) {

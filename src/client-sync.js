@@ -40,10 +40,10 @@ export function inspectGatewayConnector(connector, platform = process.platform) 
 async function assertDifferentFiles(leftPath, rightPath, leftLabel, rightLabel, platform) {
   if (samePath(leftPath, rightPath, platform)) throw new Error(`${leftLabel} must differ from ${rightLabel}`);
   const [leftReal, rightReal, leftStat, rightStat] = await Promise.all([
-    realpath(leftPath), realpath(rightPath), stat(leftPath), stat(rightPath)
+    realpath(leftPath), realpath(rightPath), stat(leftPath, { bigint: true }), stat(rightPath, { bigint: true })
   ]);
   if (samePath(leftReal, rightReal, platform)
-      || (leftStat.ino !== 0 && leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino)) {
+      || (leftStat.ino !== 0n && leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino)) {
     throw new Error(`${leftLabel} must not resolve to the same file as ${rightLabel}`);
   }
 }
