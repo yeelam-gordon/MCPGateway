@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "generatedBy": "node tools/generate-client-dependency-integrity.mjs",
+  "packages": {
+    "smol-toml": {
+      "version": "1.8.0",
+      "resolved": "https://registry.npmjs.org/smol-toml/-/smol-toml-1.8.0.tgz",
+      "integrity": "sha512-kCZr2V3ch9i00x8zXRhjUNVcjG9ijES5dDudkXvUVCT5QlJNQWElSJdZqyPemffHoLNUYwOcou0Fy+ojN0uHSQ==",
+      "files": {
+        "LICENSE": "fa5659948374d4f555594f47f6da073b40dc503e921aeeece30df4362b3051a5",
+        "README.md": "6170186cc4c4e3e5b755e5d54939d01a4e2c5a930a650dde0ee0d3eef04cc3a2",
+        "dist/date.d.ts": "c7ad3531c131f2b5b246b2d208b75c5403475ad155b7661fa2d673104b806791",
+        "dist/date.js": "fcc8fcce1a3e8660ac572fb827c20e49d269ad50686c085bb72c3c50771323d5",
+        "dist/error.d.ts": "c5ada15420e52bcc8a451a7c4f2daff318e6d0bf5f8c691b25158555a4508f0e",
+        "dist/error.js": "28dbfc2871c0707f97cebb5a8be7e343a9cee58250b5814813d748b90d9e0d3b",
+        "dist/extract.js": "851ddbb4ae8571fda887a03511a6688d9b168c49deceda34243ad77d6f2a39ec",
+        "dist/index.cjs": "195ca51fc784617d361af3697756a896518e45bec4e35976baec2dffd656cb8f",
+        "dist/index.d.ts": "b741d3219913446a93fe07e00dafe9fa3e857fa478e85b483cbf2e11d84521a5",
+        "dist/index.js": "ded3ee91f3ce1ef746f6b57459b0c68475658eacb8e88fd18336a5408de009a1",
+        "dist/parse.d.ts": "ebb272a8381742aad17e0445e0872c0496561e4bfa465576a70efdb23117a99f",
+        "dist/parse.js": "92d512a52a44f72b3258e817e4cf3e6d576ffc5059666b9fe27341e7871ecead",
+        "dist/primitive.js": "64418c1b056c86d24053caee06ec44bd48187c061b7ff09c21159f2e0e5dd8f5",
+        "dist/stringify.d.ts": "c9a75924aa75b4e60542ff06437b3abd9679ee9f740245080fbe528f05fb8763",
+        "dist/stringify.js": "a96ec2fa840067eff015a38a18849f1e3b2ff2e9cb9ad52cd9266497ad12b3de",
+        "dist/struct.js": "dbd94692ef8225459b29232f23e82fd67ad84002349e67458456a09695f063b0",
+        "dist/util.d.ts": "e08c5ba5f398c27b34b966b1b8427e7599394927c5397f765b7a085cd7f4541a",
+        "dist/util.js": "332fda936c5d81a493d1a7dfa574221d27d585657b337e5db466cc26aec26302",
+        "package.json": "fa2995d429c856669968d6281c14e6be93a40cd404dad43aa2e4599608f20bdc"
+      }
+    }
+  }
+}

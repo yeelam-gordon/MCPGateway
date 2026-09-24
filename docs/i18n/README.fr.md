@@ -25,6 +25,8 @@
 
 La passerelle présente toujours 6 outils à l'agent : 4 pour découvrir et appeler des fonctions, et 2 pour les intégrations nécessitant un workflow exclusif. L'ajout de connexions n'agrandit pas cette interface initiale ; le schéma complet n'est chargé que pour l'outil choisi. Les connexions déjà configurées et authentifiées sont réutilisées, sans installer de services ni fournir d'identifiants.
 
+Un même catalogue MCP peut servir plusieurs agents : partez de **10** connexions dans Copilot, puis migrez explicitement une configuration Claude prise en charge contenant **2** nouvelles connexions afin que les deux agents utilisent les mêmes **12** ; l’installation du plugin seule ne les fusionne pas automatiquement. Les entrées de même nom ne sont dédupliquées que si leurs définitions d’alias sont identiques, et non simplement parce qu’elles pointent vers le même service ; les conflits arrêtent le processus pour examen. La migration commence par un aperçu, crée une sauvegarde et refuse les réglages natifs non pris en charge ; cela ne signifie pas non plus que tous les clients natifs ont été testés de bout en bout, alors consultez le [guide de migration (anglais)](../CLIENTS.md#cross-client-migration).
+
 **Prérequis :** Node.js 24 ou version ultérieure, npm, Git et Copilot CLI avec plugins pour l'amorçage actuel. Agency est facultatif.
 
 ## Installation et mise à niveau par client

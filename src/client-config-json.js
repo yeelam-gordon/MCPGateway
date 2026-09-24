@@ -6,19 +6,20 @@ const GATEWAY_ALIAS = 'shared-mcp-gateway';
 export const CLIENT_CONFIG_DEFAULT_PATHS = Object.freeze({
   opencode: '~/.config/opencode/opencode.json',
   qwen: '~/.qwen/settings.json',
-  kimi: '~/.kimi/mcp.json',
   antigravity: '~/.gemini/config/mcp_config.json'
 });
 
-const CLIENTS = new Set(Object.keys(CLIENT_CONFIG_DEFAULT_PATHS));
+const CLIENTS = new Set(['opencode', 'qwen', 'kimi', 'antigravity']);
 const CLIENT_MANAGED_FIELDS = new Set([
   'auth', 'authentication', 'authProviderType', 'oauth', 'variables',
-  'tools', 'allowedTools', 'disabledTools', 'includeTools', 'includes', 'excludeTools', 'excludes'
+  'tools', 'allowedTools', 'disabledTools', 'includeTools', 'includes', 'excludeTools', 'excludes',
+  'authProvider', 'bearerTokenEnvVar', 'deferred', 'discoveryTimeoutMs', 'enabledTools',
+  'startupTimeoutMs', 'toolTimeoutMs', 'trust', 'versionNegotiation', 'executor', 'runtime_id'
 ]);
 const EXTRACTION_FIELDS = Object.freeze({
-  opencode: new Set(['type', 'command', 'environment', 'enabled', 'url', 'headers']),
+  opencode: new Set(['type', 'command', 'environment', 'enabled', 'url', 'headers', 'timeout']),
   qwen: new Set(['type', 'command', 'args', 'cwd', 'env', 'httpUrl', 'headers', 'timeout', 'disabled']),
-  kimi: new Set(['transport', 'command', 'args', 'cwd', 'env', 'url', 'headers', 'timeout', 'disabled']),
+  kimi: new Set(['transport', 'command', 'args', 'cwd', 'env', 'url', 'headers', 'timeout', 'disabled', 'enabled']),
   antigravity: new Set(['command', 'args', 'cwd', 'env', 'serverUrl', 'headers', 'timeout', 'disabled'])
 });
 
@@ -142,11 +143,19 @@ function warningsFor(client, connector) {
 function assertExtractionFields(client, alias, entry) {
   if (!isObject(entry)) throw new Error(`${client} MCP entry ${alias} must be an object`);
   for (const field of Object.keys(entry)) {
+    if (client === 'qwen' && field === 'url') {
+      throw new Error(`qwen MCP entry ${alias}.url uses SSE semantics and cannot be represented safely in canonical extraction`);
+    }
     if (CLIENT_MANAGED_FIELDS.has(field)) {
       throw new Error(`${client} MCP entry ${alias}.${field} requires client-managed interpretation and cannot be extracted automatically`);
     }
     if (!EXTRACTION_FIELDS[client].has(field)) {
       throw new Error(`${client} MCP entry ${alias}.${field} is not supported for canonical extraction`);
+    }
+  }
+  for (const field of ['enabled', 'disabled']) {
+    if (entry[field] !== undefined && typeof entry[field] !== 'boolean') {
+      throw new Error(`${client} MCP entry ${alias}.${field} must be a boolean`);
     }
   }
 }
@@ -180,13 +189,14 @@ function extractOpenCode(alias, entry) {
     return {
       type: 'local', command, args,
       ...(entry.environment === undefined ? {} : { env: entry.environment }),
+      ...(entry.timeout === undefined ? {} : { timeout: entry.timeout }),
       ...disabled
     };
   }
   if (entry.command !== undefined || entry.environment !== undefined) {
     throw new Error(`opencode MCP entry ${alias} mixes remote URL fields with local command fields`);
   }
-  return { type: 'http', url: entry.url, ...(entry.headers === undefined ? {} : { headers: entry.headers }), ...disabled };
+  return { type: 'http', url: entry.url, ...(entry.headers === undefined ? {} : { headers: entry.headers }), ...(entry.timeout === undefined ? {} : { timeout: entry.timeout }), ...disabled };
 }
 
 function extractQwen(alias, entry) {
@@ -202,7 +212,11 @@ function extractKimi(alias, entry) {
   if (entry.transport !== undefined && entry.transport !== 'stdio' && entry.transport !== 'http') {
     throw new Error(`kimi MCP entry ${alias}.transport cannot be represented safely; only stdio and http are supported`);
   }
+  if (entry.enabled !== undefined && entry.disabled !== undefined && entry.disabled === entry.enabled) {
+    throw new Error(`kimi MCP entry ${alias} has conflicting enabled and disabled settings`);
+  }
   const canonical = commonEntry(entry, 'url');
+  if (entry.enabled !== undefined) canonical.disabled = !entry.enabled;
   if (entry.transport !== undefined) canonical.type = entry.transport;
   return canonical;
 }
@@ -247,18 +261,70 @@ export function prepareClientConfig({ client, configText, connector, configPath,
   };
 }
 
-export function extractClientBackends({ client, configText } = {}) {
-  assertClient(client);
-  const config = parseConfig(client, configText);
-  const { collection } = collectionFor(client, config);
-  const mcpServers = {};
+function canonicalBackends(client, collection) {
+  const entries = [];
   for (const [alias, entry] of Object.entries(collection)) {
+    if (alias === GATEWAY_ALIAS) continue;
     if (!alias) throw new Error(`${client} MCP collection contains an empty alias`);
     assertExtractionFields(client, alias, entry);
     assertLiteralClientValues(entry, client);
-    mcpServers[alias] = EXTRACTORS[client](alias, entry);
+    entries.push([alias, EXTRACTORS[client](alias, entry)]);
   }
-  const canonical = { mcpServers };
+  const canonical = { mcpServers: Object.fromEntries(entries) };
   validateConfig(canonical);
   return canonical;
+}
+
+export function extractClientBackends({ client, configText } = {}) {
+  assertClient(client);
+  const config = parseConfig(client, configText);
+  return canonicalBackends(client, collectionFor(client, config).collection);
+}
+
+function openCodePolicyMatches(policy, aliases) {
+  if (policy === undefined) return false;
+  if (!isObject(policy)) return true;
+  return Object.keys(policy).some(name => /[*?]/.test(name)
+    || aliases.some(alias => name === alias || name.startsWith(`${alias}_`)));
+}
+
+function assertOpenCodePolicies(config, aliases) {
+  if (openCodePolicyMatches(config.permission, aliases) || openCodePolicyMatches(config.tools, aliases)) {
+    throw new Error('opencode root permission or tools policy applies to migrated MCP aliases and cannot be preserved automatically');
+  }
+  if (!isObject(config.agent)) return;
+  for (const agent of Object.values(config.agent)) {
+    if (!isObject(agent)) continue;
+    if (openCodePolicyMatches(agent.permission, aliases) || openCodePolicyMatches(agent.tools, aliases)) {
+      throw new Error('opencode agent permission or tools policy applies to migrated MCP aliases and cannot be preserved automatically');
+    }
+  }
+}
+
+function assertMigrationRootPolicies(client, config, aliases) {
+  if (client === 'qwen' && isObject(config.mcp)
+      && (Object.hasOwn(config.mcp, 'allowed') || Object.hasOwn(config.mcp, 'excluded'))) {
+    throw new Error('qwen root mcp.allowed or mcp.excluded policy affects migrated servers and cannot be preserved automatically');
+  }
+  if (client === 'opencode') assertOpenCodePolicies(config, aliases);
+}
+export function prepareClientMigration({ client, configText, connector } = {}) {
+  assertClient(client);
+  const environment = validateConnector(connector);
+  const config = parseConfig(client, configText);
+  const { key, collection } = collectionFor(client, config);
+  assertMigrationRootPolicies(client, config, Object.keys(collection).filter(alias => alias !== GATEWAY_ALIAS));
+  const expected = entryFor(client, connector, environment);
+  const existing = collection[GATEWAY_ALIAS];
+  if (existing !== undefined && !jsonEqual(existing, expected)) {
+    throw new Error(`${client} client config already defines ${GATEWAY_ALIAS} with different settings; refusing migration`);
+  }
+
+  const backends = canonicalBackends(client, collection);
+  const migratedCollection = { [GATEWAY_ALIAS]: expected };
+  if (jsonEqual(collection, migratedCollection)) {
+    return { client, changed: false, updatedText: configText, backends };
+  }
+  const updated = { ...config, [key]: migratedCollection };
+  return { client, changed: true, updatedText: `${JSON.stringify(updated, null, 2)}\n`, backends };
 }

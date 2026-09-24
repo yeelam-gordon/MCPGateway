@@ -49,3 +49,12 @@ test('plugin setup is a builtin-only entry point in a fresh dependency-free plug
   const pkg = await json('package.json');
   assert.equal(pkg.scripts.setup, 'node tools/plugin-setup.mjs');
 });
+
+test('client connector bootstrap is builtin-only and defers to the selected stable runtime', async () => {
+  const source = await readFile(resolve(root, 'tools/connect-client.mjs'), 'utf8');
+  const imports = [...source.matchAll(/^\s*import\s+[\s\S]*?\sfrom\s+['"]([^'"]+)['"]/gm)].map(match => match[1]);
+  assert.ok(imports.length > 0);
+  assert.ok(imports.every(specifier => specifier.startsWith('node:')), imports.join(', '));
+  assert.doesNotMatch(source, /smol-toml|client-config\.js/);
+  assert.match(source, /setup with --apply to (?:install or upgrade|repair or upgrade)/);
+});

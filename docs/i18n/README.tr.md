@@ -25,6 +25,8 @@
 
 Ağ geçidi aracıya her zaman 6 araç sunar: 4'ü yetenekleri bulup çağırmak, 2'si özel iş akışı gerektiren entegrasyonlar içindir. Bağlantı eklemek başlangıç arayüzünü büyütmez; tam şema yalnızca seçilen araç için yüklenir. Önceden yapılandırıp doğruladığınız bağlantılar yeniden kullanılır; hizmet kurulmaz veya kimlik bilgisi sağlanmaz.
 
+Tek bir paylaşılan MCP kataloğu birden fazla aracıya hizmet verebilir: Copilot’ta **10** bağlantıyla başlayın, ardından **2** yeni bağlantı içeren desteklenen bir Claude yapılandırmasını açıkça taşıyın; böylece iki aracı da aynı **12** bağlantıyı kullanabilir, ancak yalnızca eklentiyi kurmak bunları otomatik olarak birleştirmez. Aynı adlı girdiler yalnızca takma ad tanımları birebir aynıysa tekilleştirilir; yalnızca aynı hizmeti göstermeleri yeterli değildir ve çakışmalar inceleme için işlemi durdurur. Taşıma önce önizleme gösterir, yedek oluşturur ve desteklenmeyen yerel ayarları reddeder; bu ayrıca her yerel istemcinin uçtan uca test edildiği iddiası değildir, ayrıntılar için [taşıma kılavuzuna (İngilizce)](../CLIENTS.md#cross-client-migration) bakın.
+
 **Ön koşullar:** Node.js 24 veya üzeri, npm, Git ve mevcut ilk kurulum için eklenti destekli Copilot CLI. Agency isteğe bağlıdır.
 
 ## İstemciye göre kurulum ve yükseltme

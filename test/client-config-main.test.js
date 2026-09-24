@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { codexRegistration, extractMainClientBackends, prepareMainClientConfig } from '../src/client-config-main.js';
+import { codexRegistration, extractMainClientBackends, prepareMainClientConfig, prepareMainClientMigration } from '../src/client-config-main.js';
 
 const connector = { command: 'node', args: ['C:\\gateway\\connector.mjs', '--name', 'value with spaces'], env: { GATEWAY_MODE: '${env:GATEWAY_MODE}' } };
 
@@ -190,4 +190,111 @@ test('Codex rejects non-empty connector env instead of silently dropping it', ()
   assert.deepEqual(codexRegistration({ command: 'node', args: ['connector.mjs'], env: {} }), {
     command: 'codex', args: ['mcp', 'add', 'shared-mcp-gateway', '--', 'node', 'connector.mjs']
   });
+});
+test('Claude migration extracts two backends and leaves one gateway without changing other settings', () => {
+  const migrationConnector = { command: 'node', args: ['connector.mjs'], env: { MODE: '${env:GATEWAY_MODE}' } };
+  const source = JSON.stringify({ account: { keep: true }, mcpServers: {
+    first: { command: 'node', args: ['first.mjs'], env: { MODE: 'literal-one' } },
+    second: { type: 'http', url: 'https://example.test/mcp', headers: { Authorization: 'literal-two' } }
+  } });
+  const result = prepareMainClientMigration({ client: 'claude', configText: source, connector: migrationConnector });
+  assert.equal(result.client, 'claude');
+  assert.deepEqual(Object.keys(result.backends.mcpServers), ['first', 'second']);
+  const updated = JSON.parse(result.updatedText);
+  assert.deepEqual(updated.account, { keep: true });
+  assert.deepEqual(Object.keys(updated.mcpServers), ['shared-mcp-gateway']);
+  assert.equal(Object.hasOwn(updated, 'servers'), false);
+  assert.deepEqual(updated.mcpServers['shared-mcp-gateway'], {
+    command: 'node', args: ['connector.mjs'], env: { MODE: '${env:GATEWAY_MODE}' }
+  });
+});
+
+test('VS Code migration removes only extracted MCP collections and preserves unrelated root data', () => {
+  const migrationConnector = { command: 'node', args: ['connector.mjs'] };
+  const servers = { worker: { type: 'stdio', command: 'node', args: ['worker.mjs'], cwd: 'C:\\work' } };
+  const source = JSON.stringify({ customRoot: { keep: true }, mcpServers: servers });
+  const result = prepareMainClientMigration({ client: 'vscode', configText: source, connector: migrationConnector });
+  assert.deepEqual(result.backends, { mcpServers: { worker: servers.worker } });
+  const updated = JSON.parse(result.updatedText);
+  assert.deepEqual(updated.customRoot, { keep: true });
+  assert.equal(Object.hasOwn(updated, 'mcpServers'), false);
+  assert.deepEqual(Object.keys(updated.servers), ['shared-mcp-gateway']);
+  assert.equal(updated.servers['shared-mcp-gateway'].type, 'stdio');
+});
+
+test('main migration handles empty, matching, conflict, and unsupported inputs without mutation', () => {
+  const migrationConnector = { command: 'node', args: ['connector.mjs'] };
+  const empty = prepareMainClientMigration({ client: 'claude', configText: '', connector: migrationConnector });
+  assert.deepEqual(empty.backends, { mcpServers: {} });
+  const rerun = prepareMainClientMigration({ client: 'claude', configText: empty.updatedText, connector: migrationConnector });
+  assert.equal(rerun.changed, false);
+  assert.equal(rerun.updatedText, empty.updatedText);
+  assert.deepEqual(extractMainClientBackends({ client: 'claude', configText: empty.updatedText }), { mcpServers: {} });
+  assert.throws(
+    () => prepareMainClientMigration({ client: 'claude', configText: JSON.stringify({ mcpServers: {
+      'shared-mcp-gateway': { command: 'other', args: [] }
+    } }), connector: migrationConnector }),
+    /different shared-mcp-gateway entry/
+  );
+  const unsupported = JSON.stringify({ keep: true, mcpServers: { worker: { command: 'node', args: [], unknown: true } } });
+  assert.throws(() => prepareMainClientMigration({ client: 'claude', configText: unsupported, connector: migrationConnector }), /not an approved field/);
+  assert.equal(JSON.parse(unsupported).keep, true);
+});
+test('main migration rejects behavior-bearing root and entry policies before replacement', () => {
+  const migrationConnector = { command: 'node', args: ['connector.mjs'] };
+  const cases = [
+    ['vscode', { sandbox: { enabled: true }, servers: { worker: { type: 'stdio', command: 'node' } } }, /top-level sandbox/],
+    ['vscode', { servers: { worker: { type: 'stdio', command: 'node', envFile: '.env' } } }, /environment or sandbox settings/],
+    ['claude', { disabledMcpjsonServers: ['worker'], mcpServers: { worker: { command: 'node' } } }, /disabledMcpjsonServers policy/],
+    ['claude', { enableAllProjectMcpServers: true, mcpServers: { worker: { command: 'node' } } }, /enableAllProjectMcpServers policy/],
+    ['claude', { allowedMcpServers: ['worker'], mcpServers: { worker: { command: 'node' } } }, /allowedMcpServers policy/],
+    ['claude', { deniedMcpServers: ['worker'], mcpServers: { worker: { command: 'node' } } }, /deniedMcpServers policy/],
+    ['claude', { permissions: { deny: ['mcp__worker__write'] }, mcpServers: { worker: { command: 'node' } } }, /trust or permission policy/]
+  ];
+  for (const [client, config, pattern] of cases) {
+    assert.throws(() => prepareMainClientMigration({ client, configText: JSON.stringify(config), connector: migrationConnector }), pattern);
+  }
+});
+
+
+
+test('VS Code migration preserves unused inputs but rejects referenced inputs', () => {
+  const migrationConnector = { command: 'node', args: ['connector.mjs'] };
+  const unused = { inputs: [{ id: 'token', type: 'promptString' }], servers: {
+    worker: { type: 'stdio', command: 'C:\\tools\\worker.exe', args: ['literal'] }
+  } };
+  const migrated = prepareMainClientMigration({ client: 'vscode', configText: JSON.stringify(unused), connector: migrationConnector });
+  assert.deepEqual(JSON.parse(migrated.updatedText).inputs, unused.inputs);
+  assert.throws(
+    () => prepareMainClientMigration({ client: 'vscode', configText: JSON.stringify({ inputs: unused.inputs, servers: {
+      worker: { type: 'stdio', command: 'node', args: ['${input:token}'] }
+    } }), connector: migrationConnector }),
+    /literal values/
+  );
+});
+
+test('Claude migration preserves only exact existing gateway policies', () => {
+  const migrationConnector = { command: 'node', args: ['connector.mjs'] };
+  const gateway = { command: 'node', args: ['connector.mjs'] };
+  const preserved = {
+    allowedMcpServers: ['shared-mcp-gateway'],
+    permissions: { allow: ['mcp__shared-mcp-gateway__call_tool'] },
+    mcpServers: { 'shared-mcp-gateway': gateway, worker: { command: 'C:\\tools\\worker.exe' } }
+  };
+  const result = prepareMainClientMigration({ client: 'claude', configText: JSON.stringify(preserved), connector: migrationConnector });
+  const updated = JSON.parse(result.updatedText);
+  assert.deepEqual(updated.allowedMcpServers, preserved.allowedMcpServers);
+  assert.deepEqual(updated.permissions, preserved.permissions);
+  assert.throws(
+    () => prepareMainClientMigration({ client: 'claude', configText: JSON.stringify({
+      permissions: { allow: ['mcp__shared-mcp-gateway__call_tool'] }, mcpServers: { worker: { command: 'node' } }
+    }), connector: migrationConnector }),
+    /unverified MCP aliases/
+  );
+  for (const rule of ['mcp__worker__call_tool', 'mcp__*__call_tool', 'mcp:*']) assert.throws(
+    () => prepareMainClientMigration({ client: 'claude', configText: JSON.stringify({
+      permissions: { allow: [rule] }, mcpServers: { 'shared-mcp-gateway': gateway }
+    }), connector: migrationConnector }),
+    /removed, wildcard, or unverified/
+  );
 });

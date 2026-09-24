@@ -44,7 +44,9 @@ A request follows **discover → retrieve schema → call**. Discovery does not 
 
 ## Install and upgrade by client
 
-The shared runtime is bootstrapped through Copilot CLI today. Other clients register the resulting stable connector through tested configuration adapters; their existing direct MCP entries are not automatically imported or removed. This is not a claim that every native client has completed end-to-end runtime testing.
+**One shared MCP catalog across your agents.** Start with **10 connections** in Copilot, then explicitly migrate a supported Claude configuration with **2 new connections**: both agents can use the same **12**. Same-name identical entries deduplicate; conflicts stop for review. [Preview and back up the migration](docs/CLIENTS.md#cross-client-migration); unsupported native settings are rejected.
+
+The shared runtime is bootstrapped through Copilot CLI today. Other clients can register the same connector or explicitly migrate supported entries into its catalog. Installing a plugin alone does not merge configurations. Configuration-format and SDK tests do not mean every native client has been exercised end to end.
 
 **Prerequisites:** Node.js 24 or newer, npm, Git, Copilot CLI with plugin support for the current bootstrap, and integrations already configured with their required authentication. Windows is the primary tested platform. Agency is optional.
 
@@ -72,7 +74,8 @@ See the [operational reference](docs/REFERENCE.md) for workflow ownership, priva
 ## Verified scope
 
 - **1,000-tool synthetic catalog, 2 clients:** a focused search returns one matching summary, and the second client reuses the cached catalog. [Test](test/catalog-scale.test.js)
-- **188 local checks passed for v0.5.0:** core sharing, recurring synchronization, client/documentation behavior, installation, upgrade, rollback, cancellation, and recovery.
+- **237 local checks passed for v0.6.0:** core sharing, recurring synchronization, cross-client migration, client/documentation behavior, installation, upgrade, rollback, cancellation, and recovery.
+- **10 existing connections + 2 new = 12 shared:** migration across seven native formats, with two SDK clients reusing the same imported local process. Claude Code also parsed the actual migrated configuration without starting a model or MCP connection.
 - **Windows and Ubuntu CI on Node.js 24**, plus CodeQL analysis.
 - **Copilot marketplace installation and setup-skill discovery** verified in an isolated home for v0.5.0.
 

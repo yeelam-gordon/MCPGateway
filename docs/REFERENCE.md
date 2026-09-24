@@ -8,6 +8,7 @@ This document contains detailed operating, recovery, ownership, and transfer gui
 - [Workflow ownership](#workflow-ownership)
 - [State and privacy](#state-and-privacy)
 - [Setup recovery](#setup-recovery)
+- [Cross-client migration recovery](#cross-client-migration-recovery)
 - [Windows plugin cache: Access denied](#windows-plugin-cache-access-denied)
 - [Adopting a development checkout](#adopting-a-development-checkout)
 - [Configuration transfer](#configuration-transfer)
@@ -98,7 +99,36 @@ Use the exact `backupPath` and `rollbackCommand` printed by setup. Close affecte
 
 If setup fails after creating a backup, it prints recovery information. If it fails before creating one, it reports that the source configuration was not replaced. Do not delete the private backend catalog as a troubleshooting step.
 
-After a successful setup or runtime adoption, execute the returned `readinessCommand` exactly. Restart clients only after the readiness check succeeds. If setup reports `already-configured`, use the reported connector and state directory for the health check rather than inventing paths.
+After a successful setup, reopen Copilot to load the generated connector, then execute the returned `readinessCommand` exactly. During adoption, finish active work, stop only the verified old gateway, and start the new connector using the generated entry before checking readiness and reconnecting other clients. A check-only command does not start an absent gateway. If setup reports `already-configured`, use the reported connector and state directory for the health check rather than inventing paths.
+
+<a id="cross-client-migration-recovery"></a>
+## Cross-client migration recovery
+
+`connect-client.mjs --migrate` is a v0.6.0 workflow; v0.5 does not provide it. Adopt the v0.6.0 stable runtime through `/mcp-gateway-setup` before use. The plugin-root launcher delegates to the helper deployed with that runtime and fails with actionable guidance when the helper is absent. Preview never installs npm dependencies. Migration is a two-file transaction over one explicitly selected native client document and the gateway's private backend catalog. Preview is read-only. Apply validates the owned connector, state directory, catalog schema, source bytes, and both current files before writing. It does not install or upgrade the runtime, run `npm install`, discover configuration elsewhere, or restart the daemon.
+
+Before any replacement, apply stores byte-exact copies as `client-config.json` and `backends.json` under one private backup directory. `rollback-manifest.json` records the operation, target and backup paths, and SHA-256 hashes for each original and replacement. The result returns `sourceBackupPath`, `backendBackupPath`, `manifestPath`, `rollbackCommand`, `backendRollbackCommand`, and `rollbackCommands`. Preserve those exact values; do not reconstruct paths from examples.
+
+The generated Windows restore commands have this form:
+
+```powershell
+Copy-Item -LiteralPath '<reported-backend-backup>' -Destination '<reported-private-catalog>' -Force
+Copy-Item -LiteralPath '<reported-client-backup>' -Destination '<reported-client-config>' -Force
+```
+
+Use the returned `rollbackCommands` in their reported order. Finish active agent work first, then restore both files and explicitly restart the owned gateway after checking the restored files. There is no automatic rollback.
+
+Failure states are intentional and distinguishable:
+
+- **Conflict:** the same alias has different supported settings. Apply aborts before writes and both files remain unchanged.
+- **Preparation or first-write failure:** exact backups and the manifest are reported when created. Restore both if file state is uncertain; do not assume a failed operation changed nothing.
+- **`partial-failure`:** the merged private catalog was published, but the second write did not replace the native client file. The runtime may therefore see the imported catalog while the client still has direct entries. Do not restart into that mixed state. After active work finishes, run both reported restore commands or resolve the two files deliberately, then restart explicitly.
+- **Success:** the client file contains only the gateway connector in its native MCP collection and the validated catalog contains additions plus existing entries. A restart is required only when additions were published; it is never automatic.
+
+Deduplication is alias-scoped. A matching alias with semantically equivalent supported settings is reported in `identicalDuplicates`; a matching alias with different settings is a conflict. Distinct aliases remain distinct even when their definitions are identical. The process does not claim to infer that differently named entries identify the same remote service.
+
+Migration supports a conservative subset of the seven native formats. Relative executables or relative script arguments such as `node ./mcp.js` require an explicit absolute working directory; alternatively, configure absolute executable and script paths. The dispatcher fails closed rather than guessing a project root from the native configuration file location. Strict JSON is required for JSON clients; JSONC comments are not accepted. Referenced native variable or file interpolation, OAuth/client-managed authentication, migrated-alias trust/allow/deny or sandbox semantics, unsupported discovery or startup timeout semantics, and unknown behavior-bearing fields also fail closed. Unused VS Code `inputs` are allowed, and unrelated Claude permission data may remain when an existing gateway entry already matches. Preserve unsupported direct entries in their native client rather than weakening policy to migrate them.
+
+For Codex only, migration parses TOML and preserves non-MCP values semantically, but comments and formatting are regenerated. The preview includes that warning, and the original TOML bytes and hashes remain available in the backup and manifest. Registration-only Codex setup is separate: it emits native `codex mcp add` arguments, rejects non-empty connector environment values, and never writes TOML.
 
 <a id="windows-plugin-cache-access-denied"></a>
 ## Windows plugin cache: Access denied
@@ -157,9 +187,11 @@ Never copy gateway tokens, process manifests, locks, browser profiles, or OAuth 
 <a id="operational-invariants"></a>
 ## Operational invariants
 
-- Preview before apply; preserve the exact backup and rollback output.
+OpenCode migration conservatively rejects any root or agent-level `permission` or legacy `tools` key containing `*` or `?`, even when the pattern appears unrelated to the migrated aliases. Do not remove these restrictions just to bypass the rejection; keep the affected configuration client-managed until equivalent controls can be preserved.
+
+- Preview before apply; preserve the exact backup, hash manifest, and rollback output.
 - Plugin download, stable runtime activation, and client connector registration are separate operations.
-- Finish active work before switching a runtime or restoring configuration.
+- Finish active work before switching or restarting a runtime, restoring configuration, or resolving a partial migration.
 - Preserve unknown client fields and unrelated entries; refuse conflicts instead of guessing.
 - Do not expose private environment values in generated command lines.
-- Do not treat configuration-adapter tests as proof of a live third-party client session.
+- Do not treat configuration-adapter tests as proof of a live third-party client session. Installed native config parsing is currently verified only for Copilot CLI and Claude Code.

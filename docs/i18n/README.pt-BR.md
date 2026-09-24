@@ -25,6 +25,8 @@
 
 O gateway sempre apresenta 6 ferramentas ao agente: 4 para descobrir e chamar recursos e 2 para integrações que exigem um fluxo exclusivo. Adicionar conexões não aumenta essa interface inicial; o esquema completo só é carregado para a ferramenta escolhida. As conexões já configuradas e autenticadas são reutilizadas, sem instalar serviços nem fornecer credenciais.
 
+Um catálogo MCP compartilhado pode atender vários agentes: comece com **10** conexões no Copilot e migre explicitamente uma configuração compatível do Claude com **2** novas conexões para que ambos os agentes usem as mesmas **12**; instalar apenas o plugin não as mescla automaticamente. Entradas com o mesmo nome só são deduplicadas quando suas definições de alias são idênticas, não apenas porque apontam para o mesmo serviço, e conflitos interrompem o processo para revisão. A migração mostra primeiro uma prévia, cria backup e rejeita configurações nativas incompatíveis; isso também não afirma que todos os clientes nativos foram testados de ponta a ponta, portanto consulte o [guia de migração (inglês)](../CLIENTS.md#cross-client-migration).
+
 **Pré-requisitos:** Node.js 24 ou mais recente, npm, Git e Copilot CLI com plugins para a inicialização atual. Agency é opcional.
 
 ## Instalação e atualização por cliente

@@ -1,6 +1,6 @@
 {
   "name": "shared-mcp-gateway",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -12,14 +12,16 @@
     "setup": "node tools/plugin-setup.mjs",
     "test": "node --test --test-timeout=120000 --test-concurrency=1 test/gateway.test.js test/token-compat.test.js test/token-performance.test.js test/server-lease.test.js test/catalog-discovery.test.js test/catalog-scale.test.js test/confidence-regression.test.js test/http-outcome.test.js test/session-expiry.test.js test/agency-adapters.test.js test/ensure-gateway.test.js test/migrate-config.test.js test/plugin-setup.test.js test/plugin-package.test.js test/release-contract.test.js test/transfer-config.test.js test/timeout.test.js tools/connector.test.mjs",
     "test:sync": "node --test --test-timeout=120000 --test-concurrency=1 test/backend-sync.test.js test/runtime-publish.test.js",
-    "test:clients": "node --test --test-timeout=120000 --test-concurrency=1 test/client-config-json.test.js test/client-config-main.test.js test/client-config.test.js test/multiclient-plugin.test.js test/localization.test.js test/client-guide.test.js",
+    "test:clients": "node --test --test-timeout=120000 --test-concurrency=1 test/client-config-json.test.js test/client-config-main.test.js test/client-config-codex.test.js test/client-config-paths.test.js test/client-config.test.js test/multiclient-plugin.test.js test/localization.test.js test/client-guide.test.js",
+    "test:migration": "node --test --test-timeout=240000 --test-concurrency=1 test/client-sync.test.js test/cross-client-migration.test.js",
     "test:live": "node --test --test-timeout=180000 --test-concurrency=1 test/live.test.js",
     "test:lifecycle": "node --test --test-timeout=360000 --test-concurrency=1 test/lifecycle-e2e.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
+    "ajv": "^8.17.1",
     "express": "^5.1.0",
-    "zod": "^4.1.11",
-    "ajv": "^8.17.1"
+    "smol-toml": "1.8.0",
+    "zod": "^4.1.11"
   }
 }

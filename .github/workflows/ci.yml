@@ -41,3 +41,5 @@ jobs:
         run: npm run test:sync
       - name: Verify client adapters and plugin packaging
         run: npm run test:clients
+      - name: Verify cross-client migration and shared connections
+        run: npm run test:migration

@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. This project follows semantic versioning while recognizing that pre-1.0 releases may introduce breaking changes.
 
+## [0.6.0] - 2026-09-24
+
+### Added
+
+- Bring another client's MCP connections into the same shared catalog with explicit `--migrate` preview and backed-up apply. Matching aliases and definitions deduplicate; conflicting definitions stop without replacement.
+- Migrate supported Claude Code, VS Code, OpenCode, Qwen Code, Kimi, Antigravity CLI JSON, and Codex TOML configurations through the same transaction layer. Different aliases stay separate, and unsupported client-managed authentication or policies fail explicitly.
+- Back up both native configuration and shared catalog with hashes and exact restore commands. Report partial publication without silently undoing concurrent changes.
+- Preserve non-MCP TOML data through a pinned parser; warn before regenerating comments and formatting, and retain the exact original backup.
+- Exercise migration across all seven native formats and prove two SDK clients reuse the same imported connection and local process.
+
 ## [0.5.0] - 2026-09-24
 
 ### Added

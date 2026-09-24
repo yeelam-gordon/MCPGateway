@@ -346,7 +346,7 @@ async function createCandidate(root, marker, version) {
   const candidate = join(root, `Immutable Candidate ${marker}`);
   await mkdir(candidate, { recursive: true });
   for (const file of ['LICENSE', 'package.json', 'package-lock.json']) await copyFile(join(sourceRoot, file), join(candidate, file));
-  for (const directory of ['src', 'tools', 'adapters']) await cp(join(sourceRoot, directory), join(candidate, directory), { recursive: true });
+  for (const directory of ['src', 'tools', 'adapters', 'integrity']) await cp(join(sourceRoot, directory), join(candidate, directory), { recursive: true });
   const packagePath = join(candidate, 'package.json');
   const packageJson = JSON.parse(await readFile(packagePath, 'utf8'));
   packageJson.version = version;

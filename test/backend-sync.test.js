@@ -3,10 +3,31 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, test } from 'node:test';
-import { synchronizeBackends } from '../src/backend-sync.js';
+import { classifyBackendMerge, synchronizeBackends } from '../src/backend-sync.js';
 
 const roots = [];
 afterEach(async () => Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))));
+
+test('deduplication normalizes permission defaults only at the backend root', () => {
+  const entry = { command: 'node', args: ['--version'] };
+  const classify = (source, existing) => classifyBackendMerge({ worker: source }, { worker: existing });
+  assert.deepEqual(classify(entry, { ...entry, tools: ['*'] }).duplicates, ['worker']);
+  assert.deepEqual(classify({ ...entry, tools: ['*', 'echo'] }, entry).duplicates, ['worker']);
+  assert.deepEqual(classify({ ...entry, tools: ['b', 'a', 'a'] }, { ...entry, tools: ['a', 'b'] }).duplicates, ['worker']);
+  for (const tools of [[], ['echo']]) {
+    assert.deepEqual(classify({ ...entry, tools }, entry).conflicts, ['worker']);
+  }
+  for (const field of ['env', 'headers']) {
+    const base = field === 'env' ? entry : { url: 'https://example.test/mcp' };
+    assert.deepEqual(classify(
+      { ...base, [field]: { command: 'value', type: 'local' } },
+      { ...base, [field]: { command: 'value' } }
+    ).conflicts, ['worker']);
+  }
+  const existing = { ...entry, tools: ['*'], disabled: false };
+  const merged = classify(entry, existing);
+  assert.deepEqual(merged.mergedServers.worker, existing);
+});
 
 async function temporary() {
   const root = await mkdtemp(join(tmpdir(), 'backend-sync-'));
@@ -129,13 +150,14 @@ test('reserved object property names are preserved as aliases without prototype 
 });
 
 test('semantic duplicates ignore object key order, deduplicate source, and repeated apply is a no-op', async () => {
-  const stored = backend(2);
-  const reordered = { tools: stored.tools, requiresExclusiveAccess: stored.requiresExclusiveAccess, disabled: stored.disabled,
-    env: stored.env, args: stored.args, command: stored.command };
+  const { disabled: _defaultDisabled, ...stored } = backend(2);
+  const reordered = { tools: stored.tools, requiresExclusiveAccess: stored.requiresExclusiveAccess, disabled: false,
+    type: 'local', env: stored.env, args: stored.args, command: stored.command };
   const item = await fixture({ sourceExtras: { duplicate: reordered }, privateServers: { duplicate: stored } });
   const first = await synchronizeBackends({ sourcePath: item.sourcePath, privatePath: item.privatePath, stateDir: item.stateDir,
     apply: true, tokenLoader: fastToken });
   assert.deepEqual(first.identicalDuplicates, ['duplicate']);
+  assert.equal(first.restartRequired, false);
   assert.deepEqual(Object.keys(JSON.parse(await readFile(item.sourcePath, 'utf8')).mcpServers), ['shared-mcp-gateway']);
   const sourceAfter = await readFile(item.sourcePath);
   const privateAfter = await readFile(item.privatePath);

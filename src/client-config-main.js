@@ -96,6 +96,8 @@ function prepareJsonConfig({ client, configText, connector, configPath }) {
 }
 
 function unsupportedVsCodeFeature(entry) {
+  const runtimeFields = ['envFile', 'dev', 'sandbox', 'sandboxEnabled'];
+  if (runtimeFields.some(field => Object.hasOwn(entry, field))) return 'client-managed environment or sandbox settings';
   const oauthFields = ['auth', 'authentication', 'authorization', 'oauth'];
   if (oauthFields.some(field => Object.hasOwn(entry, field))) return 'client-managed authentication or OAuth';
   const trustFields = ['alwaysAllow', 'autoApprove', 'trust', 'trusted'];
@@ -119,25 +121,92 @@ function nativeCollection(config, client) {
   return config[collectionKey] ?? config[aliasKey];
 }
 
-export function extractMainClientBackends({ client, configText } = {}) {
-  if (!SUPPORTED_CLIENTS.has(client)) throw sanitizedError('Client must be one of: claude, vscode, codex');
-  if (client === 'codex')
-    throw sanitizedError('Codex backend extraction is unsupported because config.toml is TOML; use codexRegistration(connector) and the native Codex CLI instead.');
-  const config = parseConfig(configText, client);
-  const servers = nativeCollection(config, client);
-  for (const entry of Object.values(servers)) {
+function canonicalMainBackends(client, servers) {
+  const entries = Object.entries(servers).filter(([name]) => name !== GATEWAY_NAME);
+  for (const [, entry] of entries) {
     try { assertLiteralClientValues(entry, client); }
     catch { throw sanitizedError(`${client} backend extraction requires literal values; native variable and file references are unsupported, so keep this server client-managed.`); }
     if (client !== 'vscode' || !plainObject(entry)) continue;
     const unsupported = unsupportedVsCodeFeature(entry);
     if (unsupported) throw sanitizedError(`VS Code backend extraction does not support ${unsupported}; keep this server client-managed.`);
   }
-  if (Object.hasOwn(servers, '')) throw sanitizedError('Invalid client MCP backend config: server names must be non-empty');
-  const canonical = { mcpServers: Object.fromEntries(Object.entries(servers).map(([name, entry]) => [name, plainObject(entry) ? { ...entry } : entry])) };
+  if (entries.some(([name]) => name === '')) throw sanitizedError('Invalid client MCP backend config: server names must be non-empty');
+  const canonical = { mcpServers: Object.fromEntries(entries.map(([name, entry]) => [name, plainObject(entry) ? { ...entry } : entry])) };
   const validationNames = Object.fromEntries(Object.values(canonical.mcpServers).map((entry, index) => [`server-${index + 1}`, entry]));
   try { validateConfig({ mcpServers: validationNames }); }
   catch (error) { throw sanitizedError(`Invalid ${client} MCP backend config: ${error.message}`); }
   return canonical;
+}
+
+export function extractMainClientBackends({ client, configText } = {}) {
+  if (!SUPPORTED_CLIENTS.has(client)) throw sanitizedError('Client must be one of: claude, vscode, codex');
+  if (client === 'codex')
+    throw sanitizedError('Codex backend extraction is unsupported because config.toml is TOML; use codexRegistration(connector) and the native Codex CLI instead.');
+  const config = parseConfig(configText, client);
+  return canonicalMainBackends(client, nativeCollection(config, client));
+}
+
+function collectMcpPermissions(value, result = []) {
+  if (typeof value === 'string') {
+    if (/^mcp(?:__|[:*])/i.test(value)) result.push(value);
+    return result;
+  }
+  if (Array.isArray(value)) for (const item of value) collectMcpPermissions(item, result);
+  else if (plainObject(value)) for (const item of Object.values(value)) collectMcpPermissions(item, result);
+  return result;
+}
+
+function assertClaudeGatewayPolicy(value, field, existingGatewayMatches) {
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string'))
+    throw sanitizedError(`Claude root ${field} policy cannot be classified safely for migration.`);
+  if (value.some(item => item !== GATEWAY_NAME) || (value.includes(GATEWAY_NAME) && !existingGatewayMatches))
+    throw sanitizedError(`Claude root ${field} policy targets removed or unverified MCP aliases and cannot be preserved automatically.`);
+}
+
+function assertMigrationRootPolicies(config, client, existingGatewayMatches) {
+  if (client === 'vscode' && Object.hasOwn(config, 'sandbox'))
+    throw sanitizedError('VS Code top-level sandbox settings may affect migrated MCP servers and cannot be preserved automatically.');
+  if (client !== 'claude') return;
+  if (config.enableAllProjectMcpServers !== undefined && config.enableAllProjectMcpServers !== false)
+    throw sanitizedError('Claude root enableAllProjectMcpServers policy is wildcard behavior and cannot be preserved automatically.');
+  const listFields = ['enabledMcpjsonServers', 'disabledMcpjsonServers', 'enabledMcpServers',
+    'disabledMcpServers', 'allowedMcpServers', 'deniedMcpServers'];
+  for (const field of listFields) if (Object.hasOwn(config, field))
+    assertClaudeGatewayPolicy(config[field], field, existingGatewayMatches);
+  for (const rule of collectMcpPermissions(config.permissions)) {
+    const exactGatewayRule = /^mcp__shared-mcp-gateway__[^*]+$/.test(rule);
+    if (!existingGatewayMatches || !exactGatewayRule)
+      throw sanitizedError('Claude root MCP trust or permission policy targets removed, wildcard, or unverified MCP aliases.');
+  }
+}
+export function prepareMainClientMigration({ client, configText, connector } = {}) {
+  if (client !== 'claude' && client !== 'vscode') throw sanitizedError('Client migration must target claude or vscode');
+  const config = parseConfig(configText, client);
+  const collectionKey = client === 'claude' ? 'mcpServers' : 'servers';
+  const aliasKey = client === 'claude' ? 'servers' : 'mcpServers';
+  if (config[collectionKey] !== undefined && !plainObject(config[collectionKey]))
+    throw sanitizedError(`${client} config ${collectionKey} must be an object; the config was not modified.`);
+  if (config[aliasKey] !== undefined && !plainObject(config[aliasKey]))
+    throw sanitizedError(`${client} config ${aliasKey} must be an object; the config was not modified.`);
+  if (config[collectionKey] !== undefined && config[aliasKey] !== undefined && !structurallyEqual(config[collectionKey], config[aliasKey]))
+    throw sanitizedError(`${client} config contains conflicting MCP server collections; the config was not modified.`);
+
+  const expected = connectorEntry(connector, client === 'vscode');
+  const nativeEntry = config[collectionKey]?.[GATEWAY_NAME];
+  const aliasEntry = config[aliasKey]?.[GATEWAY_NAME];
+  if (nativeEntry !== undefined && aliasEntry !== undefined && !structurallyEqual(nativeEntry, aliasEntry))
+    throw sanitizedError(`${client} config contains conflicting ${GATEWAY_NAME} entries; the config was not modified.`);
+  const existing = nativeEntry ?? aliasEntry;
+  if (existing !== undefined && !structurallyEqual(existing, expected))
+    throw sanitizedError(`${client} config already contains a different ${GATEWAY_NAME} entry; the config was not modified.`);
+  assertMigrationRootPolicies(config, client, existing !== undefined && structurallyEqual(existing, expected));
+
+  const servers = config[collectionKey] ?? config[aliasKey] ?? {};
+  const backends = canonicalMainBackends(client, servers);
+  const updated = { ...config, [collectionKey]: { [GATEWAY_NAME]: expected } };
+  delete updated[aliasKey];
+  if (structurallyEqual(config, updated)) return Object.freeze({ client, changed: false, updatedText: configText, backends });
+  return Object.freeze({ client, changed: true, updatedText: `${JSON.stringify(updated, null, 2)}\n`, backends });
 }
 export function codexRegistration(connector) {
   const entry = connectorEntry(connector, false);

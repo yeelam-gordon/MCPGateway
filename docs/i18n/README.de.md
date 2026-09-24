@@ -25,6 +25,8 @@
 
 Das Gateway zeigt dem Agenten stets 6 Tools: 4 zum Finden und Aufrufen von Funktionen und 2 für Integrationen mit exklusivem Workflow. Weitere Verbindungen vergrößern diese Anfangsschnittstelle nicht; das vollständige Schema wird nur für das gewählte Tool geladen. Bereits konfigurierte und authentifizierte Verbindungen werden wiederverwendet, ohne Dienste zu installieren oder Zugangsdaten bereitzustellen.
 
+Ein gemeinsamer MCP-Katalog kann mehreren Agenten dienen: Beginnen Sie mit **10** Verbindungen in Copilot und migrieren Sie anschließend ausdrücklich eine unterstützte Claude-Konfiguration mit **2** neuen Verbindungen, damit beide Agenten dieselben **12** nutzen können; die reine Plugin-Installation führt sie nicht automatisch zusammen. Gleichnamige Einträge werden nur bei identischen Aliasdefinitionen dedupliziert, nicht bloß weil sie auf denselben Dienst verweisen; Konflikte stoppen den Vorgang zur Prüfung. Die Migration zeigt zuerst eine Vorschau, erstellt eine Sicherung und weist nicht unterstützte native Einstellungen zurück; dies ist außerdem keine Behauptung, dass jeder native Client durchgängig getestet wurde, siehe [Migrationsleitfaden (Englisch)](../CLIENTS.md#cross-client-migration).
+
 **Voraussetzungen:** Node.js 24 oder neuer, npm, Git und Copilot CLI mit Plugin-Unterstützung für die aktuelle Einrichtung. Agency ist optional.
 
 ## Installation und Upgrade nach Client

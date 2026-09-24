@@ -25,6 +25,8 @@
 
 Gateway luôn cung cấp 6 công cụ cho tác nhân: 4 công cụ để tìm và gọi chức năng, cùng 2 công cụ cho tích hợp cần quy trình độc quyền. Thêm kết nối không làm tăng giao diện ban đầu; lược đồ đầy đủ chỉ được tải cho công cụ đã chọn. Các kết nối bạn đã cấu hình và xác thực được dùng lại, không cài đặt dịch vụ hoặc cung cấp thông tin xác thực.
 
+Một danh mục MCP dùng chung có thể phục vụ nhiều tác nhân: bắt đầu với **10** kết nối trong Copilot, sau đó chủ động di chuyển một cấu hình Claude được hỗ trợ có **2** kết nối mới để cả hai tác nhân cùng dùng **12** kết nối; chỉ cài plugin sẽ không tự động hợp nhất chúng. Các mục trùng tên chỉ được loại bỏ bản sao khi định nghĩa bí danh hoàn toàn giống nhau, không chỉ vì cùng trỏ đến một dịch vụ, và xung đột sẽ dừng lại để xem xét. Quá trình di chuyển hiển thị bản xem trước trước, tạo bản sao lưu và từ chối cài đặt native không được hỗ trợ; điều này cũng không khẳng định mọi ứng dụng khách native đã được kiểm thử đầu cuối, vì vậy hãy xem [hướng dẫn di chuyển (tiếng Anh)](../CLIENTS.md#cross-client-migration).
+
 **Điều kiện cần:** Node.js 24 trở lên, npm, Git và Copilot CLI hỗ trợ plugin cho quy trình khởi tạo hiện tại. Agency là tùy chọn.
 
 ## Cài đặt và nâng cấp theo ứng dụng khách
