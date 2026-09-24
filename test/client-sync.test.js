@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -77,15 +77,42 @@ test('preview and apply merge two new aliases into ten existing backends with ex
   assert.deepEqual(await readFile(applied.backendBackupPath), item.privateBytes);
 });
 
-test('same alias with different canonical definition blocks both files', async () => {
-  const item = await fixture({ privateServers: { shared: backend(1) }, clientServers: { shared: backend(2) } });
+test('same alias conflict blocks additions and reports no restart or writes', async () => {
+  const item = await fixture({ privateServers: { shared: backend(1) }, clientServers: { shared: backend(2), added: backend(3) } });
+  const preview = await connectClient(options(item));
+  assert.deepEqual(preview.addedAliases, ['added']);
+  assert.deepEqual(preview.conflicts, ['shared']);
+  assert.equal(preview.restartRequired, false);
   await assert.rejects(() => connectClient({ ...options(item), apply: true, tokenLoader: fastToken }), error => {
     assert.equal(error.setupResult.status, 'conflict');
+    assert.equal(error.setupResult.restartRequired, false);
     assert.deepEqual(error.setupResult.conflicts, ['shared']);
     return true;
   });
   assert.deepEqual(await readFile(item.privatePath), item.privateBytes);
   assert.deepEqual(await readFile(item.configPath), item.clientBytes);
+  await assert.rejects(() => stat(join(item.stateDir, 'backups')), error => error.code === 'ENOENT');
+});
+
+test('client config cannot be the private catalog by exact path or symlink identity', async t => {
+  const exact = await fixture({ privateServers: { existing: backend(1) } });
+  await assert.rejects(() => connectClient({ client: 'claude', config: exact.privatePath,
+    'gateway-config': exact.gatewayPath, migrate: true, apply: true, tokenLoader: async () => assert.fail('identity rejection must precede token') }),
+  /Client configuration must differ from private backend catalog/);
+  assert.deepEqual(await readFile(exact.privatePath), exact.privateBytes);
+  await assert.rejects(() => stat(join(exact.stateDir, 'backups')), error => error.code === 'ENOENT');
+
+  const linked = await fixture({ privateServers: { existing: backend(2) } });
+  const aliasPath = join(linked.root, 'catalog-link.json');
+  try { await symlink(linked.privatePath, aliasPath, 'file'); }
+  catch (error) {
+    if (['EPERM', 'EACCES', 'ENOSYS'].includes(error.code)) { t.diagnostic(`symlink unavailable: ${error.code}`); return; }
+    throw error;
+  }
+  await assert.rejects(() => connectClient({ client: 'claude', config: aliasPath,
+    'gateway-config': linked.gatewayPath, migrate: true, apply: true, tokenLoader: async () => assert.fail('identity rejection must precede token') }),
+  /must not resolve to the same file as private backend catalog/);
+  assert.deepEqual(await readFile(linked.privatePath), linked.privateBytes);
 });
 
 test('reserved alias names migrate as own properties without prototype pollution', async () => {

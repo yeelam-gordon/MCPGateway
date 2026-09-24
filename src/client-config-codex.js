@@ -178,7 +178,7 @@ export function extractCodexBackends({ configText } = {}) {
   const config = parseConfig(configText);
   const servers = nativeServers(config);
   assertRootPolicies(config, servers);
-  return extractEntries(config, false);
+  return extractEntries(config, true);
 }
 
 export function prepareCodexMigration({ client = 'codex', configText, connector } = {}) {

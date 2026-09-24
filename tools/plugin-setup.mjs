@@ -309,6 +309,21 @@ async function verifyPublishedRuntime(runtimePath, plan) {
   await verifyRuntimeDependencies(runtimePath);
 }
 
+export async function verifyTrustedRuntimeSelection({ trustedRoot, runtimePath, platform = process.platform }) {
+  const trusted = resolve(trustedRoot);
+  const selected = resolve(runtimePath);
+  if (samePath(trusted, selected, platform)) return { runtimePath: selected, checkout: true };
+  const files = await runtimeFiles(trusted);
+  const hash = await contentHash(trusted, files);
+  if (basename(selected) !== hash) throw new Error('Selected gateway runtime does not match the trusted plugin payload');
+  const marker = await readJson(await safeRuntimePath(selected, '.plugin-runtime.json', 'file', 'Runtime marker'), 'Runtime marker');
+  if (marker.value?.version !== 1 || marker.value?.contentHash !== hash) {
+    throw new Error('Selected gateway runtime marker does not match the trusted plugin payload');
+  }
+  await verifyPublishedRuntime(selected, { files, contentHash: hash });
+  return { runtimePath: selected, contentHash: hash, checkout: false };
+}
+
 async function publishedRuntime(runtimeRoot, plan, allowDifferentRuntime = false) {
   if (!(await exists(runtimeRoot))) return null;
   for (const entry of await readdir(runtimeRoot, { withFileTypes: true })) {

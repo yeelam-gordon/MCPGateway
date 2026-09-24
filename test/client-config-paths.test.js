@@ -34,3 +34,19 @@ test('dispatcher applies path guard to extracted canonical backends', () => {
     worker: { command: 'node', args: ['worker.mjs'], cwd: 'C:\\project' }
   } }) }), config({ command: 'node', args: ['worker.mjs'], cwd: 'C:\\project' }));
 });
+
+test('rejects bare script files independently of launcher but permits scoped packages', () => {
+  for (const entry of [
+    { command: 'npx', args: ['worker.mjs'] },
+    { command: 'uv', args: ['run', 'worker.py'] },
+    { command: 'custom-launcher', args: ['script.rb'] }
+  ]) assert.throws(() => assertPortableBackendPaths(config(entry)), /script or relative path arguments/);
+
+  for (const entry of [
+    { command: 'npx', args: ['worker.mjs'], cwd: 'C:\\project' },
+    { command: 'uv', args: ['run', 'worker.py'], cwd: '/srv/project' },
+    { command: 'custom-launcher', args: ['script.rb'], cwd: 'C:\\project' },
+    { command: 'npx', args: ['@scope/pkg'] },
+    { command: 'npx', args: ['-y', '@scope/pkg@1.2.3'] }
+  ]) assert.doesNotThrow(() => assertPortableBackendPaths(config(entry)));
+});

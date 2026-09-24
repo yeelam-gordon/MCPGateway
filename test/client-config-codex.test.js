@@ -104,3 +104,8 @@ test('rejects alias-scoped root startup policy before migration', () => {
 test('malformed TOML errors do not echo source values', () => {
   assert.throws(() => extractCodexBackends({ configText: 'secret = "raw-secret-token"\n[' }), error => /not valid TOML/.test(error.message) && !error.message.includes('raw-secret-token'));
 });
+
+test('public Codex extraction excludes the registered gateway connector', () => {
+  const text = `[mcp_servers.shared-mcp-gateway]\ncommand = "node"\nargs = ["connector.mjs"]\n`;
+  assert.deepEqual(extractCodexBackends({ configText: text }), { mcpServers: {} });
+});

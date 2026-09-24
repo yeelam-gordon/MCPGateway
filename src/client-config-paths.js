@@ -1,5 +1,4 @@
 const SCRIPT_EXTENSIONS = new Set(['.js', '.mjs', '.cjs', '.ts', '.mts', '.cts', '.py', '.rb', '.jar', '.ps1', '.sh']);
-const SCRIPT_RUNTIMES = new Set(['node', 'node.exe', 'bun', 'bun.exe', 'deno', 'deno.exe', 'python', 'python.exe', 'python3', 'python3.exe', 'ruby', 'ruby.exe', 'java', 'java.exe', 'pwsh', 'pwsh.exe', 'powershell', 'powershell.exe', 'bash', 'sh']);
 
 function object(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -20,20 +19,18 @@ function extension(value) {
   return index >= 0 ? clean.slice(index).toLowerCase() : '';
 }
 
-function runtimeName(command) {
-  if (typeof command !== 'string') return '';
-  const pieces = command.split(/[\\/]/);
-  return pieces[pieces.length - 1].toLowerCase();
-}
 
+function scopedPackageSpecifier(value) {
+  return typeof value === 'string' && /^@[^/\\]+\/[^/\\]+(?:@[^/\\]+)?$/.test(value);
+}
 function hasRelativeScriptArgument(entry) {
   if (!Array.isArray(entry.args)) return false;
   for (const argument of entry.args) {
     if (typeof argument !== 'string' || /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(argument)) continue;
     const candidate = argument.startsWith('-') && argument.includes('=') ? argument.slice(argument.indexOf('=') + 1) : argument;
-    if (candidate.startsWith('-') || absolutePath(candidate)) continue;
+    if (candidate.startsWith('-') || absolutePath(candidate) || scopedPackageSpecifier(candidate)) continue;
     if (pathLike(candidate)) return true;
-    if (SCRIPT_RUNTIMES.has(runtimeName(entry.command)) && SCRIPT_EXTENSIONS.has(extension(candidate))) return true;
+    if (SCRIPT_EXTENSIONS.has(extension(candidate))) return true;
   }
   return false;
 }

@@ -146,8 +146,13 @@ test('dependency-free plugin bootstrap delegates migration preview and apply to 
     apply: true, tokenLoader: injectedToken });
   const isolated = await temporary('plugin-cache-isolated-');
   await mkdir(join(isolated, 'tools'), { recursive: true });
+  for (const file of ['LICENSE', 'package.json', 'package-lock.json']) await cp(join(repositoryRoot, file), join(isolated, file));
+  await cp(join(repositoryRoot, 'src'), join(isolated, 'src'), { recursive: true });
+  await cp(join(repositoryRoot, 'adapters'), join(isolated, 'adapters'), { recursive: true });
+  for (const file of ['connector.mjs', 'connect-client.mjs', 'migrate-config.mjs', 'plugin-setup.mjs']) {
+    await cp(join(repositoryRoot, 'tools', file), join(isolated, 'tools', file));
+  }
   const bootstrap = join(isolated, 'tools', 'connect-client.mjs');
-  await cp(new URL('../tools/connect-client.mjs', import.meta.url), bootstrap);
   await assert.rejects(() => stat(join(isolated, 'node_modules')), error => error.code === 'ENOENT');
   const clientPath = join(item.root, 'claude.json');
   await writeJson(clientPath, { keep: true, mcpServers: {
@@ -164,6 +169,37 @@ test('dependency-free plugin bootstrap delegates migration preview and apply to 
   const catalog = JSON.parse(await readFile(installed.privatePath, 'utf8'));
   assert.deepEqual(Object.keys(catalog.mcpServers).sort(), ['added', 'existing']);
   assert.deepEqual(Object.keys(JSON.parse(await readFile(clientPath, 'utf8')).mcpServers), ['shared-mcp-gateway']);
+});
+
+test('bootstrap rejects untrusted or unowned runtime helpers before executing them', async () => {
+  const root = await temporary('malicious-runtime-');
+  const runtime = join(root, 'forged-runtime');
+  const stateDir = join(root, 'state');
+  const privatePath = join(stateDir, 'backends.json');
+  const gatewayPath = join(root, 'gateway.json');
+  const clientPath = join(root, 'client.json');
+  const sentinel = join(root, 'executed.txt');
+  await mkdir(join(runtime, 'tools'), { recursive: true });
+  await mkdir(join(runtime, 'src'), { recursive: true });
+  await writeFile(join(runtime, 'tools', 'connector.mjs'), '// forged connector\n');
+  await writeFile(join(runtime, 'src', 'client-connect.js'), `import { writeFile } from 'node:fs/promises';\nawait writeFile(${JSON.stringify(sentinel)}, 'executed');\nexport async function connectClient() { return { status: 'forged' }; }\n`);
+  await writeJson(privatePath, { mcpServers: {} });
+  await writeJson(clientPath, { mcpServers: {} });
+  const connector = { command: process.execPath, args: [join(runtime, 'tools', 'connector.mjs'), '--auto-start',
+    '--config', privatePath, '--port', '7319', '--state-dir', stateDir] };
+  await writeJson(gatewayPath, { mcpServers: { 'shared-mcp-gateway': connector } });
+  const baseArgs = [join(repositoryRoot, 'tools', 'connect-client.mjs'), '--client', 'claude', '--config', clientPath,
+    '--gateway-config', gatewayPath];
+  for (const extra of [[], ['--migrate']]) {
+    await assert.rejects(() => execute(process.execPath, [...baseArgs, ...extra], { timeout: 30000, windowsHide: true }),
+      error => /not trusted by this installed plugin payload/.test(error.stderr));
+    await assert.rejects(() => stat(sentinel), error => error.code === 'ENOENT');
+  }
+  connector.command = 'unowned-node';
+  await writeJson(gatewayPath, { mcpServers: { 'shared-mcp-gateway': connector } });
+  await assert.rejects(() => execute(process.execPath, baseArgs, { timeout: 30000, windowsHide: true }),
+    error => /owned shared-mcp-gateway connector/.test(error.stderr));
+  await assert.rejects(() => stat(sentinel), error => error.code === 'ENOENT');
 });
 
 test('dependency failure leaves user config untouched and cleans only staging runtime', async () => {

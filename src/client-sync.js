@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { synchronizeBackendTransaction, classifyBackendMerge } from './backend-sync.js';
 import { prepareClientMigration } from './client-config.js';
@@ -37,6 +37,17 @@ export function inspectGatewayConnector(connector, platform = process.platform) 
   return { connectorPath: resolve(connectorPath), privatePath, stateDir, port };
 }
 
+async function assertDifferentFiles(leftPath, rightPath, leftLabel, rightLabel, platform) {
+  if (samePath(leftPath, rightPath, platform)) throw new Error(`${leftLabel} must differ from ${rightLabel}`);
+  const [leftReal, rightReal, leftStat, rightStat] = await Promise.all([
+    realpath(leftPath), realpath(rightPath), stat(leftPath), stat(rightPath)
+  ]);
+  if (samePath(leftReal, rightReal, platform)
+      || (leftStat.ino !== 0 && leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino)) {
+    throw new Error(`${leftLabel} must not resolve to the same file as ${rightLabel}`);
+  }
+}
+
 function collection(config) {
   const keys = ['mcpServers', 'servers'].filter(key => Object.hasOwn(config, key));
   if (keys.length !== 1) throw new Error('Private backend config must contain exactly one of mcpServers or servers');
@@ -47,10 +58,12 @@ export async function synchronizeClientMigration(options) {
   const platform = options.platform ?? process.platform;
   const configPath = resolve(options.configPath);
   const gatewayPath = resolve(options.gatewayPath);
+  const owned = inspectGatewayConnector(options.connector, platform);
+  await assertDifferentFiles(configPath, owned.privatePath, 'Client configuration', 'private backend catalog', platform);
+  await assertDifferentFiles(configPath, gatewayPath, 'Client configuration', 'gateway source configuration', platform);
   const gatewayBytes = options.gatewayBytes ?? await readFile(gatewayPath);
   const gatewayCurrent = await readFile(gatewayPath);
   if (!gatewayCurrent.equals(gatewayBytes)) throw new Error('Gateway source configuration changed before client migration; refusing to continue');
-  const owned = inspectGatewayConnector(options.connector, platform);
   const initialClientBytes = await readFile(configPath);
   const initialPrivateBytes = await readFile(owned.privatePath);
 
@@ -72,7 +85,7 @@ export async function synchronizeClientMigration(options) {
       additions, duplicates, conflicts,
       warnings: prepared.warnings ?? [],
       wouldChange: prepared.changed || additions.length > 0 || duplicates.length > 0,
-      restartRequired: additions.length > 0,
+      restartRequired: additions.length > 0 && conflicts.length === 0,
       sourceExtraCount: Object.keys(sourceServers).length,
       privateBackendCount: Object.keys(backendServers).length,
       resultingBackendCount: Object.keys(mergedServers).length,

@@ -1,7 +1,7 @@
 import { access, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 function parseArgs(argv) {
   const options = {};
@@ -20,17 +20,55 @@ function parseArgs(argv) {
   return options;
 }
 
+function samePath(left, right) {
+  const a = resolve(left);
+  const b = resolve(right);
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+function argValue(args, flag) {
+  const indexes = [];
+  for (let index = 0; index < args.length; index += 1) if (args[index] === flag) indexes.push(index);
+  if (indexes.length !== 1 || indexes[0] + 1 >= args.length) throw new Error(`Gateway connector has invalid ${flag} settings`);
+  return args[indexes[0] + 1];
+}
+
+function ownedRuntime(connector) {
+  if (!connector || connector.disabled || typeof connector.command !== 'string' || !samePath(connector.command, process.execPath)
+      || !Array.isArray(connector.args) || !connector.args.includes('--auto-start')) {
+    throw new Error('Source configuration does not contain an owned shared-mcp-gateway connector');
+  }
+  const connectorPath = connector.args[0];
+  if (!connectorPath || basename(connectorPath).toLowerCase() !== 'connector.mjs') {
+    throw new Error('Source configuration does not contain an installed shared-mcp-gateway connector');
+  }
+  const privatePath = resolve(argValue(connector.args, '--config'));
+  const stateDir = resolve(argValue(connector.args, '--state-dir'));
+  const port = Number(argValue(connector.args, '--port'));
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Gateway connector has an invalid port');
+  if (!samePath(privatePath, join(stateDir, 'backends.json'))) {
+    throw new Error('Gateway connector private catalog does not belong to its selected state directory');
+  }
+  return { connectorPath: resolve(connectorPath), runtimePath: dirname(dirname(resolve(connectorPath))) };
+}
+
 async function stableImplementation(options) {
   const gatewayPath = resolve(options['gateway-config'] ?? join(process.env.COPILOT_HOME || join(homedir(), '.copilot'), 'mcp-config.json'));
   let gateway;
   try { gateway = JSON.parse(await readFile(gatewayPath, 'utf8')); }
   catch { throw new Error('Cannot read a valid source gateway configuration; configure the gateway first'); }
   const connector = gateway.mcpServers?.['shared-mcp-gateway'] ?? gateway.servers?.['shared-mcp-gateway'];
-  const connectorPath = connector?.args?.[0];
-  if (!connectorPath || basename(connectorPath).toLowerCase() !== 'connector.mjs') {
-    throw new Error('Source configuration does not contain an installed shared-mcp-gateway connector');
+  const selected = ownedRuntime(connector);
+  const trustedRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  if (!samePath(selected.runtimePath, trustedRoot)) {
+    try {
+      const verifier = await import(pathToFileURL(join(trustedRoot, 'tools', 'plugin-setup.mjs')).href);
+      await verifier.verifyTrustedRuntimeSelection({ trustedRoot, runtimePath: selected.runtimePath });
+    } catch (error) {
+      throw new Error('The selected gateway runtime is not trusted by this installed plugin payload. Run gateway setup with --apply to install or upgrade the stable runtime, then retry.', { cause: error });
+    }
   }
-  const helperPath = join(dirname(dirname(resolve(connectorPath))), 'src', 'client-connect.js');
+  const helperPath = join(selected.runtimePath, 'src', 'client-connect.js');
   try { await access(helperPath); }
   catch { throw new Error('The selected gateway runtime does not support cross-client setup. Run gateway setup with --apply to install or upgrade the stable runtime, then retry.'); }
   let module;
