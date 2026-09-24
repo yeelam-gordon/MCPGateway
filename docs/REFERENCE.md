@@ -99,7 +99,7 @@ Use the exact `backupPath` and `rollbackCommand` printed by setup. Close affecte
 
 If setup fails after creating a backup, it prints recovery information. If it fails before creating one, it reports that the source configuration was not replaced. Do not delete the private backend catalog as a troubleshooting step.
 
-After a successful setup or runtime adoption, execute the returned `readinessCommand` exactly. Restart clients only after the readiness check succeeds. If setup reports `already-configured`, use the reported connector and state directory for the health check rather than inventing paths.
+After a successful setup, reopen Copilot to load the generated connector, then execute the returned `readinessCommand` exactly. During adoption, finish active work, stop only the verified old gateway, and start the new connector using the generated entry before checking readiness and reconnecting other clients. A check-only command does not start an absent gateway. If setup reports `already-configured`, use the reported connector and state directory for the health check rather than inventing paths.
 
 <a id="cross-client-migration-recovery"></a>
 ## Cross-client migration recovery

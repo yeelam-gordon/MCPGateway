@@ -373,6 +373,22 @@ test('official JSON field semantics are preserved or rejected explicitly', () =>
     remote: { type: 'remote', url: 'https://example.test/mcp', headers: { Authorization: 'literal' }, timeout: 45000 }
   } }) });
   assert.equal(openCode.mcpServers.remote.timeout, 45000);
+  for (const type of ['local', 'remote']) {
+    const native = type === 'local'
+      ? { type, command: ['node', '--version'] }
+      : { type, url: 'https://example.test/mcp' };
+    for (const enabled of ['false', null, 0, [], {}]) {
+      assert.throws(() => extractClientBackends({ client: 'opencode', configText: JSON.stringify({
+        mcp: { worker: { ...native, enabled } }
+      }) }), /enabled must be a boolean/);
+    }
+    for (const enabled of [true, false]) {
+      const parsed = extractClientBackends({ client: 'opencode', configText: JSON.stringify({
+        mcp: { worker: { ...native, enabled } }
+      }) });
+      assert.equal(parsed.mcpServers.worker.disabled, !enabled);
+    }
+  }
   const kimi = extractClientBackends({ client: 'kimi', configText: JSON.stringify({ mcpServers: {
     worker: { transport: 'stdio', command: 'node', args: [], enabled: false }
   } }) });
