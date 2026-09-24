@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented here. This project follows semantic versioning while recognizing that pre-1.0 releases may introduce breaking changes.
 
+## [0.5.0] - 2026-09-24
+
+### Added
+
+- Setup can preview and import newly added user MCP entries into an existing gateway without a runtime upgrade, with backups, deduplication, and explicit conflict handling.
+- Register the same gateway in six additional JSON client formats through one configuration-adapter layer. Codex receives a native CLI registration plan instead of a custom TOML rewrite; registration does not migrate the other client's existing servers.
+- Thin Claude and Qwen plugin manifests expose the existing setup skill without embedding another runtime.
+- Read the quickstart in English or 15 additional languages, with English remaining the canonical reference.
+- Find separate installation and upgrade instructions for every client from the README navigation table.
+- Separate CI release gates exercise fresh runtime installation, versioned upgrade and rollback, and recurring configuration synchronization.
+- Source-based alternatives comparison distinguishes one client entry, backend resource sharing, and compact tool discovery.
+
+### Fixed
+
+- Runtime publication retries transient Windows file-access failures within a short bounded window, without deleting an existing runtime or changing its permissions.
+- Recurring sync preserves reserved object-property names as server aliases and refuses configuration changes detected during preparation rather than writing to a stale catalog.
+
 ## [0.4.1] - 2026-09-24
 
 ### Fixed

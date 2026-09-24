@@ -21,6 +21,7 @@ test('release metadata stays consistent', async () => {
 
   assert.equal(plugin.name, pkg.name);
   assert.equal(plugin.version, pkg.version);
+  assert.equal(VERSION, pkg.version);
   assert.equal(lock.name, pkg.name);
   assert.equal(lock.version, pkg.version);
   assert.equal(lock.packages[''].name, pkg.name);
@@ -39,3 +40,14 @@ test('release metadata stays consistent', async () => {
   }
 });
 
+test('CI keeps fresh setup and upgrade verification as an explicit gate', async () => {
+  const pkg = await readJson('../package.json');
+  const workflow = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  assert.match(pkg.scripts['test:lifecycle'], /test\/lifecycle-e2e\.test\.js/);
+  assert.match(workflow, /run: npm run test:lifecycle/);
+  assert.match(pkg.scripts['test:sync'], /test\/backend-sync\.test\.js/);
+  assert.match(workflow, /run: npm run test:sync/);
+  assert.match(pkg.scripts['test:clients'], /test\/client-config\.test\.js/);
+  assert.match(pkg.scripts['test:clients'], /test\/localization\.test\.js/);
+  assert.match(workflow, /run: npm run test:clients/);
+});

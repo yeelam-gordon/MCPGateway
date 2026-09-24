@@ -22,6 +22,7 @@ Set up the installed `shared-mcp-gateway` plugin without relying on the current 
 - Set up or configure the Shared MCP Gateway after plugin installation.
 - Preview or apply migration of an existing Copilot MCP configuration.
 - Verify an existing gateway installation or explain rollback.
+- Import newly added entries from the selected user MCP configuration into an existing gateway without reinstalling its runtime.
 - Add eligible Agency adapters when the user explicitly requests them.
 
 ## Prerequisites
@@ -75,6 +76,11 @@ Use `--agency-adapters` only when the user asks to add Agency support and the lo
 - The rollback command must use literal, safely PowerShell-quoted paths and must not contain secrets.
 
 ## Existing Installation and Health
+
+- Every invocation should preview the selected user MCP config for entries added alongside the gateway connector, even when no plugin update exists. When the result is `planned-sync`, summarize new aliases, identical duplicates, and conflicts before requesting approval to apply.
+- A same-name conflict must be resolved explicitly; never overwrite existing backend definitions to finish setup. Preserve tool allowlists, credentials, disabled state, and server ownership settings.
+- Configuration-only synchronization must not run npm or redeploy the runtime. After an approved sync, show the exact client/backend backup paths and restore commands, then coordinate an idle-time owned-gateway restart.
+- Do not collect repository/plugin MCPs implicitly, and do not silently combine pending configuration sync with runtime adoption. Complete and verify each required step separately.
 
 - If setup returns `already-configured`, do not overwrite or describe it as upgraded. Inspect its paths internally and report health and unchanged state, not the full path inventory.
 - If the user explicitly asks to move an existing checkout installation or adopt a newer plugin runtime, preview with `--adopt-existing`, review the returned backup and adapter paths, and obtain approval before adding `--apply`. Preserve the backend catalog byte-for-byte; do not feed the connector-only configuration into a fresh migration.

@@ -1,0 +1,6 @@
+{
+  "name": "shared-mcp-gateway",
+  "version": "0.5.0",
+  "description": "Guide setup of one shared local MCP gateway with explicit, backed-up client configuration changes.",
+  "skills": "skills"
+}

@@ -21,7 +21,8 @@ test('plugin manifest exposes an explicit setup skill without automatic migratio
   assert.equal(marketplace.plugins[0].name, plugin.name);
   assert.equal(marketplace.plugins[0].version, plugin.version);
   assert.equal(marketplace.plugins[0].source, './');
-  assert.deepEqual(plugin.skills, ['skills/']);
+  assert.equal(plugin.$schema, 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json');
+  assert.equal(plugin.skills, undefined, 'Portable plugin format discovers the conventional skills directory');
   assert.equal(plugin.hooks, undefined);
   assert.equal(plugin.mcpServers, undefined);
   for (const file of ['.mcp.json', 'mcp.json', 'hooks.json']) {

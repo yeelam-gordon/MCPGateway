@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { parseSetupArgs, pluginSetup } from '../tools/plugin-setup.mjs';
 
+const currentPackageVersion = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
 const roots = [];
 afterEach(async () => Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))));
 
@@ -22,8 +23,8 @@ async function writeJson(path, value) {
 async function pluginFixture() {
   const root = await temporary();
   await cp(new URL('../LICENSE', import.meta.url), join(root, 'LICENSE'));
-  await writeJson(join(root, 'package.json'), { name: 'fixture-runtime', version: '1.0.0', type: 'module' });
-  await writeJson(join(root, 'package-lock.json'), { name: 'fixture-runtime', version: '1.0.0', lockfileVersion: 3, packages: { '': { name: 'fixture-runtime', version: '1.0.0' } } });
+  await writeJson(join(root, 'package.json'), { name: 'fixture-runtime', version: currentPackageVersion, type: 'module' });
+  await writeJson(join(root, 'package-lock.json'), { name: 'fixture-runtime', version: currentPackageVersion, lockfileVersion: 3, packages: { '': { name: 'fixture-runtime', version: currentPackageVersion } } });
   await mkdir(join(root, 'tools'), { recursive: true });
   await cp(new URL('../tools/migrate-config.mjs', import.meta.url), join(root, 'tools', 'migrate-config.mjs'));
   await cp(new URL('../tools/connector.mjs', import.meta.url), join(root, 'tools', 'connector.mjs'));
@@ -208,12 +209,12 @@ test('published runtime missing a required file is rejected before reuse or migr
 test('published runtime missing an installed dependency is rejected before reuse', async () => {
   const sourceRoot = await pluginFixture();
   await writeJson(join(sourceRoot, 'package.json'), {
-    name: 'fixture-runtime', version: '1.0.0', type: 'module', dependencies: { 'fixture-dependency': '2.3.4' }
+    name: 'fixture-runtime', version: currentPackageVersion, type: 'module', dependencies: { 'fixture-dependency': '2.3.4' }
   });
   await writeJson(join(sourceRoot, 'package-lock.json'), {
-    name: 'fixture-runtime', version: '1.0.0', lockfileVersion: 3,
+    name: 'fixture-runtime', version: currentPackageVersion, lockfileVersion: 3,
     packages: {
-      '': { name: 'fixture-runtime', version: '1.0.0', dependencies: { 'fixture-dependency': '2.3.4' } },
+      '': { name: 'fixture-runtime', version: currentPackageVersion, dependencies: { 'fixture-dependency': '2.3.4' } },
       'node_modules/fixture-dependency': { version: '2.3.4' }
     }
   });
@@ -307,7 +308,7 @@ test('Windows path case variants preserve an existing install in default and ado
       sourceRoot: item.sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir,
       platform: 'win32', adoptExisting
     });
-    assert.equal(result.status, adoptExisting ? 'planned-adoption' : 'already-configured');
+    assert.equal(result.status, adoptExisting ? 'planned-adoption' : 'planned-sync');
   }
 });
 
@@ -328,15 +329,57 @@ test('Windows path comparison still rejects genuinely different existing-install
   }
 });
 
-test('mixed or different shared gateway aliases are rejected explicitly', async () => {
-  const item = await sourceFixture({ mcpServers: {
-    'shared-mcp-gateway': { command: process.execPath, args: ['connector.mjs', '--auto-start', '--config', 'x', '--port', '7319', '--state-dir', 'y'] },
-    other: { command: 'node', args: ['other.js'] }
-  } });
-  await assert.rejects(() => pluginSetup({ sourceConfig: item.sourcePath, stateDir: item.stateDir }), /mixes/);
-  await writeJson(item.sourcePath, { mcpServers: { 'shared-mcp-gateway': { command: 'unrelated', args: ['other.js'] } } });
-  await assert.rejects(() => pluginSetup({ sourceConfig: item.sourcePath, stateDir: item.stateDir }), /different gateway command/);
-  await assert.rejects(() => stat(item.stateDir), error => error.code === 'ENOENT');
+test('mixed gateway entries are planned and applied as backend synchronization without runtime deployment', async () => {
+  const item = await existingGatewayFixture();
+  const privateConfig = JSON.parse(item.backendBytes.toString('utf8'));
+  const duplicate = privateConfig.servers['backend-1'];
+  item.source.mcpServers['newly-added'] = {
+    command: 'node', args: ['new.js'], env: { TOKEN: 'new-secret' }, tools: ['new-tool'], requiresExclusiveAccess: true
+  };
+  item.source.mcpServers['backend-1'] = {
+    tools: duplicate.tools, args: duplicate.args, command: duplicate.command, env: duplicate.env
+  };
+  await writeJson(item.sourcePath, item.source);
+  const before = await readFile(item.sourcePath);
+  let npmCalled = false;
+  const preview = await pluginSetup({
+    sourceRoot: join(item.root, 'missing-plugin'), sourceConfig: item.sourcePath, stateDir: item.stateDir,
+    npmRunner: async () => { npmCalled = true; }
+  });
+  assert.equal(preview.status, 'planned-sync');
+  assert.deepEqual(preview.addedAliases, ['newly-added']);
+  assert.deepEqual(preview.identicalDuplicates, ['backend-1']);
+  assert.deepEqual(preview.conflicts, []);
+  assert.equal(preview.restartRequired, true);
+  assert.equal(npmCalled, false);
+  assert.deepEqual(await readFile(item.sourcePath), before);
+  assert.deepEqual(await readFile(item.privatePath), item.backendBytes);
+
+  await assert.rejects(() => pluginSetup({
+    sourceRoot: item.sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir,
+    adoptExisting: true, npmRunner: async () => { npmCalled = true; }
+  }), /sync first then adopt/);
+  assert.equal(npmCalled, false);
+
+  const applied = await pluginSetup({
+    sourceRoot: join(item.root, 'missing-plugin'), sourceConfig: item.sourcePath, stateDir: item.stateDir,
+    apply: true, tokenLoader: injectedToken, npmRunner: async () => { npmCalled = true; }
+  });
+  assert.equal(applied.status, 'synchronized');
+  assert.equal(applied.restartRequired, true);
+  assert.equal(npmCalled, false);
+  const source = JSON.parse(await readFile(item.sourcePath, 'utf8'));
+  const backend = JSON.parse(await readFile(item.privatePath, 'utf8'));
+  assert.deepEqual(Object.keys(source.mcpServers), ['shared-mcp-gateway']);
+  assert.deepEqual(backend.servers['newly-added'], item.source.mcpServers['newly-added']);
+  assert.deepEqual(backend.servers['backend-1'], duplicate);
+  assert.deepEqual(await readFile(applied.sourceBackupPath), before);
+  assert.deepEqual(await readFile(applied.backendBackupPath), item.backendBytes);
+  assert.deepEqual(await readFile(item.adapterPath), item.adapterBytes);
+
+  const different = await sourceFixture({ mcpServers: { 'shared-mcp-gateway': { command: 'unrelated', args: ['other.js'] } } });
+  await assert.rejects(() => pluginSetup({ sourceConfig: different.sourcePath, stateDir: different.stateDir }), /different gateway command/);
+  await assert.rejects(() => stat(different.stateDir), error => error.code === 'ENOENT');
 });
 
 test('results and parser errors do not disclose config secrets', async () => {

@@ -35,3 +35,9 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Run tests
         run: npm test
+      - name: Verify fresh setup and upgrade
+        run: npm run test:lifecycle
+      - name: Verify recurring configuration sync
+        run: npm run test:sync
+      - name: Verify client adapters and plugin packaging
+        run: npm run test:clients

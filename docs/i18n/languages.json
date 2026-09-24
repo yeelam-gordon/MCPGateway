@@ -1,0 +1,84 @@
+{
+  "languages": [
+    {
+      "code": "en",
+      "name": "English",
+      "path": "README.md"
+    },
+    {
+      "code": "zh-CN",
+      "name": "简体中文",
+      "path": "docs/i18n/README.zh-CN.md"
+    },
+    {
+      "code": "zh-TW",
+      "name": "繁體中文",
+      "path": "docs/i18n/README.zh-TW.md"
+    },
+    {
+      "code": "ja",
+      "name": "日本語",
+      "path": "docs/i18n/README.ja.md"
+    },
+    {
+      "code": "ko",
+      "name": "한국어",
+      "path": "docs/i18n/README.ko.md"
+    },
+    {
+      "code": "es",
+      "name": "Español",
+      "path": "docs/i18n/README.es.md"
+    },
+    {
+      "code": "fr",
+      "name": "Français",
+      "path": "docs/i18n/README.fr.md"
+    },
+    {
+      "code": "de",
+      "name": "Deutsch",
+      "path": "docs/i18n/README.de.md"
+    },
+    {
+      "code": "pt-BR",
+      "name": "Português (Brasil)",
+      "path": "docs/i18n/README.pt-BR.md"
+    },
+    {
+      "code": "it",
+      "name": "Italiano",
+      "path": "docs/i18n/README.it.md"
+    },
+    {
+      "code": "ru",
+      "name": "Русский",
+      "path": "docs/i18n/README.ru.md"
+    },
+    {
+      "code": "ar",
+      "name": "العربية",
+      "path": "docs/i18n/README.ar.md"
+    },
+    {
+      "code": "hi",
+      "name": "हिन्दी",
+      "path": "docs/i18n/README.hi.md"
+    },
+    {
+      "code": "id",
+      "name": "Bahasa Indonesia",
+      "path": "docs/i18n/README.id.md"
+    },
+    {
+      "code": "tr",
+      "name": "Türkçe",
+      "path": "docs/i18n/README.tr.md"
+    },
+    {
+      "code": "vi",
+      "name": "Tiếng Việt",
+      "path": "docs/i18n/README.vi.md"
+    }
+  ]
+}

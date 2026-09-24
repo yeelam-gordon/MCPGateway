@@ -1,5 +1,7 @@
 # Shared MCP Gateway
 
+**Languages:** English · [简体中文](docs/i18n/README.zh-CN.md) · [繁體中文](docs/i18n/README.zh-TW.md) · [日本語](docs/i18n/README.ja.md) · [한국어](docs/i18n/README.ko.md) · [Español](docs/i18n/README.es.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Português](docs/i18n/README.pt-BR.md) · [Italiano](docs/i18n/README.it.md) · [Русский](docs/i18n/README.ru.md) · [العربية](docs/i18n/README.ar.md) · [हिन्दी](docs/i18n/README.hi.md) · [Bahasa Indonesia](docs/i18n/README.id.md) · [Türkçe](docs/i18n/README.tr.md) · [Tiếng Việt](docs/i18n/README.vi.md)
+
 ## 1,000 backend tools. Just 6 gateway tools in Copilot.
 
 **One local gateway. Fewer duplicate backend processes. Less tool-schema context upfront.**
@@ -17,6 +19,38 @@ Instead of exposing every backend tool upfront, Copilot uses a fixed **6-tool in
 The connection counts are an architectural example for clients using the same 20 backend aliases; unused aliases do not start. They are not total OS process counts. The 99.4% figure compares tool-definition counts, **not** token usage or end-to-end startup speed.
 
 Works with ordinary **Copilot CLI**. **Agency is optional.**
+
+**Keep your existing MCP workflow.** Use your agent client's normal mechanism to discover, install, and configure MCP servers. MCPGateway works **after configuration**: it shares those backend connections and exposes a small, on-demand tool interface. It is not another backend marketplace or a replacement for your client's installer.
+
+For other clients, see [Client integration](docs/CLIENTS.md): a documented MCP connection path is separate from support for installing this Copilot plugin unchanged.
+
+## Contents
+
+- [Install and upgrade by client](#install-and-upgrade-by-client)
+- [Benefits and verified scope](#benefits)
+- [Copilot CLI quickstart](#how-to-install)
+- [Add more MCP servers later](#added-another-mcp-later-run-setup-again)
+- [Tool discovery](#why-only-six-tools) and [workflow ownership](#server-scoped-workflow-ownership)
+- [Configuration changes](#what-changes-on-your-machine) and [troubleshooting](#if-setup-does-not-work)
+- [Runtime upgrades and transfers](#existing-installations-and-other-machines)
+- [Development](#development) and [license](#license)
+
+## Install and upgrade by client
+
+Choose your client for its prerequisites, configuration location, installation steps, and upgrade procedure. The gateway runtime is shared; registering another client does not install a second gateway or migrate that client's existing servers.
+
+| Client | Installation | Upgrade |
+|---|---|---|
+| GitHub Copilot CLI | [Install](docs/CLIENTS.md#copilot-cli-install) | [Upgrade](docs/CLIENTS.md#copilot-cli-upgrade) |
+| VS Code (editor) | [Install](docs/CLIENTS.md#vs-code-install) | [Upgrade](docs/CLIENTS.md#vs-code-upgrade) |
+| Claude Code | [Install](docs/CLIENTS.md#claude-code-install) | [Upgrade](docs/CLIENTS.md#claude-code-upgrade) |
+| Codex CLI | [Install](docs/CLIENTS.md#codex-install) | [Upgrade](docs/CLIENTS.md#codex-upgrade) |
+| OpenCode | [Install](docs/CLIENTS.md#opencode-install) | [Upgrade](docs/CLIENTS.md#opencode-upgrade) |
+| Qwen Code | [Install](docs/CLIENTS.md#qwen-code-install) | [Upgrade](docs/CLIENTS.md#qwen-code-upgrade) |
+| Kimi CLI | [Install](docs/CLIENTS.md#kimi-cli-install) | [Upgrade](docs/CLIENTS.md#kimi-cli-upgrade) |
+| Antigravity CLI | [Install](docs/CLIENTS.md#antigravity-cli-install) | [Upgrade](docs/CLIENTS.md#antigravity-cli-upgrade) |
+
+Copilot installation and runtime upgrade have end-to-end checks. The other entries document configuration adapters and their limits, not a claim that every native client has been exercised live.
 
 ## Benefits
 
@@ -49,7 +83,7 @@ The value is avoiding repeated backend overhead **and** keeping the initial tool
 ### What has been verified?
 
 - **1,000-tool synthetic catalog, 2 clients:** both see exactly **6 gateway tools**; a focused search returns **1 matching summary**, and a second client reuses the cached catalog instead of fetching it again. [Test](test/catalog-scale.test.js)
-- **124 automated tests** passed for v0.4.1, covering sharing, ownership, cancellation, migration, recovery, and platform behavior.
+- **186 local checks** passed for v0.5.0 across the core, recurring-sync, client/documentation, and real installation/upgrade suites, covering sharing, ownership, cancellation, migration, recovery, and platform behavior.
 - **2 CI platforms:** Windows and Ubuntu on Node.js 24, plus CodeQL analysis.
 
 These checks demonstrate the mechanism, not unlimited capacity. Real startup time still includes authentication, network calls, and Copilot's own initialization.
@@ -110,6 +144,19 @@ Use the shared MCP gateway to list my configured servers.
 Then request a task using one of your servers. **No separate gateway terminal is required:** the first connector starts the gateway in the background, and later clients reuse it.
 
 The gateway uses **your own configured servers**. It does not install a predefined collection of services or supply their credentials.
+
+### Added another MCP later? Run setup again
+
+You do not need a new plugin version to import newly added servers. If another tool adds MCP entries alongside `shared-mcp-gateway` in your normal Copilot MCP configuration, run `/mcp-gateway-setup` again.
+
+Setup previews the additions, then an approved apply backs up both configurations, merges the new definitions into the private backend catalog, and leaves the normal client configuration pointing at the gateway. It does not reinstall the runtime just to sync settings.
+
+- **New server name:** import it with its arguments, credentials, tool allowlist, and lifecycle setting preserved.
+- **Identical existing definition:** deduplicate it.
+- **Same name, different definition:** stop and report the conflict; never overwrite your existing backend silently.
+- **No additions:** report that nothing changed.
+
+Finish active gateway work and restart the owned gateway after a successful configuration sync. This synchronization reads the selected user MCP config; it does not automatically absorb repository- or plugin-supplied servers.
 
 ## Why only six tools?
 
@@ -266,11 +313,27 @@ cd .\MCPGateway
 npm ci
 npm test
 npm run setup
+npm run test:lifecycle
 ```
 
 `npm run setup` previews only. To apply after reviewing it, use `npm run setup -- --apply`. See [MIGRATION_PROMPT.md](MIGRATION_PROMPT.md) for an agent-guided workflow.
 
+### Two installation release gates
+
+CI runs the unit/integration suite and an additional isolated lifecycle test on Windows and Ubuntu:
+
+| Gate | Required outcome |
+|---|---|
+| **Fresh setup** | Preview changes nothing; installation creates an exact backup; the generated connector starts the gateway; two clients can use it and share a backend. |
+| **Upgrade and rollback** | Install a candidate alongside the existing runtime; preserve backend data and credentials; keep the old runtime available until activation; verify calls after the switch and after restoring the prior configuration. |
+
+The lifecycle test installs real locked npm dependencies and uses local fixture backends—not personal credentials or production services. It exercises the upgrade mechanism with two isolated runtime snapshots, not every historical release or third-party service.
+
+Plugin download is a separate Copilot-managed step. The Windows cache-replacement recovery procedure above remains relevant if that updater returns “Access denied”; successful runtime tests do not hide an external installer failure.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development and release checks, [CHANGELOG.md](CHANGELOG.md) for API changes, and [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+
+For a source-based comparison of other gateways, see [Focused alternatives](docs/ALTERNATIVES.md). It distinguishes one MCP entry per CLI, actual cross-client backend sharing, and compact tool discovery instead of treating all MCP servers as equivalent.
 
 ## License
 

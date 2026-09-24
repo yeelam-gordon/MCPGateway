@@ -137,7 +137,6 @@ function argValue(args, flag) {
 async function inspectExistingGateway(servers, requested) {
   const own = servers[SELF_NAME];
   if (!own) return null;
-  if (Object.keys(servers).length !== 1) throw new Error('Source config mixes the gateway connector with additional server entries');
   const args = own && Array.isArray(own.args) ? own.args : [];
   const connectorPath = args[0];
   if (own.disabled || typeof own.command !== 'string' || !samePath(own.command, process.execPath, requested.platform) || !connectorPath || basename(connectorPath).toLowerCase() !== 'connector.mjs' || !args.includes('--auto-start')) {
@@ -332,6 +331,7 @@ async function publishedRuntime(runtimeRoot, plan, allowDifferentRuntime = false
 }
 
 async function deployRuntime(plan, options) {
+  const { publishRuntimeDirectory } = await import('../src/runtime-publish.js');
   const runtimeRoot = join(plan.stateDir, 'runtime');
   const existing = await publishedRuntime(runtimeRoot, plan, options.allowDifferentRuntime === true);
   if (existing) return existing;
@@ -343,7 +343,7 @@ async function deployRuntime(plan, options) {
     await copyRuntime(plan.sourceRoot, staging, plan.files);
     await (options.npmRunner ?? installDependencies)(staging, options);
     await writeFile(join(staging, '.plugin-runtime.json'), `${JSON.stringify({ version: 1, contentHash: plan.contentHash }, null, 2)}\n`, { flag: 'wx' });
-    try { await rename(staging, destination); }
+    try { await publishRuntimeDirectory(staging, destination); }
     catch (error) {
       if (error.code !== 'EEXIST' && error.code !== 'ENOTEMPTY') throw error;
       const raced = await publishedRuntime(runtimeRoot, plan, options.allowDifferentRuntime === true);
@@ -517,18 +517,58 @@ export async function pluginSetup(options = {}) {
   const existing = await inspectExistingGateway(servers, {
     stateDir, privatePath, port, agencyAdapters: options.agencyAdapters, adoptExisting, platform: options.platform ?? process.platform
   });
-  if (existing && adoptExisting) {
-    const files = await runtimeFiles(sourceRoot);
-    const hash = await contentHash(sourceRoot, files);
-    return adoptExistingGateway({ source, sourcePath, stateDir, port, existing, sourceRoot, files, contentHash: hash, apply, options });
+  if (existing) {
+    let synchronization;
+    try {
+      const { synchronizeBackends } = await import('../src/backend-sync.js');
+      synchronization = await synchronizeBackends({
+        sourcePath, privatePath: existing.privatePath, stateDir, apply: apply && !adoptExisting,
+        expectedSourceBytes: source.bytes, expectedPrivateBytes: existing.backendBytes,
+        platform: options.platform, now: options.now, tokenLoader: options.tokenLoader,
+        lockTimeoutMs: options.lockTimeoutMs, backendWriter: options.backendWriter, sourceWriter: options.sourceWriter,
+        beforeBackendWrite: options.beforeBackendWrite, beforeSourceWrite: options.beforeSourceWrite
+      });
+    } catch (error) {
+      if (error.setupResult) {
+        const failed = error.setupResult;
+        error.setupResult = {
+          ...failed,
+          ...recoveryGuidance({ sourcePath, backupPath: failed.sourceBackupPath, manifestPath: failed.manifestPath,
+            connectorPath: existing.connectorPath, stateDir, port, message: failed.message }),
+          sourceExists: true, migrationStatus: existing.migrationStatus,
+          connectorPath: existing.connectorPath, runtimePath: existing.runtimePath, privatePath: existing.privatePath,
+          backendBackupPath: failed.backendBackupPath,
+          backendRollbackCommand: failed.backendRollbackCommand,
+          rollbackCommands: failed.rollbackCommands,
+          readinessCommand: { command: process.execPath, args: [existing.connectorPath, '--state-dir', stateDir, '--port', String(port), '--check'] }
+        };
+      }
+      throw error;
+    }
+    if (adoptExisting && synchronization.sourceExtraCount > 0) {
+      const error = new Error('Existing gateway has pending native MCP entries; sync first then adopt');
+      error.setupResult = { ...synchronization, status: 'adoption-blocked', migrationStatus: 'not-applicable',
+        connectorPath: existing.connectorPath, runtimePath: existing.runtimePath,
+        message: 'Adoption was not started. Run setup with --apply to synchronize pending backends, then rerun with --adopt-existing.' };
+      throw error;
+    }
+    if (adoptExisting) {
+      const files = await runtimeFiles(sourceRoot);
+      const hash = await contentHash(sourceRoot, files);
+      return adoptExistingGateway({ source, sourcePath, stateDir, port, existing, sourceRoot, files, contentHash: hash, apply, options });
+    }
+    const guidance = recoveryGuidance({ sourcePath, backupPath: synchronization.sourceBackupPath,
+      manifestPath: synchronization.manifestPath, connectorPath: existing.connectorPath, stateDir, port,
+      message: synchronization.message });
+    return {
+      ...synchronization, ...guidance, sourceExists: true, migrationStatus: existing.migrationStatus,
+      connectorPath: existing.connectorPath, runtimePath: existing.runtimePath, privatePath: existing.privatePath,
+      backendBackupPath: synchronization.backendBackupPath,
+      backendRollbackCommand: synchronization.backendRollbackCommand,
+      rollbackCommands: synchronization.rollbackCommands,
+      readinessCommand: { command: process.execPath, args: [existing.connectorPath, '--state-dir', stateDir, '--port', String(port), '--check'] }
+    };
   }
-  if (existing) return {
-    mode: apply ? 'apply' : 'preview', sourceExists: true, sourcePath, stateDir,
-    status: existing.status, migrationStatus: existing.migrationStatus, backendCount: existing.backendCount,
-    connectorPath: existing.connectorPath, runtimePath: existing.runtimePath, privatePath: existing.privatePath,
-    ...recoveryGuidance({ sourcePath, connectorPath: existing.connectorPath, stateDir, port,
-      message: 'Gateway setup is already configured; existing configuration and credentials were not overwritten.' })
-  };
 
   const validator = await canonicalValidator();
   validator.validateConfig(source.value);
