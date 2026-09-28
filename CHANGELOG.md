@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. This project follows semantic versioning while recognizing that pre-1.0 releases may introduce breaking changes.
 
+## [0.6.1] - 2026-09-28
+
+### Fixed
+
+- Concurrent terminal resume no longer launches process-inspection shells from every lock waiter. Only the lock holder records ownership; abandoned locks still receive provenance-aware recovery.
+- Connectors use a shared 60-second startup budget and bounded 5-second authenticated handshakes, allowing simultaneous resumed sessions to reuse one gateway without failing at the former 20-second limit.
+- Startup permission checks tolerate loaded Windows shell startup while respecting the coordinator's remaining deadline; standalone permission checks retain their existing limits and fail-closed behavior.
+- Stale instance metadata is rechecked under the startup lock instead of rejecting a gateway whose new owner is still publishing its metadata.
+- Regression coverage includes twelve independent starters, twelve real connector processes, shell-free live-lock waiting, and recovery after an owner exits during lock initialization.
+
 ## [0.6.0] - 2026-09-24
 
 ### Added

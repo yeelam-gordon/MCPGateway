@@ -2,25 +2,29 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
-import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, test } from 'node:test';
-import { ensureGateway, stopOwnedGateway } from '../src/ensure-gateway.js';
+import { DEFAULT_STARTUP_TIMEOUT_MS, ensureGateway, stopOwnedGateway } from '../src/ensure-gateway.js';
 import { loadOrCreateToken } from '../src/token.js';
 
 const execFileAsync = promisify(execFile);
+const require = createRequire(import.meta.url);
 
 const fixtures = [];
 const owned = [];
 
 afterEach(async () => {
   const stopped = await Promise.allSettled(owned.splice(0).map(item => stopOwnedGateway(item)));
-  await Promise.allSettled(fixtures.splice(0).map(path => rm(path, { recursive: true, force: true })));
   const failures = stopped.filter(result => result.status === 'rejected');
-  if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'Owned gateway cleanup failed');
+  const directories = fixtures.splice(0);
+  if (failures.length) throw new AggregateError(failures.map(result => result.reason),
+    `Owned gateway cleanup failed; evidence retained at ${directories.join(', ')}`);
+  await Promise.all(directories.map(path => rm(path, { recursive: true, force: true })));
 });
 
 async function unusedPort() {
@@ -41,7 +45,7 @@ async function fixture(config = { mcpServers: {} }) {
 }
 
 function options(item, overrides = {}) {
-  return { configPath: item.configPath, adaptersPath: null, stateDir: item.stateDir, port: item.port, startupTimeoutMs: 20_000, ...overrides };
+  return { configPath: item.configPath, adaptersPath: null, stateDir: item.stateDir, port: item.port, startupTimeoutMs: DEFAULT_STARTUP_TIMEOUT_MS, ...overrides };
 }
 
 async function ensureInSeparateProcess(ensureOptions) {
@@ -57,7 +61,7 @@ async function ensureInSeparateProcess(ensureOptions) {
   let timer;
   const result = await Promise.race([
     new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal }))),
-    new Promise((_, reject) => { timer = setTimeout(() => { child.kill(); reject(new Error('ensure child exceeded test bound')); }, 30_000); })
+    new Promise((_, reject) => { timer = setTimeout(() => { child.kill(); reject(new Error('ensure child exceeded test bound')); }, (ensureOptions.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS) + 10_000); })
   ]).finally(() => clearTimeout(timer));
   assert.equal(result.code, 0, stderr || `ensure child exited by ${result.signal}`);
   return JSON.parse(stdout.trim());
@@ -90,7 +94,7 @@ async function gatewayProcessIdsForStateDir(stateDir) {
 }
 
 for (let round = 1; round <= 3; round += 1) {
-  test(`concurrent callers start exactly one persistent gateway (round ${round})`, { timeout: 60_000 }, async () => {
+  test(`concurrent callers start exactly one persistent gateway (round ${round})`, { timeout: 90_000 }, async () => {
     const item = await fixture();
     owned.push({ stateDir: item.stateDir, port: item.port, timeoutMs: 5000 });
 
@@ -107,6 +111,143 @@ for (let round = 1; round <= 3; round += 1) {
     assert.equal(stdout.match(/Shared MCP gateway listening/g)?.length, 1);
   });
 }
+
+test('a resumed terminal burst connects twelve independent clients to one cold gateway', { timeout: 90_000 }, async () => {
+  const item = await fixture();
+  owned.push({ stateDir: item.stateDir, port: item.port, timeoutMs: 5000 });
+  await loadOrCreateToken(item.stateDir, { aclTimeoutMs: 15_000 });
+  const results = await Promise.allSettled(Array.from({ length: 12 }, () => ensureInSeparateProcess(options(item, { startupTimeoutMs: DEFAULT_STARTUP_TIMEOUT_MS }))));
+  const failures = results.filter(result => result.status === 'rejected');
+  assert.equal(failures.length, 0, failures.map(result => result.reason.message).join('\n'));
+  const started = results.map(result => result.value);
+  assert.equal(new Set(started.map(result => result.pid)).size, 1);
+  assert.equal(started.filter(result => !result.reused).length, 1);
+  const output = await readFile(join(item.stateDir, 'gateway.stdout.log'), 'utf8');
+  assert.equal(output.match(/Shared MCP gateway listening/g)?.length, 1);
+});
+
+test('live startup-lock waiters do not spawn process-inspection shells', { timeout: 5000 }, async () => {
+  const item = await fixture();
+  await mkdir(item.stateDir);
+  const lockPath = `${item.stateDir}.token-init.lock`;
+  const record = JSON.stringify({ nonce: 'live-test-owner', pid: process.pid, processMarker: 'not-used-to-take-ownership' });
+  await writeFile(lockPath, record);
+  const childProcess = require('node:child_process');
+  const original = childProcess.execFile;
+  let inspectionCount = 0;
+  childProcess.execFile = (...args) => { inspectionCount += 1; return original(...args); };
+  syncBuiltinESMExports();
+  try {
+    const { ensureGateway: isolatedEnsure } = await import(`../src/ensure-gateway.js?waiters=${Date.now()}`);
+    const startedAt = Date.now();
+    await assert.rejects(() => isolatedEnsure(options(item, { startupTimeoutMs: 200 })), /startup lock.*deadline/);
+    assert.equal(inspectionCount, 0);
+    assert.ok(Date.now() - startedAt < 2000, 'lock waiting must remain bounded');
+    assert.equal(await readFile(lockPath, 'utf8'), record, 'a live lock must never be stolen');
+  } finally {
+    childProcess.execFile = original;
+    syncBuiltinESMExports();
+  }
+});
+
+test('a client can recover a lock whose owner exited while recording provenance', { timeout: 30_000 }, async () => {
+  const item = await fixture();
+  owned.push({ stateDir: item.stateDir, port: item.port, timeoutMs: 5000 });
+  await mkdir(item.stateDir);
+  const child = spawn(process.execPath, ['--eval', ''], { stdio: 'ignore', windowsHide: true });
+  const pid = child.pid;
+  let timer;
+  await new Promise((resolveExit, reject) => {
+    timer = setTimeout(() => { child.kill(); reject(new Error('Lock-owner fixture exceeded 5 seconds')); }, 5000);
+    child.once('error', reject);
+    child.once('exit', code => code === 0 ? resolveExit() : reject(new Error(`Lock-owner fixture exited ${code}`)));
+  }).finally(() => clearTimeout(timer));
+  await writeFile(`${item.stateDir}.token-init.lock`, JSON.stringify({ nonce: 'interrupted-provenance', pid }));
+  const result = await ensureGateway(options(item));
+  assert.equal(result.reused, false);
+  assert.ok(result.pid > 0);
+});
+
+test('a stale lock with a reused live PID is recovered without terminating that process', { timeout: 60_000 }, async () => {
+  const item = await fixture();
+  owned.push({ stateDir: item.stateDir, port: item.port, timeoutMs: 5000 });
+  await mkdir(item.stateDir);
+  await writeFile(`${item.stateDir}.token-init.lock`, JSON.stringify({
+    nonce: 'previous-process-lock', pid: process.pid, processMarker: 'different-process-birth',
+    executable: process.execPath, createdAt: new Date(0).toISOString()
+  }));
+  const started = await ensureGateway(options(item));
+  assert.ok(started.pid > 0);
+  assert.notEqual(started.pid, process.pid);
+  assert.doesNotThrow(() => process.kill(process.pid, 0));
+});
+
+test('complete lock provenance is published without truncating the preliminary record', { timeout: 30_000 }, async () => {
+  const item = await fixture();
+  owned.push({ stateDir: item.stateDir, port: item.port, timeoutMs: 5000 });
+  const fs = require('node:fs/promises');
+  const original = fs.rename;
+  const originalOpen = fs.open;
+  let inspected = 0;
+  let openFailures = process.platform === 'win32' ? 2 : 0;
+  let publishFailures = process.platform === 'win32' ? 2 : 0;
+  fs.open = async (path, ...args) => {
+    if (String(path).endsWith('.token-init.lock') && openFailures > 0) {
+      openFailures -= 1;
+      throw Object.assign(new Error('Injected Windows lock contention'), { code: 'EPERM' });
+    }
+    return originalOpen(path, ...args);
+  };
+  fs.rename = async (source, target) => {
+    if (String(target).endsWith('.token-init.lock') || String(target).endsWith('gateway-start.lock')) {
+      const before = JSON.parse(await readFile(target, 'utf8'));
+      const replacement = JSON.parse(await readFile(source, 'utf8'));
+      assert.equal(before.nonce, replacement.nonce);
+      assert.equal(before.pid, replacement.pid);
+      assert.equal(before.processMarker, undefined);
+      assert.ok(replacement.processMarker);
+      if (publishFailures > 0) {
+        publishFailures -= 1;
+        throw Object.assign(new Error('Injected Windows publication contention'), { code: 'EPERM' });
+      }
+      inspected += 1;
+    }
+    return original(source, target);
+  };
+  syncBuiltinESMExports();
+  try {
+    await ensureGateway(options(item));
+    assert.equal(inspected, 2);
+  } finally {
+    fs.rename = original;
+    fs.open = originalOpen;
+    syncBuiltinESMExports();
+  }
+});
+
+test('twelve real connectors resume against stale previous-instance metadata', { timeout: 120_000 }, async () => {
+  const item = await fixture();
+  owned.push({ stateDir: item.stateDir, port: item.port, timeoutMs: 5000 });
+  await ensureGateway(options(item));
+  const manifestPath = join(item.stateDir, 'gateway-instance.json');
+  const oldManifest = await readFile(manifestPath);
+  assert.equal(await stopOwnedGateway({ stateDir: item.stateDir, port: item.port, timeoutMs: 5000 }), true);
+  await writeFile(manifestPath, oldManifest);
+  const args = [
+    join(process.cwd(), 'tools', 'connector.mjs'), '--auto-start',
+    '--config', item.configPath, '--state-dir', item.stateDir, '--port', String(item.port), '--check'
+  ];
+  const results = await Promise.allSettled(Array.from({ length: 12 }, () =>
+    execFileAsync(process.execPath, args, { windowsHide: true, timeout: DEFAULT_STARTUP_TIMEOUT_MS + 15_000 })));
+  const failures = results.filter(result => result.status === 'rejected');
+  assert.equal(failures.length, 0, failures.map(result => result.reason.message).join('\n'));
+  for (const result of results) assert.match(result.value.stdout, /Gateway ready/);
+  const output = await readFile(join(item.stateDir, 'gateway.stdout.log'), 'utf8');
+  assert.equal(output.match(/Shared MCP gateway listening/g)?.length, 2, 'one baseline launch and one shared restart');
+  const current = JSON.parse(await readFile(manifestPath, 'utf8'));
+  assert.notEqual(current.nonce, JSON.parse(oldManifest).nonce);
+  assert.deepEqual(await ensureGateway(options(item)), { pid: current.pid, reused: true });
+});
 
 async function inspectWindowsAcl(path, directory) {
   const payload = Buffer.from(JSON.stringify({ path, directory }), 'utf8').toString('base64');

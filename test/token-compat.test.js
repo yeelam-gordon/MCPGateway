@@ -133,6 +133,34 @@ test('concurrent first token loads converge while the winner has created but not
   }
 });
 
+test('startup ACL checks share the remaining deadline without weakening failures', { skip: process.platform !== 'win32' }, async t => {
+  const childProcess = require('node:child_process');
+  const original = childProcess.execFile;
+  const root = await mkdtemp(join(tmpdir(), 'gateway-token-budget-'));
+  const time = t.mock.method(Date, 'now', () => 1000);
+  const budgets = [];
+  childProcess.execFile = (file, args, options, callback) => {
+    budgets.push(options.timeout);
+    time.mock.mockImplementation(() => 1500);
+    queueMicrotask(() => callback(null, '', ''));
+  };
+  syncBuiltinESMExports();
+  try {
+    const { loadOrCreateToken } = await import(`../src/token.js?deadline-test`);
+    await loadOrCreateToken(root, { aclTimeoutMs: 15_000, deadline: 2000 });
+    assert.deepEqual(budgets, [1000, 500]);
+    time.mock.mockImplementation(() => 2001);
+    await assert.rejects(() => loadOrCreateToken(root, { aclTimeoutMs: 15_000, deadline: 2000 }), /deadline expired/);
+    assert.deepEqual(budgets, [1000, 500], 'expired operations must not start another shell');
+    await assert.rejects(() => loadOrCreateToken(root, { aclTimeoutMs: 0 }), /positive integer/);
+  } finally {
+    childProcess.execFile = original;
+    syncBuiltinESMExports();
+    time.mock.restore();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('Windows token ACL supports PowerShell 7 and Windows PowerShell 5.1 fallback', { skip: process.platform !== 'win32', timeout: 30_000 }, async t => {
   for (const route of ['pwsh', 'powershell']) {
     await t.test(route === 'pwsh' ? 'uses PowerShell 7 when available' : 'falls back to Windows PowerShell 5.1 when pwsh is unavailable', async () => {

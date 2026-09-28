@@ -60,7 +60,7 @@ async function run() {
   const options = parseArgs(process.argv.slice(2));
   if (options.autoStart) {
     const { ensureGateway } = await import('../src/ensure-gateway.js');
-    await ensureGateway({ configPath: options.configPath, adaptersPath: options.adaptersPath, stateDir: options.stateDir, port: options.port, startupTimeoutMs: 20000 });
+    await ensureGateway({ configPath: options.configPath, adaptersPath: options.adaptersPath, stateDir: options.stateDir, port: options.port });
   }
 
   const tokenPath = resolve(options.stateDir, 'owner.token');
