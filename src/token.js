@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { access, chmod, mkdir, open, readFile } from 'node:fs/promises';
+import { access, chmod, lstat, mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -117,8 +117,24 @@ export async function loadOrCreateToken(stateDir, options = {}) {
   try {
     await secureOwnerOnly([{ path, directory: false }], options);
     await file.writeFile(`${token}\n`, 'utf8');
+  } catch (error) {
+    try {
+      const created = await file.stat({ bigint: true });
+      await file.close();
+      file = null;
+      const current = await lstat(path, { bigint: true });
+      if (created.size === 0n && current.size === 0n && created.ino !== 0n
+          && created.dev === current.dev && created.ino === current.ino) {
+        await unlink(path);
+      }
+    } catch (cleanupError) {
+      if (cleanupError.code !== 'ENOENT') {
+        throw new AggregateError([error, cleanupError], 'Owner token creation failed and its unpublished file could not be cleaned up');
+      }
+    }
+    throw error;
   } finally {
-    await file.close();
+    if (file) await file.close();
   }
   return { token, path };
 }
