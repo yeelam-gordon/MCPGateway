@@ -5,6 +5,7 @@ This document contains detailed operating, recovery, ownership, and transfer gui
 ## Contents
 
 - [Tool discovery and capacity](#tool-discovery-and-capacity)
+- [Concurrent terminal resume](#concurrent-terminal-resume)
 - [Workflow ownership](#workflow-ownership)
 - [State and privacy](#state-and-privacy)
 - [Setup recovery](#setup-recovery)
@@ -35,6 +36,16 @@ With a 1,000-tool catalog, the gateway still advertises six initial tool definit
 The gateway may retrieve a backend's complete catalog internally and cache it in memory. Use focused searches: an empty or broad query can still return many summaries. The fixed tool count does not imply unlimited capacity or constant memory/token usage.
 
 Concurrent first-use requests share one catalog fetch. Catalog discovery has one total deadline rather than a fresh full budget for every page. Cancelling one discovery request does not cancel another client's shared discovery.
+
+## Concurrent terminal resume
+
+Several agent sessions may start their connectors at the same time. They coordinate through the same gateway state directory and port: one starts the gateway, and the others verify and reuse it.
+
+Startup has a **60-second** total coordination budget. Authenticated handshake attempts are capped at **5 seconds** within that budget, and startup permission checks allow up to **15 seconds** per shell invocation, clipped to the coordinator's remaining time. These are maximum waits, not fixed delays. Normal short lock waits do not launch process-inspection shells; prolonged waits use staggered birth-time checks to detect reused process IDs. The lock holder records its process identity, and clients still verify the gateway identity, configuration, and process before reuse.
+
+The preliminary owner record is fully written before exclusive lock publication, so interrupted preparation cannot publish partial JSON. If a previous owner exited while recording its identity, another client can recover that valid preliminary record. Complete provenance is published atomically, keeping the preliminary record intact until replacement succeeds. Transient Windows file-sharing errors during acquisition/publication are retried within bounded deadlines without changing permissions. Stale instance metadata is rechecked after acquiring the startup lock, allowing the new owner to finish publishing it. An active owner's lock is never taken over; unrelated listeners and mismatched configurations still fail explicitly.
+
+These guarantees require all sessions to use the same current connector runtime and configuration. After upgrading, restart sessions that still hold an older connector. If a startup deadline is exceeded, inspect the connector error in the agent's log; do not delete live locks or start an independent gateway on the same port.
 
 <a id="workflow-ownership"></a>
 ## Workflow ownership

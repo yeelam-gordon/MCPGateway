@@ -133,6 +133,91 @@ test('concurrent first token loads converge while the winner has created but not
   }
 });
 
+test('startup ACL checks share the remaining deadline without weakening failures', { skip: process.platform !== 'win32' }, async t => {
+  const childProcess = require('node:child_process');
+  const original = childProcess.execFile;
+  const root = await mkdtemp(join(tmpdir(), 'gateway-token-budget-'));
+  const time = t.mock.method(Date, 'now', () => 1000);
+  const budgets = [];
+  childProcess.execFile = (file, args, options, callback) => {
+    budgets.push(options.timeout);
+    time.mock.mockImplementation(() => 1500);
+    queueMicrotask(() => callback(null, '', ''));
+  };
+  syncBuiltinESMExports();
+  try {
+    const { loadOrCreateToken } = await import(`../src/token.js?deadline-test`);
+    await loadOrCreateToken(root, { aclTimeoutMs: 15_000, deadline: 2000 });
+    assert.deepEqual(budgets, [1000, 500]);
+    time.mock.mockImplementation(() => 2001);
+    await assert.rejects(() => loadOrCreateToken(root, { aclTimeoutMs: 15_000, deadline: 2000 }), /deadline expired/);
+    assert.deepEqual(budgets, [1000, 500], 'expired operations must not start another shell');
+    await assert.rejects(() => loadOrCreateToken(root, { aclTimeoutMs: 0 }), /positive integer/);
+  } finally {
+    childProcess.execFile = original;
+    syncBuiltinESMExports();
+    time.mock.restore();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('waiting for an empty token is clipped to the startup deadline', { timeout: 5000 }, async () => {
+  const childProcess = require('node:child_process');
+  const original = childProcess.execFile;
+  const root = await mkdtemp(join(tmpdir(), 'gateway-empty-token-deadline-'));
+  const fs = require('node:fs/promises');
+  await fs.writeFile(join(root, 'owner.token'), '', { mode: 0o600 });
+  childProcess.execFile = (file, args, options, callback) => {
+    queueMicrotask(() => callback(null, '', ''));
+  };
+  syncBuiltinESMExports();
+  try {
+    const { loadOrCreateToken } = await import('../src/token.js?empty-token-deadline');
+    const started = Date.now();
+    await assert.rejects(() => loadOrCreateToken(root, { deadline: started + 200 }),
+      /deadline expired|Owner token file is empty/);
+    assert.ok(Date.now() - started < 1500, 'must not start a fresh two-second token wait');
+    assert.equal(await fs.readFile(join(root, 'owner.token'), 'utf8'), '');
+  } finally {
+    childProcess.execFile = original;
+    syncBuiltinESMExports();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('deadline failure after token creation removes only the unpublished file and allows retry', { timeout: 5000 }, async t => {
+  const fs = require('node:fs/promises');
+  const childProcess = require('node:child_process');
+  const originalOpen = fs.open;
+  const originalExec = childProcess.execFile;
+  const root = await mkdtemp(join(tmpdir(), 'gateway-unpublished-token-'));
+  let now = 1000;
+  const clock = t.mock.method(Date, 'now', () => now);
+  fs.open = async (...args) => {
+    const handle = await originalOpen(...args);
+    if (String(args[0]).endsWith('owner.token')) now = 2001;
+    return handle;
+  };
+  childProcess.execFile = (file, args, options, callback) => queueMicrotask(() => callback(null, '', ''));
+  syncBuiltinESMExports();
+  try {
+    const { loadOrCreateToken } = await import('../src/token.js?failed-creation-recovery');
+    await assert.rejects(() => loadOrCreateToken(root, { deadline: 2000 }), /deadline expired/);
+    await assert.rejects(fs.access(join(root, 'owner.token')), { code: 'ENOENT' });
+    const result = await loadOrCreateToken(root);
+    assert.ok(result.token.length > 0);
+    assert.equal((await fs.readFile(result.path, 'utf8')).trim(), result.token);
+    await assert.rejects(() => loadOrCreateToken(root, { deadline: 2000 }), /deadline expired/);
+    assert.equal((await fs.readFile(result.path, 'utf8')).trim(), result.token, 'published tokens must survive failed verification');
+  } finally {
+    fs.open = originalOpen;
+    childProcess.execFile = originalExec;
+    syncBuiltinESMExports();
+    clock.mock.restore();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('Windows token ACL supports PowerShell 7 and Windows PowerShell 5.1 fallback', { skip: process.platform !== 'win32', timeout: 30_000 }, async t => {
   for (const route of ['pwsh', 'powershell']) {
     await t.test(route === 'pwsh' ? 'uses PowerShell 7 when available' : 'falls back to Windows PowerShell 5.1 when pwsh is unavailable', async () => {

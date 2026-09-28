@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { access, chmod, mkdir, open, readFile } from 'node:fs/promises';
+import { access, chmod, lstat, mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -53,7 +53,9 @@ if ($PSVersionTable.PSEdition -eq 'Desktop') {
 }
 }`;
 
-async function secureOwnerOnly(items) {
+async function secureOwnerOnly(items, options) {
+  if (options.deadline !== undefined && Date.now() >= options.deadline)
+    throw new Error('Gateway startup deadline expired before owner-only ACL verification');
   if (process.platform !== 'win32') {
     await Promise.all(items.map(({ path, directory }) => chmod(path, directory ? 0o700 : 0o600)));
     return;
@@ -62,7 +64,9 @@ async function secureOwnerOnly(items) {
   const encodedCommand = Buffer.from(windowsAclScript.replace('__PAYLOAD__', payload), 'utf16le').toString('base64');
   let lastError;
   for (const shell of ['pwsh.exe', 'powershell.exe']) {
-    const timeout = shell === 'pwsh.exe' ? pwshAclTimeoutMs : windowsPowerShellAclTimeoutMs;
+    const budget = options.aclTimeoutMs ?? (shell === 'pwsh.exe' ? pwshAclTimeoutMs : windowsPowerShellAclTimeoutMs);
+    const timeout = options.deadline === undefined ? budget : Math.min(budget, options.deadline - Date.now());
+    if (timeout <= 0) throw new Error('Gateway startup deadline expired before owner-only ACL verification');
     try {
       await execFileAsync(shell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand], { windowsHide: true, timeout });
       return;
@@ -75,10 +79,12 @@ async function secureOwnerOnly(items) {
   throw new Error(`Cannot apply owner-only ACL to ${items.map(item => item.path).join(', ')}: ${lastError?.message ?? 'no PowerShell executable found'}`, { cause: lastError });
 }
 
-async function readToken(path, stateDir) {
-  await secureOwnerOnly([{ path: stateDir, directory: true }, { path, directory: false }]);
-  const deadline = Date.now() + tokenWriteWaitMs;
+async function readToken(path, stateDir, options) {
+  await secureOwnerOnly([{ path: stateDir, directory: true }, { path, directory: false }], options);
+  const deadline = Math.min(Date.now() + tokenWriteWaitMs, options.deadline ?? Infinity);
   do {
+    if (options.deadline !== undefined && Date.now() >= options.deadline)
+      throw new Error('Gateway startup deadline expired while waiting for the owner token');
     const token = (await readFile(path, 'utf8')).trim();
     if (token) return { token, path };
     if (Date.now() >= deadline) throw new Error(`Owner token file is empty: ${path}`);
@@ -86,29 +92,49 @@ async function readToken(path, stateDir) {
   } while (true);
 }
 
-export async function loadOrCreateToken(stateDir) {
+export async function loadOrCreateToken(stateDir, options = {}) {
+  if (options.aclTimeoutMs !== undefined && (!Number.isInteger(options.aclTimeoutMs) || options.aclTimeoutMs < 1))
+    throw new TypeError('aclTimeoutMs must be a positive integer');
+  if (options.deadline !== undefined && !Number.isFinite(options.deadline))
+    throw new TypeError('deadline must be a finite timestamp');
   await mkdir(stateDir, { recursive: true, mode: 0o700 });
   const path = join(stateDir, 'owner.token');
   try {
     await access(path);
-    return await readToken(path, stateDir);
+    return await readToken(path, stateDir, options);
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
-  await secureOwnerOnly([{ path: stateDir, directory: true }]);
+  await secureOwnerOnly([{ path: stateDir, directory: true }], options);
   const token = randomBytes(32).toString('base64url');
   let file;
   try {
     file = await open(path, 'wx', 0o600);
   } catch (error) {
-    if (error.code === 'EEXIST') return readToken(path, stateDir);
+    if (error.code === 'EEXIST') return readToken(path, stateDir, options);
     throw error;
   }
   try {
-    await secureOwnerOnly([{ path, directory: false }]);
+    await secureOwnerOnly([{ path, directory: false }], options);
     await file.writeFile(`${token}\n`, 'utf8');
+  } catch (error) {
+    try {
+      const created = await file.stat({ bigint: true });
+      await file.close();
+      file = null;
+      const current = await lstat(path, { bigint: true });
+      if (created.size === 0n && current.size === 0n && created.ino !== 0n
+          && created.dev === current.dev && created.ino === current.ino) {
+        await unlink(path);
+      }
+    } catch (cleanupError) {
+      if (cleanupError.code !== 'ENOENT') {
+        throw new AggregateError([error, cleanupError], 'Owner token creation failed and its unpublished file could not be cleaned up');
+      }
+    }
+    throw error;
   } finally {
-    await file.close();
+    if (file) await file.close();
   }
   return { token, path };
 }
