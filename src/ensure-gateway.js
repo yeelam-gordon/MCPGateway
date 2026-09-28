@@ -1,7 +1,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, openSync } from 'node:fs';
-import { mkdir, open, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -199,13 +199,38 @@ async function inspectOrStartable(spec, token, deadline, allowMissingMetadata = 
 }
 
 async function acquireLock(lockPath, deadline) {
+  const record = { nonce: randomUUID(), pid: process.pid, createdAt: new Date().toISOString() };
+  const preparedPath = `${lockPath}.${process.pid}.${record.nonce}.prepared`;
+  try {
+    await writeFile(preparedPath, `${JSON.stringify(record)}\n`, { mode: 0o600, flag: 'wx' });
+    return await waitForLock(lockPath, deadline, record, preparedPath);
+  } finally {
+    const cleanupDeadline = Math.min(deadline, Date.now() + 3000);
+    while (true) {
+      try { await unlink(preparedPath); break; }
+      catch (error) {
+        if (error.code === 'ENOENT') break;
+        if (process.platform === 'win32' && ['EACCES', 'EPERM', 'EBUSY'].includes(error.code)
+            && remaining(cleanupDeadline) > 0) {
+          await delay(Math.min(POLL_MS, remaining(cleanupDeadline)));
+          continue;
+        }
+        await releaseOwnedLock(lockPath, record);
+        throw error;
+      }
+    }
+  }
+}
+
+async function waitForLock(lockPath, deadline, record, preparedPath) {
   let observedRecord;
   let nextInspectionAt = 0;
   let lastAccessError;
   while (remaining(deadline) > 0) {
-    let handle;
+    let acquired = false;
     try {
-      handle = await open(lockPath, 'wx', 0o600);
+      await link(preparedPath, lockPath);
+      acquired = true;
     } catch (error) {
       if (process.platform === 'win32' && ['EACCES', 'EPERM', 'EBUSY'].includes(error.code)) {
         lastAccessError = error;
@@ -214,25 +239,18 @@ async function acquireLock(lockPath, deadline) {
       }
       if (error.code !== 'EEXIST') throw error;
     }
-    if (handle) {
+    if (acquired) {
       try {
-        const record = { nonce: randomUUID(), pid: process.pid, createdAt: new Date().toISOString() };
-        await handle.writeFile(`${JSON.stringify(record)}\n`, 'utf8');
         const ownInfo = await ownProcessInfo(deadline);
         if (!ownInfo) throw new Error('Cannot establish gateway lock process provenance');
         record.processMarker = ownInfo.marker;
         record.executable = ownInfo.executable;
-        await handle.close();
-        handle = null;
         await writeJsonAtomic(lockPath, record, deadline);
         return record;
       } catch (error) {
-        if (handle) await handle.close();
-        handle = null;
-        await unlink(lockPath);
+        const current = await readJson(lockPath);
+        if (current?.nonce === record.nonce) await unlink(lockPath);
         throw error;
-      } finally {
-        if (handle) await handle.close();
       }
     }
     let raw;

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -187,16 +187,18 @@ test('complete lock provenance is published without truncating the preliminary r
   owned.push({ stateDir: item.stateDir, port: item.port, timeoutMs: 5000 });
   const fs = require('node:fs/promises');
   const original = fs.rename;
-  const originalOpen = fs.open;
+  const originalLink = fs.link;
   let inspected = 0;
   let openFailures = process.platform === 'win32' ? 2 : 0;
   let publishFailures = process.platform === 'win32' ? 2 : 0;
-  fs.open = async (path, ...args) => {
-    if (String(path).endsWith('.token-init.lock') && openFailures > 0) {
+  fs.link = async (source, target) => {
+    if (String(target).endsWith('.token-init.lock') && openFailures > 0) {
       openFailures -= 1;
       throw Object.assign(new Error('Injected Windows lock contention'), { code: 'EPERM' });
     }
-    return originalOpen(path, ...args);
+    const preliminary = JSON.parse(await readFile(source, 'utf8'));
+    assert.ok(preliminary.pid && preliminary.nonce, 'only a complete record can become the lock');
+    return originalLink(source, target);
   };
   fs.rename = async (source, target) => {
     if (String(target).endsWith('.token-init.lock') || String(target).endsWith('gateway-start.lock')) {
@@ -220,8 +222,54 @@ test('complete lock provenance is published without truncating the preliminary r
     assert.equal(inspected, 2);
   } finally {
     fs.rename = original;
-    fs.open = originalOpen;
+    fs.link = originalLink;
     syncBuiltinESMExports();
+  }
+});
+
+test('interrupted preparation never publishes a malformed startup lock', { timeout: 5000 }, async () => {
+  const item = await fixture();
+  const fs = require('node:fs/promises');
+  const original = fs.writeFile;
+  fs.writeFile = async (path, content, options) => {
+    if (String(path).endsWith('.prepared')) {
+      await original(path, '{"nonce":', options);
+      throw new Error('Interrupted preliminary record write');
+    }
+    return original(path, content, options);
+  };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(() => ensureGateway(options(item)), /Interrupted preliminary record/);
+    await assert.rejects(access(`${item.stateDir}.token-init.lock`), { code: 'ENOENT' });
+  } finally {
+    fs.writeFile = original;
+    syncBuiltinESMExports();
+  }
+});
+
+test('failed prepared-record cleanup releases ownership before reporting failure', { timeout: 30_000 }, async () => {
+  const item = await fixture();
+  const fs = require('node:fs/promises');
+  const original = fs.unlink;
+  let preparedPath;
+  fs.unlink = async path => {
+    if (String(path).endsWith('.prepared')) {
+      preparedPath = path;
+      throw Object.assign(new Error('Injected prepared-record cleanup failure'), { code: 'EPERM' });
+    }
+    return original(path);
+  };
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(() => ensureGateway(options(item)), /prepared-record cleanup failure/);
+    await assert.rejects(access(`${item.stateDir}.token-init.lock`), { code: 'ENOENT' });
+    await assert.rejects(access(join(item.stateDir, 'owner.token')), { code: 'ENOENT' });
+    assert.doesNotThrow(() => process.kill(process.pid, 0));
+  } finally {
+    fs.unlink = original;
+    syncBuiltinESMExports();
+    if (preparedPath) await original(preparedPath);
   }
 });
 
