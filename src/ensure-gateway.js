@@ -373,30 +373,36 @@ async function spawnGateway(spec, nonce, deadline) {
 
 async function terminateMetadata(metadata, timeoutMs = 3000) {
   if (!metadata?.pid || !metadata.processMarker) return false;
-  const inspect = () => processInfo(metadata.pid, Math.max(1, Math.min(PROCESS_INSPECTION_MAX_MS, timeoutMs)));
+  const deadline = Date.now() + timeoutMs;
+  const inspect = async () => {
+    try { process.kill(metadata.pid, 0); }
+    catch (error) { if (error.code === 'ESRCH') return null; throw error; }
+    if (remaining(deadline) === 0) throw new Error(`Gateway shutdown did not complete within ${timeoutMs}ms`);
+    return processInfo(metadata.pid, processInspectionTimeout(deadline));
+  };
   const before = await inspect();
   if (!sameProcess(before, metadata)) return false;
   if (process.platform === 'win32') {
     try { process.kill(metadata.pid, 'SIGTERM'); } catch {}
-    await delay(Math.min(250, timeoutMs));
+    await delay(Math.min(250, remaining(deadline)));
     const stillRunning = await inspect();
     if (sameProcess(stillRunning, metadata)) {
       const guard = await inspect();
       if (!sameProcess(guard, metadata)) return false;
-      await execFileAsync('taskkill.exe', ['/PID', String(metadata.pid), '/T', '/F'], { windowsHide: true, timeout: Math.max(500, timeoutMs) }).catch(() => {});
+      if (remaining(deadline) === 0) throw new Error(`Gateway shutdown did not complete within ${timeoutMs}ms`);
+      await execFileAsync('taskkill.exe', ['/PID', String(metadata.pid), '/T', '/F'], { windowsHide: true, timeout: remaining(deadline) }).catch(() => {});
     }
   } else {
     try { process.kill(metadata.pid, 'SIGTERM'); } catch {}
-    const gracefulDeadline = Date.now() + Math.min(500, timeoutMs);
-    while (Date.now() < gracefulDeadline && sameProcess(await inspect(), metadata)) await delay(25);
+    const gracefulDeadline = Math.min(deadline, Date.now() + 500);
+    while (Date.now() < gracefulDeadline && sameProcess(await inspect(), metadata)) await delay(Math.min(25, remaining(gracefulDeadline)));
     if (sameProcess(await inspect(), metadata)) {
       try { process.kill(-metadata.pid, 'SIGKILL'); } catch { try { process.kill(metadata.pid, 'SIGKILL'); } catch {} }
     }
   }
-  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (!sameProcess(await inspect(), metadata)) return true;
-    await delay(30);
+    await delay(Math.min(30, remaining(deadline)));
   }
   return !sameProcess(await inspect(), metadata);
 }

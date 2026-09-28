@@ -293,6 +293,44 @@ test('failed prepared-record cleanup releases ownership before reporting failure
   }
 });
 
+test('Windows shutdown inspections share one deadline', { skip: process.platform !== 'win32', timeout: 5000 }, async t => {
+  const item = await fixture();
+  await mkdir(item.stateDir);
+  const metadata = { pid: process.pid, nonce: 'shutdown-budget', processMarker: 'synthetic-birth',
+    executable: process.execPath, port: item.port };
+  await writeFile(join(item.stateDir, 'gateway-instance.json'), JSON.stringify(metadata));
+  const childProcess = require('node:child_process');
+  const original = childProcess.execFile;
+  let now = 1000;
+  const clock = t.mock.method(Date, 'now', () => now);
+  const kill = t.mock.method(process, 'kill', () => true);
+  const budgets = [];
+  childProcess.execFile = (file, args, options, callback) => {
+    budgets.push(options.timeout);
+    now += Math.min(600, options.timeout);
+    queueMicrotask(() => options.timeout < 600
+      ? callback(Object.assign(new Error('inspection timeout'), { killed: true }))
+      : callback(null, JSON.stringify({ creation: metadata.processMarker, executable: process.execPath }), ''));
+  };
+  childProcess.execFile[promisify.custom] = (...args) => new Promise((resolveResult, reject) => {
+    childProcess.execFile(...args, (error, stdout, stderr) => error ? reject(error) : resolveResult({ stdout, stderr }));
+  });
+  syncBuiltinESMExports();
+  try {
+    const { stopOwnedGateway: isolatedStop } = await import('../src/ensure-gateway.js?shutdown-budget');
+    await assert.rejects(() => isolatedStop({ stateDir: item.stateDir, port: item.port, timeoutMs: 1000 }),
+      /Timed out checking process/);
+    assert.deepEqual(budgets, [1000, 400]);
+    assert.equal(kill.mock.calls.filter(call => call.arguments[1] === 'SIGTERM').length, 1);
+    assert.deepEqual(JSON.parse(await readFile(join(item.stateDir, 'gateway-instance.json'), 'utf8')), metadata);
+  } finally {
+    childProcess.execFile = original;
+    syncBuiltinESMExports();
+    clock.mock.restore();
+    kill.mock.restore();
+  }
+});
+
 test('twelve real connectors resume against stale previous-instance metadata', { timeout: 120_000 }, async () => {
   const item = await fixture();
   owned.push({ stateDir: item.stateDir, port: item.port, timeoutMs: 5000 });
