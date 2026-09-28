@@ -182,6 +182,25 @@ test('a stale lock with a reused live PID is recovered without terminating that 
   assert.doesNotThrow(() => process.kill(process.pid, 0));
 });
 
+test('Windows preliminary locks distinguish reused PIDs from live owners by creation time', {
+  skip: process.platform !== 'win32', timeout: 90_000
+}, async () => {
+  const item = await fixture();
+  owned.push({ stateDir: item.stateDir, port: item.port, timeoutMs: 5000 });
+  await mkdir(item.stateDir);
+  const lockPath = `${item.stateDir}.token-init.lock`;
+  await writeFile(lockPath, JSON.stringify({
+    nonce: 'abandoned-preliminary-owner', pid: process.pid, createdAt: new Date(0).toISOString()
+  }));
+  const result = await ensureGateway(options(item));
+  assert.ok(result.pid > 0);
+  const live = JSON.stringify({ nonce: 'still-live-preliminary-owner', pid: process.pid, createdAt: new Date().toISOString() });
+  await writeFile(lockPath, live);
+  await assert.rejects(() => ensureGateway(options(item, { startupTimeoutMs: 15_000 })), /startup lock.*deadline/);
+  assert.equal(await readFile(lockPath, 'utf8'), live, 'an older live process must keep its preliminary lock');
+  assert.doesNotThrow(() => process.kill(process.pid, 0));
+});
+
 test('complete lock provenance is published without truncating the preliminary record', { timeout: 30_000 }, async () => {
   const item = await fixture();
   owned.push({ stateDir: item.stateDir, port: item.port, timeoutMs: 5000 });
@@ -206,7 +225,8 @@ test('complete lock provenance is published without truncating the preliminary r
       const replacement = JSON.parse(await readFile(source, 'utf8'));
       assert.equal(before.nonce, replacement.nonce);
       assert.equal(before.pid, replacement.pid);
-      assert.equal(before.processMarker, undefined);
+      if (process.platform === 'win32') assert.equal(before.processMarker, undefined);
+      else assert.equal(before.processMarker, replacement.processMarker);
       assert.ok(replacement.processMarker);
       if (publishFailures > 0) {
         publishFailures -= 1;

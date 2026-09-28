@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, openSync } from 'node:fs';
 import { link, mkdir, readFile, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -199,7 +200,14 @@ async function inspectOrStartable(spec, token, deadline, allowMissingMetadata = 
 }
 
 async function acquireLock(lockPath, deadline) {
-  const record = { nonce: randomUUID(), pid: process.pid, createdAt: new Date().toISOString() };
+  const record = { nonce: randomUUID(), pid: process.pid,
+    createdAt: new Date(Math.max(Date.now(), performance.timeOrigin)).toISOString() };
+  if (process.platform !== 'win32') {
+    const info = await ownProcessInfo(deadline);
+    if (!info) throw new Error('Cannot establish gateway lock process provenance');
+    record.processMarker = info.marker;
+    record.executable = info.executable;
+  }
   const preparedPath = `${lockPath}.${process.pid}.${record.nonce}.prepared`;
   try {
     await writeFile(preparedPath, `${JSON.stringify(record)}\n`, { mode: 0o600, flag: 'wx' });
@@ -268,7 +276,7 @@ async function waitForLock(lockPath, deadline, record, preparedPath) {
     // records get staggered birth checks so PID reuse cannot strand a lock.
     try {
       process.kill(existing.pid, 0);
-      if (!existing.processMarker || Date.now() < nextInspectionAt) {
+      if (Date.now() < nextInspectionAt) {
         await delay(Math.min(POLL_MS, remaining(deadline)));
         continue;
       }
@@ -282,7 +290,11 @@ async function waitForLock(lockPath, deadline, record, preparedPath) {
     let info;
     nextInspectionAt = Date.now() + LIVE_LOCK_RECHECK_MS + Math.floor(Math.random() * 2500);
     try { info = await processInfo(existing.pid, processInspectionTimeout(deadline)); } catch { await delay(Math.min(POLL_MS, remaining(deadline))); continue; }
-    if (sameProcess(info, existing)) {
+    const birth = info && process.platform === 'win32' ? Date.parse(info.marker) : NaN;
+    const publishedAfterBirth = Date.parse(existing.createdAt);
+    const uncertainPreliminaryOwner = info && !existing.processMarker
+      && !(Number.isFinite(birth) && Number.isFinite(publishedAfterBirth) && birth > publishedAfterBirth);
+    if (sameProcess(info, existing) || uncertainPreliminaryOwner) {
       await delay(Math.min(POLL_MS, remaining(deadline)));
       continue;
     }
