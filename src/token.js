@@ -54,6 +54,8 @@ if ($PSVersionTable.PSEdition -eq 'Desktop') {
 }`;
 
 async function secureOwnerOnly(items, options) {
+  if (options.deadline !== undefined && Date.now() >= options.deadline)
+    throw new Error('Gateway startup deadline expired before owner-only ACL verification');
   if (process.platform !== 'win32') {
     await Promise.all(items.map(({ path, directory }) => chmod(path, directory ? 0o700 : 0o600)));
     return;
@@ -79,8 +81,10 @@ async function secureOwnerOnly(items, options) {
 
 async function readToken(path, stateDir, options) {
   await secureOwnerOnly([{ path: stateDir, directory: true }, { path, directory: false }], options);
-  const deadline = Date.now() + tokenWriteWaitMs;
+  const deadline = Math.min(Date.now() + tokenWriteWaitMs, options.deadline ?? Infinity);
   do {
+    if (options.deadline !== undefined && Date.now() >= options.deadline)
+      throw new Error('Gateway startup deadline expired while waiting for the owner token');
     const token = (await readFile(path, 'utf8')).trim();
     if (token) return { token, path };
     if (Date.now() >= deadline) throw new Error(`Owner token file is empty: ${path}`);

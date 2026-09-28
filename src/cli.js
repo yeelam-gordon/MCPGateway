@@ -32,7 +32,12 @@ const imported = await loadConfig(options.config);
 const configs = options.adapters
   ? await applyAgencyAdapters(imported, options.adapters)
   : imported;
-const { token, path: tokenPath } = await loadOrCreateToken(options.stateDir, { aclTimeoutMs: 15_000 });
+const coordinatedDeadline = process.env.SHARED_MCP_STARTUP_DEADLINE;
+delete process.env.SHARED_MCP_STARTUP_DEADLINE;
+const tokenOptions = coordinatedDeadline === undefined
+  ? {}
+  : { aclTimeoutMs: 15_000, deadline: Number(coordinatedDeadline) };
+const { token, path: tokenPath } = await loadOrCreateToken(options.stateDir, tokenOptions);
 const gateway = createGateway({ registry: new BackendRegistry(configs), token, port: options.port }); await gateway.listen();
 console.log(`Shared MCP gateway listening on http://127.0.0.1:${options.port}/mcp`); console.log(`Bearer token file: ${tokenPath}`);
 let stopping = false;

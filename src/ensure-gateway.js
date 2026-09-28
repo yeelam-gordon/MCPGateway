@@ -302,7 +302,10 @@ async function spawnGateway(spec, nonce, deadline) {
   if (spec.adapters) args.push('--adapters', spec.adapters.path);
   let child;
   try {
-    child = spawn(process.execPath, args, { detached: true, windowsHide: true, stdio: ['ignore', stdoutFd, stderrFd], shell: false });
+    child = spawn(process.execPath, args, {
+      detached: true, windowsHide: true, stdio: ['ignore', stdoutFd, stderrFd], shell: false,
+      env: { ...process.env, SHARED_MCP_STARTUP_DEADLINE: String(deadline) }
+    });
     await new Promise((resolveSpawn, rejectSpawn) => {
       child.once('spawn', resolveSpawn);
       child.once('error', rejectSpawn);

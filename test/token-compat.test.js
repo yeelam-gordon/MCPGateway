@@ -161,6 +161,30 @@ test('startup ACL checks share the remaining deadline without weakening failures
   }
 });
 
+test('waiting for an empty token is clipped to the startup deadline', { timeout: 5000 }, async () => {
+  const childProcess = require('node:child_process');
+  const original = childProcess.execFile;
+  const root = await mkdtemp(join(tmpdir(), 'gateway-empty-token-deadline-'));
+  const fs = require('node:fs/promises');
+  await fs.writeFile(join(root, 'owner.token'), '', { mode: 0o600 });
+  childProcess.execFile = (file, args, options, callback) => {
+    queueMicrotask(() => callback(null, '', ''));
+  };
+  syncBuiltinESMExports();
+  try {
+    const { loadOrCreateToken } = await import('../src/token.js?empty-token-deadline');
+    const started = Date.now();
+    await assert.rejects(() => loadOrCreateToken(root, { deadline: started + 200 }),
+      /deadline expired|Owner token file is empty/);
+    assert.ok(Date.now() - started < 1500, 'must not start a fresh two-second token wait');
+    assert.equal(await fs.readFile(join(root, 'owner.token'), 'utf8'), '');
+  } finally {
+    childProcess.execFile = original;
+    syncBuiltinESMExports();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('Windows token ACL supports PowerShell 7 and Windows PowerShell 5.1 fallback', { skip: process.platform !== 'win32', timeout: 30_000 }, async t => {
   for (const route of ['pwsh', 'powershell']) {
     await t.test(route === 'pwsh' ? 'uses PowerShell 7 when available' : 'falls back to Windows PowerShell 5.1 when pwsh is unavailable', async () => {
