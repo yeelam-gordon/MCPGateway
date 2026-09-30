@@ -213,6 +213,49 @@ test('transfer preserves explicit server ownership settings and rejects invalid 
     /requiresExclusiveAccess.*must be a boolean/
   );
 });
+
+test('import rejects hand-authored native OAuth packages, including materializable registrations, without writes', async () => {
+  for (const collection of ['mcpServers', 'servers']) for (const placeholder of [false, true]) {
+    const item = await exported({ [collection]: { remote: { url: 'https://mcp.example.test/mcp' } } });
+    item.template.config[collection].remote.oauth = {
+      clientId: placeholder ? '{{MCP_GATEWAY_VALUE_0002}}' : 'operator-public-client'
+    };
+    const values = { [item.requirements[0].id]: 'https://destination.example.test/mcp' };
+    if (placeholder) {
+      item.template.placeholderCount++;
+      item.requirements.push({ id: 'MCP_GATEWAY_VALUE_0002', server: 'remote', field: 'oauth.clientId', reason: 'public registration' });
+      values.MCP_GATEWAY_VALUE_0002 = 'operator-public-client';
+    }
+    const templatePath = join(item.output, 'template.json');
+    const manifestPath = join(item.output, 'requirements.json');
+    const valuesPath = join(item.root, 'values.json');
+    await writeJson(templatePath, item.template);
+    await writeJson(manifestPath, item.requirements);
+    await writeJson(valuesPath, values);
+    const paths = [item.source, templatePath, manifestPath, valuesPath];
+    const before = await Promise.all(paths.map(path => readFile(path)));
+    const destination = join(item.root, 'new-destination', 'backends.json');
+    await assert.rejects(importConfig({ input: item.output, output: destination, values: valuesPath }),
+      /Native OAuth configuration is not supported by transfer packages/);
+    await assert.rejects(stat(destination), error => error.code === 'ENOENT');
+    await assert.rejects(stat(dirname(destination)), error => error.code === 'ENOENT');
+    assert.deepEqual(await Promise.all(paths.map(path => readFile(path))), before);
+  }
+});
+
+test('materialized OAuth object injection is rejected without output or input modification', async () => {
+  const item = await exported({ mcpServers: { remote: { url: 'https://mcp.example.test/mcp' } } });
+  const valuesPath = join(item.root, 'values.json');
+  await writeJson(valuesPath, { [item.requirements[0].id]: {
+    url: 'https://destination.example.test/mcp', oauth: { clientId: 'operator-public-client' }
+  } });
+  const before = await readFile(item.source);
+  const destination = join(item.root, 'new-destination', 'backends.json');
+  await assert.rejects(importConfig({ input: item.output, output: destination, values: valuesPath }), /url/);
+  await assert.rejects(stat(destination), error => error.code === 'ENOENT');
+  await assert.rejects(stat(dirname(destination)), error => error.code === 'ENOENT');
+  assert.deepEqual(await readFile(item.source), before);
+});
 test('values replace exact value positions without injecting object fields', async () => {
   const item = await exported({ mcpServers: { one: { command: '/opt/private/server', env: { TOKEN: 'secret' } } } });
   const ids = item.requirements.map(value => value.id);

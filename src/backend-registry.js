@@ -13,7 +13,7 @@ import { redactedMetadata, requiresExclusiveAccess as configRequiresExclusiveAcc
 import { downstreamTimeout, isRequestTimeout, withTimeout } from './time.js';
 import { BACKEND_CALL_TIMEOUT_MS, requestOptions } from './request-budget.js';
 import { VERSION } from './version.js';
-import { BackendOAuthProvider, OAuthHTTPClientTransport, boundedOAuthFetch, hasStaticAuthorization, oauthRequired } from './backend-oauth.js';
+import { BackendOAuthProvider, OAuthHTTPClientTransport, HTTP_AUTH_REJECTED_BEFORE_EXECUTION, boundedOAuthFetch, hasStaticAuthorization, oauthRequired } from './backend-oauth.js';
 
 async function firstExisting(paths) {
   for (const path of paths) { try { await access(path, constants.F_OK); return path; } catch {} }
@@ -48,6 +48,7 @@ function catalogTimeout(name, milliseconds, cause) {
 }
 
 function isKnownNonExecutionFailure(error) {
+  if (error?.[HTTP_AUTH_REJECTED_BEFORE_EXECUTION] === true) return true;
   for (let current = error; current; current = current.cause) {
     if (/session not found/i.test(String(current.message ?? ''))) return true;
   }

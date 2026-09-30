@@ -127,6 +127,8 @@ For compatibility, an existing backend named exactly `playwright` remains exclus
 
 Release waits for outstanding calls to settle. Disconnect releases an idle claim. If a call times out with an unknown outcome, that exclusive backend remains blocked until the gateway restarts; disconnecting or reclaiming cannot permit another workflow to race the unfinished operation.
 
+A tool POST confirmed rejected by an HTTP 401/403 authentication challenge before acceptance is a known nonexecution failure: its lease can be released and used again after explicit reauthentication without restarting the gateway. Authentication errors from notification GETs, accepted tool POSTs, or ambiguous network failures do not receive this exception.
+
 Inactive abandoned client sessions expire. Normal connectors send a lightweight heartbeat while connected. Expiration does not interrupt an active call or release a backend whose last operation has an unknown outcome.
 
 Clients upgrading from 0.3 must replace `claim_playwright` and `release_playwright` with `claim_server` and `release_server`, each with a `server` argument. A running older runtime retains its old tools until explicitly upgraded.

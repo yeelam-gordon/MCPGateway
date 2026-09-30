@@ -154,11 +154,17 @@ function sanitizer() {
   return { requirements, entry, walk };
 }
 
-function buildTemplate(config) {
-  const { key, servers } = validateConfig(config);
+function validateTransferConfig(config) {
+  const collection = validateConfig(config);
+  const { servers } = collection;
   if (Object.values(servers).some(entry => entry.oauth !== undefined)) {
     throw new Error('Native OAuth configuration is not supported by transfer packages; configure and authenticate the public client separately on the destination');
   }
+  return collection;
+}
+
+function buildTemplate(config) {
+  const { key, servers } = validateTransferConfig(config);
   const redact = sanitizer();
   const sanitized = {};
   for (const [name, value] of Object.entries(config)) {
@@ -200,7 +206,7 @@ function validatePackage(template, manifest) {
   }
   if (!Array.isArray(manifest)) throw new Error('Unsupported or malformed requirements.json');
   collectPlaceholders(template.config);
-  const collection = validateConfig(templateValidationCopy(template.config));
+  const collection = validateTransferConfig(templateValidationCopy(template.config));
   if (template.collection !== collection.key) throw new Error('Template collection metadata does not match its config');
   const placeholders = collectPlaceholders(template.config);
   const placeholderSet = new Set(placeholders);
@@ -288,7 +294,7 @@ export async function importConfig(options) {
   const extra = supplied.filter(id => !expected.has(id));
   if (missing.length || extra.length) throw new Error(`Values map keys do not match requirements (missing: ${missing.length}, extra: ${extra.length})`);
   const config = materialize(template.config, values);
-  validateConfig(config);
+  validateTransferConfig(config);
   if (await pathExists(outputPath)) throw new Error(`Refusing to overwrite existing output file: ${outputPath}`);
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, jsonBytes(config), { flag: 'wx', mode: 0o600 });

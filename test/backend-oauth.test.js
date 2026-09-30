@@ -10,8 +10,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { createGateway } from '../src/gateway-server.js';
+import { GatewayError } from '../src/errors.js';
 import { BackendRegistry } from '../src/backend-registry.js';
-import { authenticateBackend, BackendOAuthProvider, OAuthHTTPClientTransport, boundedOAuthFetch } from '../src/backend-oauth.js';
+import { authenticateBackend, BackendOAuthProvider, OAuthHTTPClientTransport, boundedOAuthFetch, oauthRequired } from '../src/backend-oauth.js';
 import { validateBackendConfig } from '../src/config-schema.js';
 
 async function listen(server) {
@@ -19,7 +22,7 @@ async function listen(server) {
   return server.address().port;
 }
 async function mock(t, { dcr = true, oidc = false, wrongResource = false, rotating = false, invalidRefresh = false,
-  registration = {}, advertisedMethods = ['none'] } = {}) {
+  registration = {}, advertisedMethods = ['none'], authStatus = 401 } = {}) {
   const stateDir = await mkdtemp(join(tmpdir(), 'gateway-oauth-test-'));
   t.after(() => rm(stateDir, { recursive: true, force: true }));
   const counter = { registrations: 0, refreshes: 0, calls: 0, discoveries: 0, resourceFetches: 0, refreshTokens: [], bareBearer: 0, tokenExchanges: 0 };
@@ -82,8 +85,8 @@ async function mock(t, { dcr = true, oidc = false, wrongResource = false, rotati
     if (path !== '/mcp') return json(404, {});
     if (req.headers.authorization === 'Bearer') { counter.bareBearer++; return json(400, { error: 'invalid_request' }); }
     if (req.headers.authorization !== `Bearer ${token}`) {
-      res.setHeader('WWW-Authenticate', `Bearer resource_metadata="${base}/resource"`);
-      return json(401, {});
+      res.setHeader('WWW-Authenticate', `Bearer resource_metadata="${base}/resource"${authStatus === 403 ? ', error="insufficient_scope", scope="tools"' : ''}`);
+      return json(authStatus, {});
     }
     if (req.method === 'GET') return json(405, {});
     if (req.method === 'DELETE') { res.writeHead(200).end(); return; }
@@ -548,3 +551,86 @@ test('OAUTH-R3-002 notification headers are bounded; other GET and POST bodies r
   await assert.rejects(redirect(`${base}/redirect`, { method: 'GET', headers: { Accept: 'text/event-stream' } }));
   assert.equal(redirectedRequests, 0);
 });
+
+for (const status of [401, 403]) {
+  test(`ready exclusive backend recovers from rejected tool POST ${status} after explicit reauthentication`, async t => {
+    const fixture = await mock(t, { invalidRefresh: true, authStatus: status });
+    const { config, stateDir, counter } = fixture;
+    config.requiresExclusiveAccess = true;
+    await seed(fixture);
+    const registry = new BackendRegistry(new Map([[config.name, config]]), { stateDir });
+    const token = 'oauth-lease-test-token';
+    const gateway = createGateway({ registry, token, port: 0 });
+    const address = await gateway.listen();
+    const clients = [];
+    t.after(async () => {
+      await Promise.all(clients.map(client => client.close()));
+      await gateway.close();
+    });
+    for (const name of ['original-owner', 'next-owner']) {
+      const client = new Client({ name, version: '1' });
+      await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`),
+        { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+      clients.push(client);
+    }
+    const decode = result => JSON.parse(result.content[0].text);
+    const [owner, next] = clients;
+    assert.equal(decode(await owner.callTool({ name: 'claim_server', arguments: { server: config.name } })).claimed, true);
+    await registry.getTool(config.name, 'echo');
+    assert.equal(registry.entries.get(config.name).state, 'ready');
+    fixture.rejectAccess();
+    const failed = decode(await owner.callTool({ name: 'call_tool', arguments: { server: config.name, tool: 'echo', arguments: {} } }));
+    assert.equal(failed.error, 'auth_required');
+    assert.doesNotMatch(failed.message, /outcome is unknown|restart gateway/);
+    assert.equal(counter.calls, 0);
+    assert.equal(counter.refreshes, 1);
+    assert.equal(decode(await owner.callTool({ name: 'release_server', arguments: { server: config.name } })).released, true);
+    assert.equal(decode(await next.callTool({ name: 'claim_server', arguments: { server: config.name } })).claimed, true);
+    await authenticateBackend(config, stateDir, { onAuthorization: fixture.browser, timeoutMs: 20_000 });
+    assert.equal(counter.calls, 0);
+    const completed = await next.callTool({ name: 'call_tool', arguments: { server: config.name, tool: 'echo', arguments: {} } });
+    assert.equal(completed.isError, undefined);
+    assert.equal(counter.calls, 1);
+    assert.equal(decode(await next.callTool({ name: 'release_server', arguments: { server: config.name } })).released, true);
+  });
+}
+
+for (const scenario of ['notification-get', 'accepted-post', 'rejected-post-then-get', 'post-network-failure']) {
+  test(`authentication error from ${scenario} remains an unknown tool outcome`, async () => {
+    const config = { name: 'exclusive', url: 'https://example.test/mcp', requiresExclusiveAccess: true };
+    const provider = new BackendOAuthProvider(config, tmpdir(), {});
+    const message = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'echo', arguments: {} } };
+    const fetch = provider.fetch(async (_url, init) => {
+      if (scenario === 'post-network-failure') throw new Error('Connection lost before response');
+      if (init.method === 'GET') throw oauthRequired(config.name);
+      if (scenario === 'rejected-post-then-get') return new Response('{}', {
+        status: 401, headers: { 'WWW-Authenticate': 'Bearer resource_metadata="https://example.test/resource"' }
+      });
+      return new Response('accepted', { status: 200 });
+    });
+    const client = {
+      async callTool() {
+        return provider.runRequest(async () => {
+          if (scenario !== 'notification-get') {
+            try { await fetch(config.url, { method: 'POST', body: JSON.stringify(message) }); }
+            catch (error) { if (scenario !== 'post-network-failure') throw error; }
+          }
+          if (scenario === 'notification-get' || scenario === 'rejected-post-then-get') await fetch(config.url, { method: 'GET' });
+          throw oauthRequired(config.name);
+        }, message);
+      },
+      async close() {}
+    };
+    const registry = new BackendRegistry(new Map([[config.name, config]]));
+    registry.entries.set(config.name, { state: 'ready', client, transport: null,
+      tools: new Map([['echo', { name: 'echo', inputSchema: { type: 'object' } }]]) });
+    await assert.rejects(registry.callTool(config.name, 'echo', {}), error => {
+      assert.ok(error instanceof GatewayError);
+      assert.equal(error.code, 'auth_required');
+      assert.equal(error.outcomeUnknown, true);
+      assert.match(error.message, /server remains blocked/);
+      return true;
+    });
+    await registry.close();
+  });
+}

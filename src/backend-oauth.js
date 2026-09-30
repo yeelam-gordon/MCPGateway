@@ -14,6 +14,8 @@ import { secureOwnerOnly } from './token.js';
 import { GatewayError } from './errors.js';
 import { safeOAuthUrl } from './config-schema.js';
 
+export const HTTP_AUTH_REJECTED_BEFORE_EXECUTION = Symbol('http-auth-rejected-before-execution');
+
 export function hasStaticAuthorization(config) {
   return Object.keys(config.headers ?? {}).some(key => key.toLowerCase() === 'authorization');
 }
@@ -169,11 +171,41 @@ export class BackendOAuthProvider {
       throw new GatewayError('oauth_storage_error', 'Cannot reload private OAuth state');
     }
   }
-  runRequest(operation) {
-    return this.context.getStore() ? operation() : this.context.run({ generation: this.generation }, operation);
+  runRequest(operation, message) {
+    if (this.context.getStore()) return operation();
+    const context = { generation: this.generation,
+      toolBody: message?.method === 'tools/call' ? JSON.stringify(message) : undefined };
+    return this.context.run(context, async () => {
+      try { return await operation(); }
+      catch (error) {
+        if (context.toolAuthRejected && context.lastBackendRequestIsTool && !context.toolAccepted && !context.toolAmbiguous &&
+            ((error instanceof GatewayError && error.code === 'auth_required') || error instanceof UnauthorizedError)) {
+          error[HTTP_AUTH_REJECTED_BEFORE_EXECUTION] = true;
+        }
+        throw error;
+      }
+    });
   }
   fetch(fetchFn) {
     return async (input, init = {}) => {
+      const context = this.context.getStore();
+      if (context?.toolBody && String(input instanceof Request ? input.url : input) === new URL(this.config.url).href) {
+        const toolPost = init.method?.toUpperCase() === 'POST' && init.body === context.toolBody;
+        context.lastBackendRequestIsTool = toolPost;
+        if (toolPost) {
+          try {
+            const response = await fetchFn(input, init);
+            context.toolAuthRejected = [401, 403].includes(response.status) &&
+              /^Bearer(?:\s|$)/i.test(response.headers.get('www-authenticate') ?? '');
+            if (response.ok) context.toolAccepted = true;
+            else if (!context.toolAuthRejected) context.toolAmbiguous = true;
+            return response;
+          } catch (error) {
+            context.toolAmbiguous = true;
+            throw error;
+          }
+        }
+      }
       const params = typeof init.body === 'string' || init.body instanceof URLSearchParams ? new URLSearchParams(init.body) : undefined;
       if (params?.get('grant_type') !== 'refresh_token') return fetchFn(input, init);
       const generation = this.context.getStore()?.generation ?? this.generation;
@@ -314,7 +346,7 @@ export class OAuthHTTPClientTransport extends StreamableHTTPClientTransport {
     this.provider = options.authProvider;
   }
   send(message, options) {
-    return this.provider.runRequest(() => super.send(message, options));
+    return this.provider.runRequest(() => super.send(message, options), message);
   }
 }
 
