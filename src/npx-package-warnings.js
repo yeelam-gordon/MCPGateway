@@ -1,7 +1,7 @@
 const EXACT_SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const PACKAGE_LAUNCH_FLAGS_WITH_VALUES = new Set([
   '-c', '--call', '-p', '--package', '--cache', '--shell', '--script-shell',
-  '--userconfig', '--npm', '--node-options', '--workspace', '-w', '--registry', '--loglevel'
+  '--userconfig', '--npm', '--node-options', '--workspace', '-w', '--registry', '--loglevel', '--prefix'
 ]);
 const DEPRECATED_GITHUB_PACKAGE = '@modelcontextprotocol/server-github';
 const MAINTAINED_GITHUB_PACKAGE = 'github-mcp-server';
@@ -20,8 +20,8 @@ function externalSpec(spec) {
 }
 
 function splitRegistryPackageSpec(spec) {
-  if (typeof spec !== 'string' || spec.length === 0 || /\s/.test(spec) || pathLike(spec) || externalSpec(spec)) return null;
-  const scoped = spec.match(/^(@[^/]+\/[^/@]+)(?:@(.+))?$/);
+  if (typeof spec !== 'string' || spec.length === 0 || /[\u0000-\u001F\u007F]/.test(spec) || pathLike(spec) || externalSpec(spec)) return null;
+  const scoped = spec.match(/^(@[^/@\s]+\/[^/@\s]+)(?:@(.+))?$/);
   if (scoped) return { name: scoped[1], version: scoped[2] ?? null, spec };
   const unscoped = spec.match(/^([^@/][^@/\s]*)(?:@(.+))?$/);
   if (!unscoped) return null;
@@ -90,8 +90,9 @@ function packageSpecsFromArgs(args) {
 }
 
 function packageSpecs(command, args) {
-  if (/^(npx|npx\.cmd)$/i.test(command)) return { launcher: 'npx', specs: packageSpecsFromArgs(args) };
-  if (!/^(npm|npm\.cmd)$/i.test(command)) return null;
+  const executable = command.split(/[\\/]/).at(-1);
+  if (/^(npx|npx\.cmd)$/i.test(executable)) return { launcher: 'npx', specs: packageSpecsFromArgs(args) };
+  if (!/^(npm|npm\.cmd)$/i.test(executable)) return null;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === '--') break;

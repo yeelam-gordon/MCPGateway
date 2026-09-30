@@ -43,3 +43,21 @@ test('npm exec and x diagnostics recognize package flags and positional mutable 
   assert.match(warnings[2], /`positionalExec` launches via `npm exec` with mutable registry package spec `github-mcp-server@next`/);
   assert.match(warnings[3], /`positionalShorthand` launches via `npm exec` with mutable registry package spec `@scope\/demo@latest`/);
 });
+
+test('package diagnostics handle prefixes, executable paths, and spaced ranges', () => {
+  const warnings = collectNpxPackageWarnings({
+    npxPrefix: { command: 'npx', args: ['--prefix', 'C:\\repo\\workspace', 'github-mcp-server@latest'] },
+    npmPrefix: { command: 'npm', args: ['--prefix', '/repo/workspace', 'exec', 'github-mcp-server@next'] },
+    unixPath: { command: '/usr/local/bin/npx', args: ['github-mcp-server@latest'] },
+    windowsPath: { command: 'C:\\Program Files\\nodejs\\npm.cmd', args: ['exec', 'github-mcp-server@next'] },
+    spacedRange: { command: 'npx', args: ['github-mcp-server@>=1.0.0 <2.0.0'] }
+  });
+
+  assert.equal(warnings.length, 5);
+  assert.match(warnings[0], /mutable registry package spec `github-mcp-server@latest`/);
+  assert.match(warnings[1], /mutable registry package spec `github-mcp-server@next`/);
+  assert.match(warnings[2], /mutable registry package spec `github-mcp-server@latest`/);
+  assert.match(warnings[3], /mutable registry package spec `github-mcp-server@next`/);
+  assert.match(warnings[4], /mutable registry package spec `github-mcp-server@>=1\.0\.0 <2\.0\.0`/);
+  assert.equal(warnings.some(value => value.includes('repo\\workspace') || value.includes('/repo/workspace')), false);
+});
