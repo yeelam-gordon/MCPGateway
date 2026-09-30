@@ -27,19 +27,36 @@ export function oauthRequired(name) {
 export function boundedOAuthFetch(signal, timeoutMs = 10_000, config) {
   return async (input, init = {}) => {
     const target = safeOAuthUrl(input instanceof Request ? input.url : String(input));
-    const headers = new Headers(init.headers);
+    const headers = new Headers(init.headers ?? (input instanceof Request ? input.headers : undefined));
+    const method = (init.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+    const notification = config && target.href === new URL(config.url).href &&
+      method === 'GET' && headers.get('accept')?.trim().toLowerCase() === 'text/event-stream';
     if (config && target.href !== new URL(config.url).href) {
       for (const key of Object.keys(config.headers ?? {})) headers.delete(key);
       headers.delete('authorization');
       headers.delete('mcp-session-id');
     }
-    const signals = [AbortSignal.timeout(timeoutMs), init.signal, signal].filter(Boolean);
-    const response = await fetch(input, { ...init, headers, redirect: 'error', signal: AbortSignal.any(signals) });
+    const connection = notification ? new AbortController() : undefined;
+    const timer = connection ? setTimeout(() => connection.abort(new DOMException('Notification connection timed out', 'TimeoutError')), timeoutMs) : undefined;
+    timer?.unref?.();
+    const signals = [connection?.signal ?? AbortSignal.timeout(timeoutMs),
+      init.signal ?? (input instanceof Request ? input.signal : undefined), signal].filter(Boolean);
+    let response;
+    try {
+      response = await fetch(input, { ...init, headers, redirect: 'error', signal: AbortSignal.any(signals) });
+    } catch (error) {
+      clearTimeout(timer);
+      throw error;
+    }
+    if (notification && response.ok && response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() === 'text/event-stream') {
+      clearTimeout(timer);
+    }
     // SDK error parsers include raw response bodies; never expose those bodies.
     if (!response.ok && ![400, 401, 403, 404, 405].includes(response.status)) {
       await response.body?.cancel();
       throw new GatewayError('oauth_http_error', `OAuth HTTP request failed (${response.status})`);
     }
+
     if (!response.ok) {
       let errorBody = '{}';
       if (response.status === 400) {
@@ -58,6 +75,14 @@ export function boundedOAuthFetch(signal, timeoutMs = 10_000, config) {
     }
     return response;
   };
+}
+
+function requirePublicClient(client) {
+  if (client && (Object.hasOwn(client, 'client_secret') ||
+      (Object.hasOwn(client, 'token_endpoint_auth_method') && client.token_endpoint_auth_method !== 'none'))) {
+    throw new GatewayError('oauth_confidential_client', 'Native OAuth supports public clients only; registration must omit client_secret and use token_endpoint_auth_method none or omit it');
+  }
+  return client;
 }
 
 export class BackendOAuthProvider {
@@ -181,7 +206,7 @@ export class BackendOAuthProvider {
   clientInformation() {
     if (this.config.oauth?.clientId) return { client_id: this.config.oauth.clientId };
     if (!this.saved.client && !this.options.interactive) throw oauthRequired(this.config.name);
-    return this.saved.client;
+    return requirePublicClient(this.saved.client);
   }
   async persist() {
     return this.withLock(() => this.persistLocked());
@@ -204,7 +229,11 @@ export class BackendOAuthProvider {
       try { await unlink(temporary); } catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
   }
-  async saveClientInformation(client) { this.saved.client = client; await this.persist(); }
+  async saveClientInformation(client) {
+    requirePublicClient(client);
+    this.saved.client = client;
+    await this.persist();
+  }
   tokens() {
     const tokens = this.pendingTokens ?? this.saved.tokens;
     if (!tokens) return undefined;

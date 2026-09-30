@@ -8,18 +8,21 @@ import { fileURLToPath } from 'node:url';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { BackendRegistry } from '../src/backend-registry.js';
-import { authenticateBackend, BackendOAuthProvider, boundedOAuthFetch } from '../src/backend-oauth.js';
+import { authenticateBackend, BackendOAuthProvider, OAuthHTTPClientTransport, boundedOAuthFetch } from '../src/backend-oauth.js';
 import { validateBackendConfig } from '../src/config-schema.js';
 
 async function listen(server) {
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   return server.address().port;
 }
-async function mock(t, { dcr = true, oidc = false, wrongResource = false, rotating = false, invalidRefresh = false } = {}) {
+async function mock(t, { dcr = true, oidc = false, wrongResource = false, rotating = false, invalidRefresh = false,
+  registration = {}, advertisedMethods = ['none'] } = {}) {
   const stateDir = await mkdtemp(join(tmpdir(), 'gateway-oauth-test-'));
   t.after(() => rm(stateDir, { recursive: true, force: true }));
-  const counter = { registrations: 0, refreshes: 0, calls: 0, discoveries: 0, resourceFetches: 0, refreshTokens: [], bareBearer: 0 };
+  const counter = { registrations: 0, refreshes: 0, calls: 0, discoveries: 0, resourceFetches: 0, refreshTokens: [], bareBearer: 0, tokenExchanges: 0 };
   let authorization;
   let base;
   let token = 'initial-access';
@@ -44,7 +47,7 @@ async function mock(t, { dcr = true, oidc = false, wrongResource = false, rotati
         ...(oidc ? { jwks_uri: `${base}/jwks`, subject_types_supported: ['public'], id_token_signing_alg_values_supported: ['RS256'] } : {}),
         ...(dcr ? { registration_endpoint: `${base}/register` } : {}),
         response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'],
-        token_endpoint_auth_methods_supported: ['none'], code_challenge_methods_supported: ['S256'] });
+        token_endpoint_auth_methods_supported: advertisedMethods, code_challenge_methods_supported: ['S256'] });
     }
     let body = '';
     for await (const chunk of req) body += chunk;
@@ -52,9 +55,10 @@ async function mock(t, { dcr = true, oidc = false, wrongResource = false, rotati
       counter.registrations++;
       const metadata = JSON.parse(body);
       assert.equal(metadata.token_endpoint_auth_method, 'none');
-      return json(201, { ...metadata, client_id: 'registered-public-client' });
+      return json(201, { ...metadata, client_id: 'registered-public-client', ...registration });
     }
     if (path === '/token') {
+      counter.tokenExchanges++;
       const params = new URLSearchParams(body);
       assert.equal(params.get('resource'), `${base}/mcp`);
       assert.ok(params.get('client_id'));
@@ -91,6 +95,7 @@ async function mock(t, { dcr = true, oidc = false, wrongResource = false, rotati
     if (message.method === 'tools/call') { counter.calls++; result = { content: [{ type: 'text', text: 'authenticated' }] }; }
     json(200, { jsonrpc: '2.0', id: message.id, result });
   });
+
   base = `http://127.0.0.1:${await listen(server)}`;
   const reservation = createServer();
   const callbackPort = await listen(reservation);
@@ -378,4 +383,168 @@ test('fetch rejects redirects and unsafe remote HTTP without exposing response b
   await assert.rejects(request(`http://127.0.0.1:${port}/redirect`));
   await assert.rejects(request(`http://127.0.0.1:${port}/error`), error => !error.message.includes('private-response-token'));
   await assert.rejects(request('http://remote.example/mcp'));
+});
+
+
+const confidentialRegistrations = [
+  { client_secret: 'synthetic-secret-do-not-log' },
+  { token_endpoint_auth_method: 'client_secret_post' },
+  { client_secret: 'synthetic-secret-do-not-log', token_endpoint_auth_method: 'client_secret_post' }
+];
+
+test('OAUTH-R3-001 rejected registrations leave an existing public client unchanged in memory and on disk', async t => {
+  const fixture = await mock(t);
+  const provider = await seed(fixture);
+  const before = await readFile(provider.path);
+  const client = structuredClone(provider.saved.client);
+  for (const registration of [...confidentialRegistrations, { client_secret: '' }]) {
+    await assert.rejects(provider.saveClientInformation({ client_id: 'replacement', ...registration }),
+      error => error.code === 'oauth_confidential_client' && !error.message.includes('synthetic-secret'));
+    assert.deepEqual(provider.saved.client, client);
+    assert.deepEqual(await readFile(provider.path), before);
+  }
+});
+
+for (const [index, registration] of confidentialRegistrations.entries()) {
+  test(`OAUTH-R3-001 rejects confidential DCR variant ${index} before storage or exchange`, async t => {
+    const fixture = await mock(t, { registration, advertisedMethods: ['none', 'client_secret_post'] });
+    await assert.rejects(authenticateBackend(fixture.config, fixture.stateDir, {
+      onAuthorization: fixture.browser, timeoutMs: 20_000
+    }), error => error.code === 'oauth_confidential_client' && !error.message.includes('synthetic-secret'));
+    const provider = await BackendOAuthProvider.load(fixture.config, fixture.stateDir);
+    assert.equal(provider.saved.client, undefined);
+    assert.equal(provider.tokens(), undefined);
+    assert.equal(fixture.counter.tokenExchanges, 0);
+    for (const file of await readdir(provider.directory)) {
+      assert.doesNotMatch(await readFile(join(provider.directory, file), 'utf8'), /synthetic-secret/);
+    }
+  });
+
+  test(`OAUTH-R3-001 rejects cached confidential variant ${index} without mutation or exchange`, async t => {
+    const fixture = await mock(t);
+    const provider = await seed(fixture);
+    provider.saved.client = { client_id: 'registered-public-client', ...registration };
+    await provider.persist();
+    const before = await readFile(provider.path);
+    const cached = await BackendOAuthProvider.load(fixture.config, fixture.stateDir);
+    const originalClient = structuredClone(cached.saved.client);
+    assert.throws(() => cached.clientInformation(),
+      error => error.code === 'oauth_confidential_client' && !error.message.includes('synthetic-secret'));
+    assert.deepEqual(cached.saved.client, originalClient);
+    fixture.rejectAccess();
+    const registry = new BackendRegistry(new Map([[fixture.config.name, fixture.config]]), { stateDir: fixture.stateDir });
+    try {
+      await assert.rejects(registry.connect(fixture.config.name),
+        error => error.code === 'oauth_confidential_client' && !error.message.includes('synthetic-secret'));
+    } finally { await registry.close(); }
+    assert.equal(fixture.counter.tokenExchanges, 0);
+    assert.deepEqual(await readFile(provider.path), before);
+  });
+}
+
+for (const method of [undefined, 'none']) {
+  test(`OAUTH-R3-001 accepts public DCR with ${method ?? 'omitted'} method despite confidential AS capabilities`, async t => {
+    const fixture = await mock(t, { registration: { token_endpoint_auth_method: method },
+      advertisedMethods: ['none', 'client_secret_post', 'client_secret_basic'] });
+    await authenticateBackend(fixture.config, fixture.stateDir, { onAuthorization: fixture.browser, timeoutMs: 20_000 });
+    const cached = await BackendOAuthProvider.load(fixture.config, fixture.stateDir);
+    assert.equal(cached.clientInformation().client_id, 'registered-public-client');
+    assert.equal(cached.clientInformation().client_secret, undefined);
+    assert.equal(fixture.counter.tokenExchanges, 1);
+  });
+}
+
+test('OAUTH-R3-002 SDK notification stream outlives request deadline and closes on cancellation', async t => {
+  let gets = 0;
+  let streamClosed;
+  const closed = new Promise(resolve => { streamClosed = resolve; });
+  const server = createServer(async (req, res) => {
+    if (req.method === 'GET') {
+      gets++;
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      const notify = data => res.write(`event: message\ndata: ${JSON.stringify({
+        jsonrpc: '2.0', method: 'notifications/message', params: { level: 'info', data }
+      })}\n\n`);
+      notify('initial');
+      const timer = gets === 1 ? setTimeout(() => notify('delayed'), 600) : undefined;
+      res.on('close', () => { clearTimeout(timer); streamClosed(); });
+      return;
+    }
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const message = JSON.parse(body);
+    if (!Object.hasOwn(message, 'id')) { res.writeHead(202).end(); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({
+      jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: '2025-11-25', capabilities: { logging: {} }, serverInfo: { name: 'notification-test', version: '1' }
+      }
+    }));
+  });
+  const port = await listen(server);
+  const controller = new AbortController();
+  const config = { name: 'notifications', url: `http://127.0.0.1:${port}/mcp` };
+  const provider = new BackendOAuthProvider(config, tmpdir(), {});
+  const transport = new OAuthHTTPClientTransport(new URL(config.url), {
+    authProvider: provider, fetch: boundedOAuthFetch(controller.signal, 200, config),
+    reconnectionOptions: { initialReconnectionDelay: 20, maxReconnectionDelay: 20, reconnectionDelayGrowFactor: 1, maxRetries: 1 }
+  });
+  const client = new Client({ name: 'notification-test', version: '1' });
+  t.after(async () => {
+    await client.close();
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  });
+  const notifications = [];
+  const errors = [];
+  let received;
+  const delayed = new Promise(resolve => { received = resolve; });
+  client.onerror = error => { errors.push(error); };
+  client.setNotificationHandler(LoggingMessageNotificationSchema, notification => {
+    notifications.push(notification.params.data);
+    if (notification.params.data === 'delayed') received(true);
+  });
+  await client.connect(transport, { timeout: 1000 });
+  const timer = setTimeout(() => received(false), 1500);
+  try { assert.equal(await delayed, true, 'notification after 600ms must survive the 200ms request deadline'); }
+  finally { clearTimeout(timer); }
+  assert.deepEqual(notifications, ['initial', 'delayed']);
+  assert.equal(gets, 1);
+  assert.equal(errors.length, 0);
+  controller.abort();
+  await Promise.race([closed, new Promise((_, reject) => setTimeout(() => reject(new Error('stream did not close on cancellation')), 1000).unref())]);
+});
+
+test('OAUTH-R3-002 notification headers are bounded; other GET and POST bodies retain deadlines and redirects stay blocked', async t => {
+  let redirectedRequests = 0;
+  const server = createServer((req, res) => {
+    if (req.url === '/no-headers') return;
+    if (req.url === '/redirect') { res.writeHead(302, { Location: '/target' }).end(); return; }
+    if (req.url === '/target') redirectedRequests++;
+    res.writeHead(200, { 'Content-Type': req.url === '/json-body' ? 'application/json' : 'text/event-stream' });
+    res.write(': initial\n\n');
+  });
+  const port = await listen(server);
+  const base = `http://127.0.0.1:${port}`;
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
+  const request = boundedOAuthFetch(undefined, 150, { url: `${base}/no-headers` });
+  const started = Date.now();
+  await assert.rejects(request(`${base}/no-headers`, { method: 'GET', headers: { Accept: 'text/event-stream' } }));
+  assert.ok(Date.now() - started < 1000, 'notification header establishment must remain bounded');
+  for (const [path, method, accept] of [
+    ['/metadata', 'GET', 'text/event-stream'],
+    ['/post', 'POST', 'text/event-stream'],
+    ['/other', 'GET', 'application/json, text/event-stream'],
+    ['/json-body', 'GET', 'text/event-stream']
+  ]) {
+    const config = { url: `${base}${path === '/metadata' ? '/other-backend' : path}` };
+    const fetch = boundedOAuthFetch(undefined, 150, config);
+    const url = `${base}${path}`;
+    const response = await fetch(url, { method, headers: { Accept: accept } });
+    const reader = response.body.getReader();
+    assert.equal((await reader.read()).done, false);
+    await assert.rejects(reader.read());
+  }
+  const redirect = boundedOAuthFetch(undefined, 150, { url: `${base}/redirect` });
+  await assert.rejects(redirect(`${base}/redirect`, { method: 'GET', headers: { Accept: 'text/event-stream' } }));
+  assert.equal(redirectedRequests, 0);
 });
