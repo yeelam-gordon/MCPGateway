@@ -59,6 +59,12 @@ const sourceConfig = {
   }
 };
 
+test('transfer explicitly rejects native OAuth rather than dropping client registration settings', async () => {
+  await assert.rejects(exported({ mcpServers: {
+    remote: { url: 'https://mcp.example.test/mcp', oauth: { clientId: 'registered-public-client' } }
+  } }), /Native OAuth configuration is not supported by transfer packages/);
+});
+
 test('export redacts credentials, machine paths, and endpoint URLs while preserving aliases, tools, flags, and orgs', async () => {
   const item = await exported(sourceConfig);
   assert.equal(item.result.serverCount, 4);

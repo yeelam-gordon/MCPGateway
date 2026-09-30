@@ -38,7 +38,7 @@ const tokenOptions = coordinatedDeadline === undefined
   ? {}
   : { aclTimeoutMs: 15_000, deadline: Number(coordinatedDeadline) };
 const { token, path: tokenPath } = await loadOrCreateToken(options.stateDir, tokenOptions);
-const gateway = createGateway({ registry: new BackendRegistry(configs), token, port: options.port }); await gateway.listen();
+const gateway = createGateway({ registry: new BackendRegistry(configs, { stateDir: options.stateDir }), token, port: options.port }); await gateway.listen();
 console.log(`Shared MCP gateway listening on http://127.0.0.1:${options.port}/mcp`); console.log(`Bearer token file: ${tokenPath}`);
 let stopping = false;
 async function stop() {

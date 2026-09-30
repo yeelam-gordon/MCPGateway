@@ -156,6 +156,9 @@ function sanitizer() {
 
 function buildTemplate(config) {
   const { key, servers } = validateConfig(config);
+  if (Object.values(servers).some(entry => entry.oauth !== undefined)) {
+    throw new Error('Native OAuth configuration is not supported by transfer packages; configure and authenticate the public client separately on the destination');
+  }
   const redact = sanitizer();
   const sanitized = {};
   for (const [name, value] of Object.entries(config)) {

@@ -53,7 +53,7 @@ if ($PSVersionTable.PSEdition -eq 'Desktop') {
 }
 }`;
 
-async function secureOwnerOnly(items, options) {
+export async function secureOwnerOnly(items, options = {}) {
   if (options.deadline !== undefined && Date.now() >= options.deadline)
     throw new Error('Gateway startup deadline expired before owner-only ACL verification');
   if (process.platform !== 'win32') {
