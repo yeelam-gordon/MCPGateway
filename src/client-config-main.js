@@ -1,5 +1,6 @@
 import { validateConfig } from './config-schema.js';
 import { assertLiteralClientValues } from './client-config-values.js';
+import { collectNpxPackageWarnings, mergeWarnings } from './npx-package-warnings.js';
 
 const GATEWAY_NAME = 'shared-mcp-gateway';
 const SUPPORTED_CLIENTS = new Set(['claude', 'vscode', 'codex']);
@@ -203,10 +204,12 @@ export function prepareMainClientMigration({ client, configText, connector } = {
 
   const servers = config[collectionKey] ?? config[aliasKey] ?? {};
   const backends = canonicalMainBackends(client, servers);
+  const warnings = collectNpxPackageWarnings(backends.mcpServers);
   const updated = { ...config, [collectionKey]: { [GATEWAY_NAME]: expected } };
   delete updated[aliasKey];
-  if (structurallyEqual(config, updated)) return Object.freeze({ client, changed: false, updatedText: configText, backends });
-  return Object.freeze({ client, changed: true, updatedText: `${JSON.stringify(updated, null, 2)}\n`, backends });
+  if (structurallyEqual(config, updated)) return Object.freeze({ client, changed: false, updatedText: configText, backends, warnings });
+  return Object.freeze({ client, changed: true, updatedText: `${JSON.stringify(updated, null, 2)}\n`, backends,
+    warnings: mergeWarnings(warnings) });
 }
 export function codexRegistration(connector) {
   const entry = connectorEntry(connector, false);

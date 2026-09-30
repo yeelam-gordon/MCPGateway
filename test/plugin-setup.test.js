@@ -40,6 +40,7 @@ async function pluginFixture() {
   await mkdir(join(root, 'src'), { recursive: true });
   await cp(new URL('../src/config.js', import.meta.url), join(root, 'src', 'config.js'));
   await cp(new URL('../src/config-schema.js', import.meta.url), join(root, 'src', 'config-schema.js'));
+  await cp(new URL('../src/npx-package-warnings.js', import.meta.url), join(root, 'src', 'npx-package-warnings.js'));
   await writeFile(join(root, 'src', 'request-budget.js'), "export const CLIENT_REQUEST_TIMEOUT_MS = 120000;\n");
   await writeFile(join(root, 'src', 'token.js'), `import { mkdir, readFile, writeFile } from 'node:fs/promises';\nimport { join } from 'node:path';\nexport async function loadOrCreateToken(stateDir) { await mkdir(stateDir, { recursive: true }); const path = join(stateDir, 'owner.token'); try { return { token: (await readFile(path, 'utf8')).trim(), path }; } catch (error) { if (error.code !== 'ENOENT') throw error; await writeFile(path, 'fixture-token\\n'); return { token: 'fixture-token', path }; } }\n`);
   await mkdir(join(root, 'adapters'), { recursive: true });
@@ -108,6 +109,36 @@ test('preview is builtin-only, excludes node_modules, and writes nothing', async
   assert.equal(npmCalled, false);
   assert.deepEqual(await readFile(item.sourcePath), item.bytes);
   await assert.rejects(() => stat(item.stateDir), error => error.code === 'ENOENT');
+});
+
+test('setup preview surfaces non-blocking npx package diagnostics', async () => {
+  const sourceRoot = await pluginFixture();
+  const item = await sourceFixture({ mcpServers: {
+    deprecated: { command: 'npx.cmd', args: ['--yes', '@modelcontextprotocol/server-github'] },
+    exact: { command: 'npx', args: ['github-mcp-server@1.2.3'] }
+  } });
+  const result = await pluginSetup({ sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir });
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0], /deprecated package `@modelcontextprotocol\/server-github`/);
+});
+
+test('setup preview propagates npx option-value and npm exec package diagnostics', async () => {
+  const sourceRoot = await pluginFixture();
+  const item = await sourceFixture({ mcpServers: {
+    registry: { command: 'npx.cmd', args: ['--registry', 'https://registry.example.invalid', 'github-mcp-server@latest'] },
+    loglevel: { command: 'npx', args: ['--loglevel', 'notice', 'github-mcp-server@next'] },
+    execPackage: { command: 'npm.cmd', args: ['exec', '--package', '@scope/demo@latest', '--', 'demo-cli'] },
+    shorthand: { command: 'npm', args: ['x', '@modelcontextprotocol/server-github@next'] },
+    exact: { command: 'npm', args: ['exec', 'github-mcp-server@1.2.3'] }
+  } });
+  const result = await pluginSetup({ sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir });
+  assert.equal(result.warnings.length, 4);
+  assert.match(result.warnings[0], /mutable registry package spec `github-mcp-server@latest`/);
+  assert.match(result.warnings[1], /mutable registry package spec `github-mcp-server@next`/);
+  assert.match(result.warnings[2], /via `npm exec` with mutable registry package spec `@scope\/demo@latest`/);
+  assert.match(result.warnings[3], /deprecated package `@modelcontextprotocol\/server-github@next` via `npm exec`/);
+  assert.equal(result.warnings.some(value => value.includes('registry.example.invalid')), false);
+  assert.equal(result.warnings.some(value => value.includes('notice')), false);
 });
 
 test('apply publishes a stable runtime then invokes copied migration with exact backup and 13 aliases preserved', async () => {
@@ -508,6 +539,66 @@ test('mixed gateway entries are planned and applied as backend synchronization w
   await assert.rejects(() => stat(different.stateDir), error => error.code === 'ENOENT');
 });
 
+test('pending source npx warnings surface during planned sync, synchronized apply, and adoption blocks', async () => {
+  const item = await existingGatewayFixture();
+  item.source.mcpServers.mutable = { command: 'npx', args: ['github-mcp-server@latest'] };
+  item.source.mcpServers.disabled = { disabled: true, command: 'npx', args: ['github-mcp-server@next'] };
+  await writeJson(item.sourcePath, item.source);
+
+  const preview = await pluginSetup({
+    sourceRoot: join(item.root, 'missing-plugin'), sourceConfig: item.sourcePath, stateDir: item.stateDir,
+    npmRunner: async () => assert.fail('backend sync preview must not install dependencies')
+  });
+  assert.equal(preview.status, 'planned-sync');
+  assert.equal(preview.warnings.length, 1);
+  assert.match(preview.warnings[0], /mutable registry package spec `github-mcp-server@latest`/);
+  assert.equal(preview.warnings.some(value => value.includes('github-mcp-server@next')), false);
+
+  await assert.rejects(() => pluginSetup({
+    sourceRoot: join(item.root, 'missing-plugin'), sourceConfig: item.sourcePath, stateDir: item.stateDir,
+    adoptExisting: true, npmRunner: async () => assert.fail('adoption-blocked preview must not install dependencies')
+  }), error => {
+    assert.equal(error.setupResult.status, 'adoption-blocked');
+    assert.deepEqual(error.setupResult.warnings, preview.warnings);
+    return true;
+  });
+
+  const applied = await pluginSetup({
+    sourceRoot: join(item.root, 'missing-plugin'), sourceConfig: item.sourcePath, stateDir: item.stateDir,
+    apply: true, tokenLoader: injectedToken, npmRunner: async () => assert.fail('backend sync apply must not install dependencies')
+  });
+  assert.equal(applied.status, 'synchronized');
+  assert.deepEqual(applied.warnings, preview.warnings);
+});
+
+test('repeated setup on an existing gateway keeps surfacing persisted npx warnings', async () => {
+  const item = await existingGatewayFixture();
+  const warnedBackend = {
+    servers: {
+      deprecated: { command: 'npx.cmd', args: ['--yes', '@modelcontextprotocol/server-github'] },
+      mutable: { command: 'npx', args: ['github-mcp-server@latest'] },
+      exact: { command: 'npx', args: ['github-mcp-server@1.2.3'] }
+    }
+  };
+  await writeJson(item.privatePath, warnedBackend);
+
+  const preview = await pluginSetup({
+    sourceRoot: join(item.root, 'missing-plugin'), sourceConfig: item.sourcePath, stateDir: item.stateDir
+  });
+  assert.equal(preview.status, 'planned-sync');
+  assert.equal(preview.synchronizationStatus, 'no-changes');
+  assert.equal(preview.warnings.length, 2);
+  assert.match(preview.warnings[0], /deprecated package `@modelcontextprotocol\/server-github`/);
+  assert.match(preview.warnings[1], /mutable registry package spec `github-mcp-server@latest`/);
+
+  const applied = await pluginSetup({
+    sourceRoot: join(item.root, 'missing-plugin'), sourceConfig: item.sourcePath, stateDir: item.stateDir,
+    apply: true, tokenLoader: async () => assert.fail('no-op apply must not initialize state')
+  });
+  assert.equal(applied.status, 'already-configured');
+  assert.deepEqual(applied.warnings, preview.warnings);
+});
+
 test('results and parser errors do not disclose config secrets', async () => {
   const sourceRoot = await pluginFixture();
   const item = await sourceFixture({ mcpServers: { private: { command: 'node', env: { TOKEN: 'never-print-this' }, headers: { Authorization: 'also-secret' } } } });
@@ -591,6 +682,41 @@ test('adopt-existing preview is builtin-only and writes nothing', async () => {
   assert.deepEqual(await readFile(item.privatePath), item.backendBytes);
   assert.deepEqual(await readFile(item.adapterPath), item.adapterBytes);
   assert.deepEqual((await readdir(item.stateDir)).sort(), beforeState);
+});
+
+test('adopt-existing preview and apply surface existing backend npx warnings without blocking writes', async () => {
+  const item = await existingGatewayFixture();
+  const warnedBackend = {
+    servers: {
+      deprecated: { command: 'npx.cmd', args: ['--yes', '@modelcontextprotocol/server-github'] },
+      mutable: { command: 'npx', args: ['github-mcp-server@latest'] },
+      exact: { command: 'npx', args: ['github-mcp-server@1.2.3'] },
+      local: { command: 'npx', args: ['.\\tools\\github-mcp-server.js'] },
+      disabled: { disabled: true, command: 'npx', args: ['github-mcp-server@next'] }
+    }
+  };
+  await writeJson(item.privatePath, warnedBackend);
+
+  const preview = await pluginSetup({
+    sourceRoot: item.sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir, adoptExisting: true,
+    npmRunner: async () => assert.fail('adoption preview must not install dependencies')
+  });
+  assert.equal(preview.status, 'planned-adoption');
+  assert.equal(preview.warnings.length, 2);
+  assert.match(preview.warnings[0], /deprecated package `@modelcontextprotocol\/server-github`/);
+  assert.match(preview.warnings[1], /mutable registry package spec `github-mcp-server@latest`/);
+  assert.equal(preview.warnings.some(value => value.includes('github-mcp-server@next')), false);
+  assert.deepEqual(await readFile(item.privatePath, 'utf8'), `${JSON.stringify(warnedBackend, null, 2)}\n`);
+
+  const applied = await pluginSetup({
+    sourceRoot: item.sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir,
+    adoptExisting: true, apply: true, npmRunner: async () => {}
+  });
+  assert.equal(applied.status, 'adopted');
+  assert.deepEqual(applied.warnings, preview.warnings);
+  assert.deepEqual(await readFile(item.privatePath, 'utf8'), `${JSON.stringify(warnedBackend, null, 2)}\n`);
+  assert.ok(applied.sourceBackupPath);
+  assert.notDeepEqual(await readFile(item.sourcePath), item.sourceBytes);
 });
 
 test('adopt-existing apply deploys alongside an older runtime and switches only the client config', async () => {

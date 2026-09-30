@@ -3,6 +3,7 @@ import { basename, join, resolve } from 'node:path';
 import { synchronizeBackendTransaction, classifyBackendMerge } from './backend-sync.js';
 import { prepareClientMigration } from './client-config.js';
 import { validateBackendConfig, validateConfig } from './config-schema.js';
+import { collectNpxPackageWarnings, mergeWarnings } from './npx-package-warnings.js';
 
 const SELF_NAME = 'shared-mcp-gateway';
 
@@ -91,7 +92,7 @@ export async function synchronizeClientMigration(options) {
     validateConfig(replacementPrivate);
     return {
       additions, duplicates, conflicts,
-      warnings: prepared.warnings ?? [],
+      warnings: mergeWarnings(prepared.warnings, collectNpxPackageWarnings(mergedServers)),
       wouldChange: prepared.changed || additions.length > 0 || duplicates.length > 0,
       restartRequired: additions.length > 0 && conflicts.length === 0,
       sourceExtraCount: Object.keys(sourceServers).length,

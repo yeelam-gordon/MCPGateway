@@ -298,3 +298,20 @@ test('Claude migration preserves only exact existing gateway policies', () => {
     /removed, wildcard, or unverified/
   );
 });
+
+test('main migration warns only for mutable registry npx package specs', () => {
+  const migrationConnector = { command: 'node', args: ['connector.mjs'] };
+  const result = prepareMainClientMigration({ client: 'claude', configText: JSON.stringify({ mcpServers: {
+    deprecated: { command: 'npx.cmd', args: ['--yes', '@modelcontextprotocol/server-github'] },
+    mutable: { command: 'npx', args: ['github-mcp-server@latest'] },
+    exact: { command: 'npx', args: ['github-mcp-server@1.2.3'] },
+    packageFlag: { command: 'npx', args: ['--package', 'github-mcp-server@next', 'github-mcp-server'] },
+    local: { command: 'npx', args: ['..\\scripts\\github-mcp-server.js'] },
+    windowsRelative: { command: 'npx', args: ['tools\\github-mcp-server.js'] },
+    git: { command: 'npx', args: ['github:github/github-mcp-server'] }
+  } }), connector: migrationConnector });
+  assert.equal(result.warnings.length, 3);
+  assert.match(result.warnings[0], /deprecated package `@modelcontextprotocol\/server-github`/);
+  assert.match(result.warnings[1], /mutable registry package spec `github-mcp-server@latest`/);
+  assert.match(result.warnings[2], /mutable registry package spec `github-mcp-server@next`/);
+});
