@@ -1,4 +1,13 @@
-const BACKEND_FIELDS = new Set(['disabled', 'type', 'command', 'args', 'cwd', 'env', 'url', 'headers', 'tools', 'timeout', 'requiresExclusiveAccess']);
+export function safeOAuthUrl(value, httpsOnly = false) {
+  const url = new URL(value);
+  if (url.username || url.password || url.hash ||
+      (url.protocol !== 'https:' && (httpsOnly || url.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(url.hostname)))) {
+    throw new Error('OAuth requires HTTPS or loopback HTTP, without credentials or fragments');
+  }
+  return url;
+}
+
+const BACKEND_FIELDS = new Set(['disabled', 'type', 'command', 'args', 'cwd', 'env', 'url', 'headers', 'tools', 'timeout', 'requiresExclusiveAccess', 'oauth']);
 const TYPES = new Set(['http', 'stdio', 'local']);
 
 function object(value) {
@@ -34,6 +43,18 @@ export function validateBackendConfig(value, path = 'server', options = {}) {
   if (value.cwd !== undefined && (typeof value.cwd !== 'string' || value.cwd.length === 0)) fail(`${path}.cwd`, 'must be a non-empty string');
   if (value.env !== undefined) stringMap(value.env, `${path}.env`);
   if (value.headers !== undefined) stringMap(value.headers, `${path}.headers`);
+  if (value.oauth !== undefined) {
+    if (!hasUrl || !object(value.oauth)) fail(`${path}.oauth`, 'requires an HTTP backend and an object');
+    safeOAuthUrl(value.url);
+    for (const key of Object.keys(value.oauth)) if (!['clientId', 'scopes', 'redirectPort', 'clientMetadataUrl'].includes(key)) fail(`${path}.oauth.${key}`, 'is not an approved field');
+    if (value.oauth.clientId !== undefined && (typeof value.oauth.clientId !== 'string' || !value.oauth.clientId.trim())) fail(`${path}.oauth.clientId`, 'must be a non-empty public client ID');
+    if (value.oauth.scopes !== undefined && (!Array.isArray(value.oauth.scopes) || value.oauth.scopes.some(scope => typeof scope !== 'string' || !scope || /\s/.test(scope)))) fail(`${path}.oauth.scopes`, 'must be an array of non-empty scope strings without whitespace');
+    if (value.oauth.redirectPort !== undefined && (!Number.isInteger(value.oauth.redirectPort) || value.oauth.redirectPort < 1 || value.oauth.redirectPort > 65535)) fail(`${path}.oauth.redirectPort`, 'must be 1..65535');
+    if (value.oauth.clientMetadataUrl !== undefined) {
+      if (typeof value.oauth.clientMetadataUrl !== 'string') fail(`${path}.oauth.clientMetadataUrl`, 'must be an HTTPS URL');
+      if (safeOAuthUrl(value.oauth.clientMetadataUrl, true).pathname === '/') fail(`${path}.oauth.clientMetadataUrl`, 'must have a non-root path');
+    }
+  }
   if (value.tools !== undefined && (!Array.isArray(value.tools) || value.tools.some(item => typeof item !== 'string' || item.length === 0))) fail(`${path}.tools`, 'must be an array of non-empty strings');
   if (value.timeout !== undefined && (!Number.isSafeInteger(value.timeout) || value.timeout <= 0)) fail(`${path}.timeout`, 'must be a positive safe integer');
   return value;

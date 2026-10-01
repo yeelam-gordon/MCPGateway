@@ -35,6 +35,7 @@ async function pluginFixture() {
   await cp(new URL('../tools/migrate-config.mjs', import.meta.url), join(root, 'tools', 'migrate-config.mjs'));
   await cp(new URL('../tools/connector.mjs', import.meta.url), join(root, 'tools', 'connector.mjs'));
   await cp(new URL('../tools/connect-client.mjs', import.meta.url), join(root, 'tools', 'connect-client.mjs'));
+  await cp(new URL('../tools/authenticate-backend.mjs', import.meta.url), join(root, 'tools', 'authenticate-backend.mjs'));
   await mkdir(join(root, 'integrity'), { recursive: true });
   await cp(new URL('../integrity/client-runtime-dependencies.json', import.meta.url), join(root, 'integrity', 'client-runtime-dependencies.json'));
   await mkdir(join(root, 'src'), { recursive: true });
@@ -56,7 +57,7 @@ async function publishedRuntimeFixture(sourceRoot, item) {
   const preview = await pluginSetup({ sourceRoot, sourceConfig: item.sourcePath, stateDir: item.stateDir });
   await mkdir(join(preview.runtimePath, 'tools'), { recursive: true });
   for (const file of ['LICENSE', 'package.json', 'package-lock.json']) await cp(join(sourceRoot, file), join(preview.runtimePath, file));
-  for (const file of ['connector.mjs', 'connect-client.mjs', 'migrate-config.mjs']) await cp(join(sourceRoot, 'tools', file), join(preview.runtimePath, 'tools', file));
+  for (const file of ['connector.mjs', 'connect-client.mjs', 'migrate-config.mjs', 'authenticate-backend.mjs']) await cp(join(sourceRoot, 'tools', file), join(preview.runtimePath, 'tools', file));
   await mkdir(join(preview.runtimePath, 'integrity'), { recursive: true });
   await cp(join(sourceRoot, 'integrity', 'client-runtime-dependencies.json'), join(preview.runtimePath, 'integrity', 'client-runtime-dependencies.json'));
   await cp(join(sourceRoot, 'src'), join(preview.runtimePath, 'src'), { recursive: true });
@@ -186,7 +187,7 @@ test('dependency-free plugin bootstrap delegates migration preview and apply to 
   await cp(join(repositoryRoot, 'src'), join(isolated, 'src'), { recursive: true });
   await cp(join(repositoryRoot, 'adapters'), join(isolated, 'adapters'), { recursive: true });
   await cp(join(repositoryRoot, 'integrity'), join(isolated, 'integrity'), { recursive: true });
-  for (const file of ['connector.mjs', 'connect-client.mjs', 'migrate-config.mjs', 'plugin-setup.mjs']) {
+  for (const file of ['connector.mjs', 'connect-client.mjs', 'migrate-config.mjs', 'authenticate-backend.mjs', 'plugin-setup.mjs']) {
     await cp(join(repositoryRoot, 'tools', file), join(isolated, 'tools', file));
   }
   const bootstrap = join(isolated, 'tools', 'connect-client.mjs');

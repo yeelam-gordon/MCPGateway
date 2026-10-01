@@ -8,6 +8,7 @@ This document contains detailed operating, recovery, ownership, and transfer gui
 - [Concurrent terminal resume](#concurrent-terminal-resume)
 - [Workflow ownership](#workflow-ownership)
 - [State and privacy](#state-and-privacy)
+- [Native HTTP OAuth](#native-http-oauth)
 - [Setup recovery](#setup-recovery)
 - [Cross-client migration recovery](#cross-client-migration-recovery)
 - [Windows plugin cache: Access denied](#windows-plugin-cache-access-denied)
@@ -47,6 +48,51 @@ The preliminary owner record is fully written before exclusive lock publication,
 
 These guarantees require all sessions to use the same current connector runtime and configuration. After upgrading, restart sessions that still hold an older connector. If a startup deadline is exceeded, inspect the connector error in the agent's log; do not delete live locks or start an independent gateway on the same port.
 
+## Native HTTP OAuth
+
+HTTP backends use the official MCP SDK's OAuth discovery, PKCE authorization-code flow and refresh support. Agency is not required; existing Agency adapters remain opt-in. Backend names are arbitrary aliases, not authentication-provider selectors. An explicit `Authorization` header takes precedence and disables native OAuth for that backend. Stdio authentication is unchanged.
+
+Ordinary gateway calls never open a browser. When they return `auth_required`, explicitly sign in using the same backend configuration and state directory as the gateway:
+
+```powershell
+node tools\authenticate-backend.mjs --server "my-mail-alias" --config C:\gateway\backends.json --state-dir C:\gateway\state
+```
+
+Sign-in defaults to a 180-second total deadline. `--timeout SECONDS` can shorten it; `--no-browser` prints the authorization URL for local manual opening. Treat that URL as sensitive. Cancellation, denial, invalid state and timeout close the callback listener without saving newly issued tokens. Successful sign-in verifies MCP initialization and tool discovery before publishing tokens.
+
+Discovery follows RFC 9728 and RFC 8414/OIDC through the SDK. The MCP server's protected-resource metadata advertises its authorization server; that server's OAuth/OIDC metadata supplies the issuer and authorization/token endpoints, including tenant-specific endpoints where advertised. Discovery does not supply an arbitrary application's Entra client ID or choose a tenant on the operator's behalf.
+
+Client identity comes from standards-based dynamic client registration (DCR), when the authorization server supports it, or from the exact public application registration supplied by the operator in `oauth.clientId`. Without DCR, a supported client-ID metadata document, or explicit registration, authentication fails with an actionable registration error; it does not guess credentials. No Copilot client IDs, tenant IDs, or broad scope sets are hardcoded or reused.
+
+Agency is separate from this native OAuth path. Its existing builtin mail adapter is service-specific, not a universal Entra authenticator, and is not assumed to know arbitrary tenant IDs or client IDs. For a pre-registered public client (including Entra deployments without dynamic registration), configure:
+
+```json
+{
+  "mcpServers": {
+    "my-mail-alias": {
+      "url": "https://mcp.example.com/mcp",
+      "oauth": {
+        "clientId": "YOUR-REGISTERED-PUBLIC-CLIENT-ID",
+        "scopes": ["offline_access", "YOUR-API-SCOPE"],
+        "redirectPort": 7340
+      }
+    }
+  }
+}
+```
+
+Register the exact redirect URI `http://127.0.0.1:7340/oauth/callback` with your identity provider. The port defaults to 7340 and must be available. Entra requires a suitable application registration, API permissions and possibly tenant/admin consent; no tenant or client ID is guessed. Client secrets and noninteractive grants are not supported. An optional HTTPS `oauth.clientMetadataUrl` with a non-root path supports servers advertising client-ID metadata documents. Server-advertised challenge/resource scopes take precedence over configured fallback scopes, as specified by the SDK.
+
+Dynamic registration responses and cached client registrations must omit `client_secret` and either omit `token_endpoint_auth_method` or set it to `none`. Confidential registrations are rejected before storage or use, without including credential values in errors. An authorization server may advertise confidential methods alongside public-client support; those capabilities alone are not rejected.
+
+Private OAuth files live under `STATE_DIR\oauth`, with owner-only permissions and atomic replacement. Tokens, registration and discovery are isolated by exact backend URL, alias and OAuth configuration; tokens are never imported from Copilot or Agency. Refresh tokens survive refresh responses that omit a replacement. Concurrent calls within one backend share a refresh, and stale failures cannot invalidate a newer token generation. Expired access tokens remain syntactically valid on the wire so a normal 401 challenge can trigger SDK refresh; the gateway never synthesizes an empty bearer credential.
+
+Credential-state writes and refreshes use an exclusive per-backend file lock. Explicit sign-in holds that lock until verification and publication finish; competing sign-ins or cross-process refreshes fail closed rather than overwrite credentials. A revision check rejects writes based on stale private state. Retry after the active operation finishes. An interrupted process can leave a lock: recovery requires confirming that no gateway or sign-in operation still owns it before removing that exact backend's `.lock` file. Locks are not automatically stolen based on age. Resource binding is validated with the SDK before discovery is saved; previously cached mismatched resource metadata is discarded and rediscovered.
+
+Use HTTPS for remote services; HTTP is limited to loopback. HTTP redirects are rejected, and SDK resource validation remains enabled. Transfer packages explicitly reject native `oauth` configuration: register/configure and sign in separately at the destination. Existing conservative client-managed OAuth migration restrictions still apply. Authentication errors and `--help` show the helper's absolute runtime path, so invocation does not depend on the caller's working directory.
+
+The exact backend notification GET (`Accept: text/event-stream`) has a bounded wait for response headers. Once successful SSE headers arrive, its body remains open until transport/controller cancellation or server closure. Discovery, other GETs, POST bodies and non-SSE responses retain their request deadlines; redirects remain rejected.
+
 <a id="workflow-ownership"></a>
 ## Workflow ownership
 
@@ -80,6 +126,8 @@ The claim covers all calls to that backend, not one tool. Other exclusive backen
 For compatibility, an existing backend named exactly `playwright` remains exclusive when the setting is omitted. Explicit `true` or `false` overrides that default; other aliases default to `false`. Migrations and transfers preserve the setting.
 
 Release waits for outstanding calls to settle. Disconnect releases an idle claim. If a call times out with an unknown outcome, that exclusive backend remains blocked until the gateway restarts; disconnecting or reclaiming cannot permit another workflow to race the unfinished operation.
+
+A tool POST confirmed rejected by an HTTP 401/403 authentication challenge before acceptance is a known nonexecution failure: its lease can be released and used again after explicit reauthentication without restarting the gateway. Authentication errors from notification GETs, accepted tool POSTs, or ambiguous network failures do not receive this exception.
 
 Inactive abandoned client sessions expire. Normal connectors send a lightweight heartbeat while connected. Expiration does not interrupt an active call or release a backend whose last operation has an unknown outcome.
 

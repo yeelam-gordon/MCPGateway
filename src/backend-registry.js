@@ -13,6 +13,7 @@ import { redactedMetadata, requiresExclusiveAccess as configRequiresExclusiveAcc
 import { downstreamTimeout, isRequestTimeout, withTimeout } from './time.js';
 import { BACKEND_CALL_TIMEOUT_MS, requestOptions } from './request-budget.js';
 import { VERSION } from './version.js';
+import { BackendOAuthProvider, OAuthHTTPClientTransport, HTTP_AUTH_REJECTED_BEFORE_EXECUTION, boundedOAuthFetch, hasStaticAuthorization, oauthRequired } from './backend-oauth.js';
 
 async function firstExisting(paths) {
   for (const path of paths) { try { await access(path, constants.F_OK); return path; } catch {} }
@@ -47,6 +48,7 @@ function catalogTimeout(name, milliseconds, cause) {
 }
 
 function isKnownNonExecutionFailure(error) {
+  if (error?.[HTTP_AUTH_REJECTED_BEFORE_EXECUTION] === true) return true;
   for (let current = error; current; current = current.cause) {
     if (/session not found/i.test(String(current.message ?? ''))) return true;
   }
@@ -56,6 +58,7 @@ function isKnownNonExecutionFailure(error) {
 export class BackendRegistry {
   constructor(configs, options = {}) {
     this.configs = configs;
+    this.stateDir = options.stateDir;
     this.entries = new Map();
     this.connectTimeoutMs = options.connectTimeoutMs ?? 15_000;
     this.callTimeoutMs = options.callTimeoutMs ?? BACKEND_CALL_TIMEOUT_MS;
@@ -99,7 +102,17 @@ export class BackendRegistry {
     entry.client = client;
     try {
       if (config.url) {
-        entry.transport = new StreamableHTTPClientTransport(new URL(config.url), { requestInit: { headers: config.headers ?? {} } });
+        const nativeOAuth = this.stateDir && !hasStaticAuthorization(config);
+        if (nativeOAuth) entry.oauthController = new AbortController();
+        const authProvider = nativeOAuth ? await BackendOAuthProvider.load(config, this.stateDir, {
+          signal: entry.oauthController.signal, deadline: Date.now() + this.connectTimeoutMs
+        }) : undefined;
+        entry.oauthProvider = authProvider;
+        const Transport = nativeOAuth ? OAuthHTTPClientTransport : StreamableHTTPClientTransport;
+        entry.transport = new Transport(new URL(config.url), {
+          requestInit: { headers: config.headers ?? {} }, authProvider,
+          ...(nativeOAuth ? { fetch: boundedOAuthFetch(entry.oauthController.signal, this.callTimeoutMs, config) } : {})
+        });
       } else {
         const env = { ...process.env, ...(config.env ?? {}) };
         const launch = await resolveLaunch(config, env);
@@ -128,18 +141,25 @@ export class BackendRegistry {
         throw new GatewayError('connect_cancelled', `Connect to ${config.name} was cancelled`);
       }
       entry.state = 'ready';
+      if (entry.oauthProvider) delete entry.oauthProvider.options.deadline;
       entry.connecting = null;
       return entry;
     } catch (error) {
       await this.#retire(config.name, entry);
       const failure = `${String(error)} ${String(entry.transportError ?? '')}`;
       const status = error?.code ?? entry.transportError?.code;
+      if (config.url && this.stateDir && !hasStaticAuthorization(config)) {
+        if (error instanceof GatewayError) throw error;
+        if (status === 401 || /401|unauthori[sz]ed/i.test(failure)) throw oauthRequired(config.name);
+        throw new GatewayError('connect_failed', `Backend ${config.name} failed to connect; check native OAuth discovery and registration`);
+      }
       if (config.url && (status === 401 || /401|unauthori[sz]ed/i.test(failure))) throw new GatewayError('auth_required', `Backend ${config.name} requires authentication`, error);
       throw error instanceof GatewayError ? error : new GatewayError('connect_failed', `Backend ${config.name} failed to connect: ${error.message}`, error);
     }
   }
 
   #retire(name, entry) {
+    entry.oauthController?.abort();
     if (this.entries.get(name) === entry) this.entries.delete(name);
     if (entry.discovery && !entry.discovery.settled) entry.discovery.controller.abort();
     if (entry.retireScheduled) {
