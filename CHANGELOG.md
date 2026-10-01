@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented here. This project follows semantic versioning while recognizing that pre-1.0 releases may introduce breaking changes.
 
+## [0.7.0] - 2026-10-01
+
+### Added
+
+- Native MCP OAuth for remote HTTP backends through the official SDK, without requiring Agency: protected-resource and OAuth/OIDC discovery, PKCE, public-client registration, resource binding, and refresh.
+- An explicit, bounded browser sign-in helper with private, atomic credential persistence and concurrency-safe refresh. Entra and other providers without dynamic registration use the operator's registered public client ID; tenant and client IDs are never guessed.
+- Advisory diagnostics for mutable or unpinned `npx` and `npm exec` package specifications during setup and migration, without changing execution or Copilot-owned approvals.
+
+### Fixed
+
+- Expired credentials, rotated refresh tokens, concurrent sign-ins, and corrected resource metadata recover without losing newer credentials or retaining invalid discovery state.
+- Established backend notification streams remain open beyond request deadlines while connection establishment and other HTTP traffic remain bounded.
+- Confidential registration responses are rejected, and native OAuth configuration cannot be exported or imported through transfer packages.
+- Authentication failures confirmed to reject a tool request before execution no longer unnecessarily block an exclusive backend; ambiguous downstream outcomes retain their existing safeguards.
+- Updated transitive dependency resolutions for `fast-uri` and `ip-address`.
+
 ## [0.6.1] - 2026-09-28
 
 ### Fixed
