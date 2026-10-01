@@ -100,3 +100,21 @@ test('timestamp collisions cannot overwrite an existing backup', async () => {
   assert.equal(await readFile(backupPath, 'utf8'), 'previous-backup'); assert.deepEqual(await readFile(item.sourceConfig), item.bytes);
   await assert.rejects(() => stat(join(item.stateDir, 'owner.token')), error => error.code === 'ENOENT');
 });
+
+test('setup migration preview and apply surface npx registry warnings without blocking writes', async () => {
+  const item = await fixture({ mcpServers: {
+    deprecated: { command: 'npx.cmd', args: ['--yes', '@modelcontextprotocol/server-github'] },
+    mutable: { command: 'npx', args: ['github-mcp-server@latest'] },
+    exact: { command: 'npx', args: ['github-mcp-server@1.2.3'] },
+    local: { command: 'npx', args: ['.\\tools\\github-mcp-server.js'] },
+    disabled: { disabled: true, command: 'npx', args: ['github-mcp-server@next'] }
+  } });
+  const preview = await migrateConfig({ sourceConfig: item.sourceConfig, stateDir: item.stateDir });
+  assert.equal(preview.warnings.length, 2);
+  assert.match(preview.warnings[0], /deprecated package `@modelcontextprotocol\/server-github`/);
+  assert.match(preview.warnings[1], /mutable registry package spec `github-mcp-server@latest`/);
+  assert.equal(preview.warnings.some(value => value.includes('github-mcp-server@next')), false);
+  const applied = await migrateConfig({ sourceConfig: item.sourceConfig, stateDir: item.stateDir, apply: true });
+  assert.deepEqual(applied.warnings, preview.warnings);
+  assert.deepEqual(await readFile(applied.privatePath), item.bytes);
+});

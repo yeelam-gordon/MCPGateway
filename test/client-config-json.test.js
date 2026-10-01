@@ -326,7 +326,7 @@ test('migration extracts ten native backends and leaves only one matching gatewa
     command: migrationConnector.command, args: migrationConnector.args, env: migrationConnector.env
   });
   const rerun = prepareClientMigration({ client: 'qwen', configText: result.updatedText, connector: migrationConnector });
-  assert.deepEqual(rerun, { client: 'qwen', changed: false, updatedText: result.updatedText, backends: { mcpServers: {} } });
+  assert.deepEqual(rerun, { client: 'qwen', changed: false, updatedText: result.updatedText, backends: { mcpServers: {} }, warnings: [] });
 });
 
 test('migration normalizes and removes native entries for every JSON adapter', () => {
@@ -353,7 +353,7 @@ test('migration skips the gateway during extraction and rejects conflicts or uns
   const registered = prepareClientConfig({ client: 'kimi', configText: '{}', connector: migrationConnector }).updatedText;
   assert.deepEqual(extractClientBackends({ client: 'kimi', configText: registered }), { mcpServers: {} });
   assert.deepEqual(prepareClientMigration({ client: 'kimi', configText: registered, connector: migrationConnector }), {
-    client: 'kimi', changed: false, updatedText: registered, backends: { mcpServers: {} }
+    client: 'kimi', changed: false, updatedText: registered, backends: { mcpServers: {} }, warnings: []
   });
   assert.throws(
     () => prepareClientMigration({ client: 'kimi', configText: JSON.stringify({ mcpServers: {
@@ -368,6 +368,36 @@ test('migration skips the gateway during extraction and rejects conflicts or uns
     /futureField is not supported/
   );
 });
+
+test('JSON migration warns only for mutable registry npx package specs', () => {
+  const migrationConnector = { command: 'node', args: ['connector.mjs'] };
+  const result = prepareClientMigration({ client: 'qwen', configText: JSON.stringify({ mcpServers: {
+    deprecated: { command: 'npx.cmd', args: ['--yes', '@modelcontextprotocol/server-github'] },
+    mutable: { command: 'npx', args: ['--package', 'github-mcp-server@latest', 'github-mcp-server'] },
+    exact: { command: 'npx', args: ['github-mcp-server@1.2.3'] },
+    local: { command: 'npx', args: ['.\\tools\\github-mcp-server.js'] },
+    windowsRelative: { command: 'npx', args: ['tools\\github-mcp-server.js'] },
+    remote: { command: 'npx', args: ['https://registry.example.test/github-mcp-server.tgz'] }
+  } }), connector: migrationConnector });
+  assert.equal(result.warnings.length, 2);
+  assert.match(result.warnings[0], /deprecated package `@modelcontextprotocol\/server-github`/);
+  assert.match(result.warnings[0], /`github-mcp-server@<exact-version>`/);
+  assert.match(result.warnings[1], /mutable registry package spec `github-mcp-server@latest`/);
+});
+
+test('JSON migration skips workspace option values when collecting npx package diagnostics', () => {
+  const migrationConnector = { command: 'node', args: ['connector.mjs'] };
+  const result = prepareClientMigration({ client: 'qwen', configText: JSON.stringify({ mcpServers: {
+    longWorkspace: { command: 'npx', args: ['--workspace', 'docs-workspace', 'github-mcp-server@latest'] },
+    shortWorkspace: { command: 'npx.cmd', args: ['-w', 'api-workspace', 'github-mcp-server@next'] }
+  } }), connector: migrationConnector });
+  assert.equal(result.warnings.length, 2);
+  assert.match(result.warnings[0], /mutable registry package spec `github-mcp-server@latest`/);
+  assert.match(result.warnings[1], /mutable registry package spec `github-mcp-server@next`/);
+  assert.equal(result.warnings.some(value => value.includes('docs-workspace')), false);
+  assert.equal(result.warnings.some(value => value.includes('api-workspace')), false);
+});
+
 test('official JSON field semantics are preserved or rejected explicitly', () => {
   const openCode = extractClientBackends({ client: 'opencode', configText: JSON.stringify({ mcp: {
     remote: { type: 'remote', url: 'https://example.test/mcp', headers: { Authorization: 'literal' }, timeout: 45000 }

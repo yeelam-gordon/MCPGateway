@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { basename, delimiter, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadConfig } from '../src/config.js';
+import { collectNpxPackageWarnings } from '../src/npx-package-warnings.js';
 import { loadOrCreateToken } from '../src/token.js';
 import { CLIENT_REQUEST_TIMEOUT_MS } from '../src/request-budget.js';
 
@@ -59,7 +60,7 @@ function result(plan) {
   return { mode: plan.apply ? 'apply' : 'dry-run', status: plan.status, sourcePath: plan.sourcePath,
     privatePath: plan.privatePath, backupPath: plan.backupPath, manifestPath: plan.manifestPath,
     adaptersPath: plan.adaptersPath, backendCount: plan.backendCount, adapterCount: plan.adapterCount,
-    skippedAdapters: plan.skippedAdapters, sourceHash: plan.sourceHash };
+    skippedAdapters: plan.skippedAdapters, sourceHash: plan.sourceHash, warnings: plan.warnings ?? [] };
 }
 
 export async function migrateConfig(options = {}) {
@@ -80,6 +81,7 @@ export async function migrateConfig(options = {}) {
   try { source = JSON.parse(sourceBytes.toString('utf8')); } catch { throw new Error(`Cannot parse source config ${sourcePath}: invalid JSON`); }
   await loadConfig(sourcePath);
   const { key, servers } = collection(source);
+  const warnings = collectNpxPackageWarnings(Object.fromEntries(Object.entries(servers).filter(([name]) => name !== SELF_NAME)));
   const privateBytes = await existing(privatePath);
   const sourceHash = digest(sourceBytes);
   const backupDir = join(stateDir, 'backups', timestamp(options.now instanceof Date ? options.now : new Date()));
@@ -100,10 +102,11 @@ export async function migrateConfig(options = {}) {
     const privateServers = collection(privateJson).servers;
     if (Object.values(privateServers).some(entry => !entry.disabled && selfConnector(entry))) throw new Error('Private backend config contains the gateway connector itself');
     const adapterIndex = own.args.indexOf('--adapters');
+    const existingWarnings = collectNpxPackageWarnings(privateServers);
     return result({ apply, status: 'already-migrated', sourcePath, privatePath, backupPath: null, manifestPath: null,
       adaptersPath: adapterIndex >= 0 ? own.args[adapterIndex + 1] : null,
       backendCount: Object.values(privateServers).filter(entry => !entry.disabled).length,
-      adapterCount: 0, skippedAdapters: [], sourceHash: digest(privateBytes) });
+      adapterCount: 0, skippedAdapters: [], sourceHash: digest(privateBytes), warnings: existingWarnings });
   }
 
   if (privateBytes) {
@@ -134,7 +137,7 @@ export async function migrateConfig(options = {}) {
     replacementSha256: digest(replacementBytes), backupLocation: backupPath };
   const plan = { apply, status: apply ? 'migrated' : 'planned', sourcePath, privatePath, backupPath, manifestPath,
     adaptersPath, backendCount: Object.entries(servers).filter(([name, entry]) => name !== SELF_NAME && !entry.disabled).length,
-    adapterCount: Object.keys(adapterSubset ?? {}).length, skippedAdapters, sourceHash };
+    adapterCount: Object.keys(adapterSubset ?? {}).length, skippedAdapters, sourceHash, warnings };
   if (!apply) return result(plan);
 
   if (await existing(backupPath) || await existing(manifestPath)) {
@@ -173,5 +176,3 @@ function parseArgs(argv) {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   migrateConfig(parseArgs(process.argv.slice(2))).then(value => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)).catch(error => { process.stderr.write(`Migration failed: ${error.message}\n`); process.exitCode = 1; });
 }
-
-

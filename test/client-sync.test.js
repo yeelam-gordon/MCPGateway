@@ -215,3 +215,17 @@ test('repeated migration is a no-op with no additional backup or restart', async
   assert.match(empty.message, /Client configuration completed/);
   assert.doesNotMatch(empty.message, /duplicate native entries were removed/);
 });
+
+test('client migration preview and apply surface npx registry diagnostics without blocking synchronization', async () => {
+  const item = await fixture({ privateServers: {}, clientServers: {
+    deprecated: { command: 'npx.cmd', args: ['--yes', '@modelcontextprotocol/server-github'] },
+    mutable: { command: 'npx', args: ['github-mcp-server@latest'] },
+    exact: { command: 'npx', args: ['github-mcp-server@1.2.3'] }
+  } });
+  const preview = await connectClient(options(item));
+  assert.equal(preview.warnings.length, 2);
+  assert.match(preview.warnings[0], /deprecated package `@modelcontextprotocol\/server-github`/);
+  assert.match(preview.warnings[1], /mutable registry package spec `github-mcp-server@latest`/);
+  const applied = await connectClient({ ...options(item), apply: true, tokenLoader: fastToken });
+  assert.deepEqual(applied.warnings, preview.warnings);
+});

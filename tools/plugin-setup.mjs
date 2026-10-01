@@ -13,9 +13,24 @@ const SETUP_USAGE = 'Usage: node tools/plugin-setup.mjs [--apply] [--adopt-exist
 const STATIC_FILES = ['LICENSE', 'package.json', 'package-lock.json', 'integrity/client-runtime-dependencies.json', 'tools/connector.mjs', 'tools/connect-client.mjs', 'tools/migrate-config.mjs'];
 const STATIC_TREES = ['src'];
 const JSON_TREES = ['adapters'];
+let npxPackageWarningsModulePromise;
 
 async function exists(path) {
   try { await access(path); return true; } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+}
+
+function loadNpxPackageWarnings() {
+  return npxPackageWarningsModulePromise ??= import('../src/npx-package-warnings.js');
+}
+
+async function collectNpxWarnings(backends) {
+  const { collectNpxPackageWarnings } = await loadNpxPackageWarnings();
+  return collectNpxPackageWarnings(backends);
+}
+
+async function mergeWarningGroups(...groups) {
+  const { mergeWarnings } = await loadNpxPackageWarnings();
+  return mergeWarnings(...groups);
 }
 
 function nodeMajor(version) {
@@ -169,6 +184,7 @@ async function inspectExistingGateway(servers, requested) {
     status: 'already-configured',
     migrationStatus: 'already-migrated',
     backendCount: Object.values(backendServers).filter(entry => !entry?.disabled).length,
+    warnings: await collectNpxWarnings(backendServers),
     connectorPath: resolve(connectorPath),
     runtimePath: dirname(dirname(resolve(connectorPath))),
     privatePath: backendPath,
@@ -469,7 +485,7 @@ export function parseSetupArgs(argv) {
   return options;
 }
 
-async function adoptExistingGateway({ source, sourcePath, stateDir, port, existing, sourceRoot, files, contentHash, apply, options }) {
+async function adoptExistingGateway({ source, sourcePath, stateDir, port, existing, warnings, sourceRoot, files, contentHash, apply, options }) {
   const platform = options.platform ?? process.platform;
   const runtimePath = join(stateDir, 'runtime', contentHash);
   const connectorPath = join(runtimePath, 'tools', 'connector.mjs');
@@ -501,6 +517,7 @@ async function adoptExistingGateway({ source, sourcePath, stateDir, port, existi
     mode: apply ? 'apply' : 'preview', status: apply ? 'installing' : 'planned-adoption', migrationStatus: 'not-applicable',
     sourceExists: true, sourcePath, stateDir, privatePath: existing.privatePath, runtimePath, oldRuntimePath,
     contentHash, runtimeFileCount: files.length, backendCount: existing.backendCount, adaptersPath,
+    warnings,
     sourceAdapterPath: existing.adapterPath, adapterCopied: copyAdapter, restartRequired: true,
     backupPath: apply ? backupPath : null, sourceBackupPath: apply ? backupPath : null,
     backendBackupPath: apply ? backendBackupPath : null, adapterBackupPath: apply ? adapterBackupPath : null,
@@ -600,6 +617,7 @@ export async function pluginSetup(options = {}) {
     stateDir, privatePath, port, agencyAdapters: options.agencyAdapters, adoptExisting, platform: options.platform ?? process.platform
   });
   if (existing) {
+    const sourceWarnings = await collectNpxWarnings(Object.fromEntries(Object.entries(servers).filter(([name]) => name !== SELF_NAME)));
     let synchronization;
     try {
       const { synchronizeBackends } = await import('../src/backend-sync.js');
@@ -615,6 +633,7 @@ export async function pluginSetup(options = {}) {
         const failed = error.setupResult;
         error.setupResult = {
           ...failed,
+          warnings: await mergeWarningGroups(failed.warnings, sourceWarnings, existing.warnings),
           ...recoveryGuidance({ sourcePath, backupPath: failed.sourceBackupPath, manifestPath: failed.manifestPath,
             connectorPath: existing.connectorPath, stateDir, port, message: failed.message }),
           sourceExists: true, migrationStatus: existing.migrationStatus,
@@ -628,22 +647,25 @@ export async function pluginSetup(options = {}) {
       throw error;
     }
     if (adoptExisting && synchronization.sourceExtraCount > 0) {
+      const warnings = await mergeWarningGroups(synchronization.warnings, sourceWarnings, existing.warnings);
       const error = new Error('Existing gateway has pending native MCP entries; sync first then adopt');
-      error.setupResult = { ...synchronization, status: 'adoption-blocked', migrationStatus: 'not-applicable',
+      error.setupResult = { ...synchronization, warnings, status: 'adoption-blocked', migrationStatus: 'not-applicable',
         connectorPath: existing.connectorPath, runtimePath: existing.runtimePath,
         message: 'Adoption was not started. Run setup with --apply to synchronize pending backends, then rerun with --adopt-existing.' };
       throw error;
     }
     if (adoptExisting) {
+      const warnings = await mergeWarningGroups(synchronization.warnings, sourceWarnings, existing.warnings);
       const files = await runtimeFiles(sourceRoot);
       const hash = await contentHash(sourceRoot, files);
-      return adoptExistingGateway({ source, sourcePath, stateDir, port, existing, sourceRoot, files, contentHash: hash, apply, options });
+      return adoptExistingGateway({ source, sourcePath, stateDir, port, existing, warnings, sourceRoot, files, contentHash: hash, apply, options });
     }
     const guidance = recoveryGuidance({ sourcePath, backupPath: synchronization.sourceBackupPath,
       manifestPath: synchronization.manifestPath, connectorPath: existing.connectorPath, stateDir, port,
       message: synchronization.message });
     return {
-      ...synchronization, ...guidance, sourceExists: true, migrationStatus: existing.migrationStatus,
+      ...synchronization, warnings: await mergeWarningGroups(synchronization.warnings, sourceWarnings, existing.warnings),
+      ...guidance, sourceExists: true, migrationStatus: existing.migrationStatus,
       connectorPath: existing.connectorPath, runtimePath: existing.runtimePath, privatePath: existing.privatePath,
       backendBackupPath: synchronization.backendBackupPath,
       backendRollbackCommand: synchronization.backendRollbackCommand,
@@ -667,6 +689,7 @@ export async function pluginSetup(options = {}) {
     mode: apply ? 'apply' : 'preview', status: apply ? 'installing' : 'planned', migrationStatus: apply ? 'pending' : 'planned',
     sourceExists: true, sourcePath, stateDir, privatePath, runtimePath, contentHash: hash,
     runtimeFileCount: files.length, backendCount: Object.values(servers).filter(entry => !entry?.disabled).length,
+    warnings: await collectNpxWarnings(Object.fromEntries(Object.entries(servers).filter(([name]) => name !== SELF_NAME))),
     ...recoveryGuidance({ sourcePath, stateDir, port,
       message: apply ? 'Gateway setup is preparing an explicit backed-up migration.' : 'Preview complete; no files were changed.' })
   };

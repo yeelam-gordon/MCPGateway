@@ -109,3 +109,12 @@ test('public Codex extraction excludes the registered gateway connector', () => 
   const text = `[mcp_servers.shared-mcp-gateway]\ncommand = "node"\nargs = ["connector.mjs"]\n`;
   assert.deepEqual(extractCodexBackends({ configText: text }), { mcpServers: {} });
 });
+
+test('Codex migration appends npx package diagnostics after the TOML warning', () => {
+  const text = '[mcp_servers.github]\ncommand = "npx"\nargs = ["--yes", "@modelcontextprotocol/server-github"]\n';
+  const result = prepareCodexMigration({ configText: text, connector });
+  assert.equal(result.warnings.length, 2);
+  assert.match(result.warnings[0], /comments and formatting are regenerated/);
+  assert.match(result.warnings[1], /deprecated package `@modelcontextprotocol\/server-github`/);
+  assert.match(result.warnings[1], /`github-mcp-server@<exact-version>`/);
+});

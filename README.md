@@ -67,6 +67,8 @@ The [client guide](docs/CLIENTS.md) is the canonical installation and upgrade so
 
 Setup is preview-first. Approved changes create private backups and return exact readiness and rollback commands. Configuration adapters preserve unrelated client settings and refuse conflicting gateway aliases instead of silently replacing them.
 
+Setup and client-migration previews also warn when a stdio/local backend is launched through `npx`/`npx.cmd` or `npm`/`npm.cmd` `exec`/`x` with an unpinned registry package spec, so you can replace mutable tags/ranges with exact versions before sharing that backend broadly.
+
 The runtime is installed outside the plugin cache, so removing or updating plugin files does not silently replace the running gateway. Exclusive integrations can be claimed for a complete multi-call workflow, and an unknown timeout outcome remains blocked rather than being handed to another agent.
 
 See the [operational reference](docs/REFERENCE.md) for workflow ownership, privacy, recovery, and configuration transfer. For Windows plugin updates reporting `Access denied`, use the [tested cache-only recovery](docs/REFERENCE.md#windows-plugin-cache-access-denied).

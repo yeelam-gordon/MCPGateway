@@ -1,6 +1,7 @@
 import { parse, stringify } from 'smol-toml';
 import { validateConfig } from './config-schema.js';
 import { assertLiteralClientValues } from './client-config-values.js';
+import { collectNpxPackageWarnings, mergeWarnings } from './npx-package-warnings.js';
 
 const GATEWAY_NAME = 'shared-mcp-gateway';
 const SUPPORTED_FIELDS = new Set([
@@ -191,8 +192,10 @@ export function prepareCodexMigration({ client = 'codex', configText, connector 
   if (existing !== undefined && !equal(existing, desired))
     fail('Codex config already contains a conflicting shared-mcp-gateway entry; no configuration was changed.');
   const backends = extractEntries(config, true);
+  const warnings = mergeWarnings([REFORMAT_WARNING], collectNpxPackageWarnings(backends.mcpServers));
   const alreadyMigrated = Object.keys(servers).length === 1 && existing !== undefined && equal(existing, desired);
-  if (alreadyMigrated) return { client: 'codex', changed: false, updatedText: configText, backends, warnings: [] };
+  if (alreadyMigrated) return { client: 'codex', changed: false, updatedText: configText, backends,
+    warnings: collectNpxPackageWarnings(backends.mcpServers) };
 
   const replacement = Object.create(null);
   replacement[GATEWAY_NAME] = desired;
@@ -202,6 +205,6 @@ export function prepareCodexMigration({ client = 'codex', configText, connector 
     changed: true,
     updatedText: serialize(config, configText),
     backends,
-    warnings: [REFORMAT_WARNING]
+    warnings
   };
 }

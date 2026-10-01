@@ -146,6 +146,8 @@ node "<plugin-root>\tools\connect-client.mjs" `
 
 After reviewing `addedAliases`, `identicalDuplicates`, `conflicts`, warnings, counts, and paths, apply explicitly by adding `--apply`. The plugin-root launcher delegates migration to the helper deployed with the adopted stable runtime. If that runtime is still v0.5 or otherwise lacks the helper, stop and adopt the new runtime through `/mcp-gateway-setup`; do not run `npm install` in the plugin cache or runtime. Preview performs no dependency installation. Migration requires an existing destination file and an owned connector whose private catalog and state directory validate; it does not publish or upgrade the runtime, discover personal config paths, or start/restart the gateway.
 
+Preview and apply also emit non-blocking warnings for stdio/local backends launched through `npx`/`npx.cmd` or `npm`/`npm.cmd` `exec`/`x` when the registry package spec is unversioned or uses a mutable tag/range. Pin an exact package version before relying on shared migration or setup. A dedicated warning flags deprecated `@modelcontextprotocol/server-github` usage and recommends the maintained `github-mcp-server` package.
+
 **OpenCode wildcard policies:** migration conservatively rejects any `*` or `?` key in root or agent-level `permission` or legacy `tools` rules, including patterns that appear unrelated to the selected MCP aliases. Keep the configuration client-managed until equivalent restrictions can be preserved; do not remove deny rules merely to make migration pass.
 
 The merge uses aliases deliberately:

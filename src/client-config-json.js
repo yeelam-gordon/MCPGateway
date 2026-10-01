@@ -1,5 +1,6 @@
 import { validateConfig } from './config-schema.js';
 import { assertLiteralClientValues } from './client-config-values.js';
+import { collectNpxPackageWarnings, mergeWarnings } from './npx-package-warnings.js';
 
 const GATEWAY_ALIAS = 'shared-mcp-gateway';
 
@@ -321,10 +322,12 @@ export function prepareClientMigration({ client, configText, connector } = {}) {
   }
 
   const backends = canonicalBackends(client, collection);
+  const warnings = collectNpxPackageWarnings(backends.mcpServers);
   const migratedCollection = { [GATEWAY_ALIAS]: expected };
   if (jsonEqual(collection, migratedCollection)) {
-    return { client, changed: false, updatedText: configText, backends };
+    return { client, changed: false, updatedText: configText, backends, warnings };
   }
   const updated = { ...config, [key]: migratedCollection };
-  return { client, changed: true, updatedText: `${JSON.stringify(updated, null, 2)}\n`, backends };
+  return { client, changed: true, updatedText: `${JSON.stringify(updated, null, 2)}\n`, backends,
+    warnings: mergeWarnings(warnings) };
 }
