@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented here. This project follows semantic versioning while recognizing that pre-1.0 releases may introduce breaking changes.
 
+## [0.7.1] - 2026-10-03
+
+### Added
+
+- Microsoft-aware MSAL browser, device-code, silent-renewal and configured app-only authentication.
+- Explicit optional Microsoft host credentials through Azure CLI and VS Code's public Microsoft authentication API. The Windows VS Code route has been verified with genuine packaged-helper Mail authentication, a permitted native HTTP read and reconnect without Agency or a new gateway application registration.
+- Confidential-client Basic/Post and private-key JWT authentication, client-credentials acquisition, RFC 8628 device authorization and authorization-response issuer checks.
+- Explicit operator-trusted Microsoft API resource binding and validated permission repair before credential acquisition.
+
+### Fixed
+
+- Atomic credential publication preserves renewed expiry, service selection and consent across identical token responses, restart and stale-generation races.
+- Malformed access tokens are rejected before state mutation, device staging or persistence without exposing their values.
+- Authentication helpers restrict inherited environments, isolate private profiles, display explicit consent windows and clean up only their owned processes within bounded deadlines.
+- Cancelled authentication waits for bounded owned credential cleanup; unsettled cleanup reports uncertainty and retains lock provenance instead of claiming success.
+- Equivalent Microsoft tenant GUID casing is normalized; device expiry is distinguished from helper cancellation; concurrent host callback completion is consumed once.
+- Windows owner-only ACL publication avoids unnecessary same-owner writes, supports elevated-runner fixtures and gives the legacy PowerShell cold path a deadline-clipped 15-second budget.
+
+### Notes
+
+- VS Code is an opt-in Windows host dependency and its Microsoft consent identifies Visual Studio Code. It does not establish registration-free standalone MSAL or universal Azure CLI access to every MCP service.
+- Native WAM, mTLS and other deployment-specific authentication extensions remain explicitly outside this release.
+
 ## [0.7.0] - 2026-10-01
 
 ### Added
