@@ -20,7 +20,7 @@ import { AzureCliCredential, resolveAzureCli } from './azure-cli-credential.js';
 import { VSCodeCredential } from './vscode-credential.js';
 import { selectedMicrosoftHostScope } from './microsoft-resource-scopes.js';
 import { boundMicrosoftScopes, trustedMicrosoftResource, canonicalMicrosoftResource } from './microsoft-resource-binding.js';
-import { validateAccessToken, validateTokenResponse } from './oauth-access-token.js';
+import { validateAccessToken } from './oauth-access-token.js';
 
 export const HTTP_AUTH_REJECTED_BEFORE_EXECUTION = Symbol('http-auth-rejected-before-execution');
 export const MICROSOFT_REQUIRED_SCOPE = Symbol('microsoft-required-scope');
@@ -226,7 +226,7 @@ export class BackendOAuthProvider {
   get generation() {
     const tokens = this.pendingTokens ?? this.saved.tokens;
     const service = this.pendingService ?? this.saved.service;
-    return service ? JSON.stringify([tokens, service.binding]) : JSON.stringify(tokens);
+    return JSON.stringify([tokens, service?.binding, this.expiresAt]);
   }
   get expiresAt() { return this.pendingTokens ? this.pendingExpiresAt : this.saved.expiresAt; }
   async acquireLock() {
@@ -483,11 +483,14 @@ export class BackendOAuthProvider {
       if (params?.get('grant_type') !== 'refresh_token') {
         const response = await fetchFn(input, init);
         if (params?.has('grant_type') && String(input instanceof Request ? input.url : input) ===
-            this.saved.discovery?.authorizationServerMetadata?.token_endpoint) await validateTokenResponse(response);
+            this.saved.discovery?.authorizationServerMetadata?.token_endpoint) await this.captureTokenResponse(response);
         return response;
       }
       const generation = this.context.getStore()?.generation ?? this.generation;
-      const tokenResponse = tokens => new Response(JSON.stringify(tokens), { headers: { 'Content-Type': 'application/json' } });
+      const tokenResponse = tokens => {
+        this.recordTokenAcquisition(tokens, this.expiresAt);
+        return new Response(JSON.stringify(tokens), { headers: { 'Content-Type': 'application/json' } });
+      };
       if (generation !== this.generation && this.saved.tokens) return tokenResponse(this.saved.tokens);
       if (this.refresh?.generation === generation) return (await this.refresh.promise).clone();
       const promise = this.withLock(async () => {
@@ -501,11 +504,8 @@ export class BackendOAuthProvider {
         }
         const response = await fetchFn(input, init);
         if (response.ok) {
-          await validateTokenResponse(response);
-          let tokens;
-          try { tokens = OAuthTokensSchema.parse(await response.clone().json()); }
-          catch { throw new GatewayError('oauth_invalid_token', 'OAuth returned an invalid token response'); }
-          await this.saveTokens(tokens);
+          const acquisition = await this.captureTokenResponse(response);
+          await this.saveTokens(acquisition.tokens, false, acquisition.expiresAt);
         }
         return response;
       });
@@ -558,27 +558,61 @@ export class BackendOAuthProvider {
     if (!tokens) return undefined;
     return tokens;
   }
-  async saveTokens(tokens, replace = false, expiresAt = tokens?.expires_in === undefined ? undefined : Date.now() + tokens.expires_in * 1000, serviceState) {
+  recordTokenAcquisition(tokens, expiresAt) {
+    validateAccessToken(tokens?.access_token);
+    if (expiresAt !== undefined && (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt) ||
+        !Number.isSafeInteger(Math.ceil(expiresAt)))) throw new GatewayError('oauth_invalid_token', 'OAuth returned an invalid token expiry');
+    const record = { key: JSON.stringify(tokens), expiresAt, generation: this.generation };
+    const context = this.context.getStore();
+    if (context) context.tokenAcquisition = record;
+    else this.tokenAcquisition = record;
+    return record;
+  }
+  async captureTokenResponse(response) {
+    if (!response.ok) return;
+    const acquiredAt = Date.now();
+    let tokens;
+    try { tokens = OAuthTokensSchema.parse(await response.clone().json()); }
+    catch { throw new GatewayError('oauth_invalid_token', 'OAuth returned an invalid token response'); }
+    const expiresAt = tokens.expires_in === undefined ? undefined : acquiredAt + tokens.expires_in * 1000;
+    this.recordTokenAcquisition(tokens, expiresAt);
+    return { tokens, expiresAt };
+  }
+  async saveTokens(tokens, replace = false, expiresAt, serviceState) {
     validateAccessToken(tokens?.access_token);
     this.options.signal?.throwIfAborted();
     const previous = this.pendingTokens ?? this.saved.tokens;
     const merged = { ...tokens, ...(replace || tokens.refresh_token ? {} : previous?.refresh_token ? { refresh_token: previous.refresh_token } : {}) };
     const context = this.context.getStore();
     if (context && context.generation !== this.generation) return false;
+    const acquisition = context ? context.tokenAcquisition : this.tokenAcquisition;
+    const matchingAcquisition = acquisition?.key === JSON.stringify(tokens);
+    if (arguments.length < 3) {
+      if (matchingAcquisition) {
+        if (acquisition.generation !== this.generation) return false;
+        expiresAt = acquisition.expiresAt;
+      } else expiresAt = JSON.stringify(merged) === JSON.stringify(previous) ? this.expiresAt :
+        tokens.expires_in === undefined ? undefined : Date.now() + tokens.expires_in * 1000;
+    }
+    if (expiresAt !== undefined && (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt) ||
+        !Number.isSafeInteger(Math.ceil(expiresAt)))) throw new GatewayError('oauth_invalid_token', 'OAuth returned an invalid token expiry');
     const serviceChanged = serviceState && JSON.stringify(serviceState) !== JSON.stringify(this.saved.service);
-    if (!replace && !this.options.interactive && !serviceChanged && JSON.stringify(merged) === JSON.stringify(previous)) return false;
+    if (!replace && !this.options.interactive && !serviceChanged && expiresAt === this.expiresAt &&
+        JSON.stringify(merged) === JSON.stringify(previous)) return false;
     if (this.options.interactive) {
       this.pendingTokens = merged;
       if (serviceState) this.pendingService = serviceState;
       this.pendingExpiresAt = expiresAt;
       if (context) context.generation = this.generation;
+      if (matchingAcquisition) acquisition.generation = this.generation;
       return true;
     }
     this.saved.tokens = merged;
     if (serviceState) this.saved.service = serviceState;
-    if (context) context.generation = this.generation;
     this.saved.expiresAt = expiresAt;
+    if (context) context.generation = this.generation;
     await this.persist();
+    if (matchingAcquisition) acquisition.generation = this.generation;
     return true;
   }
   async commitTokens() {
@@ -705,8 +739,10 @@ export class OAuthHTTPClientTransport extends StreamableHTTPClientTransport {
     }
   }
   async finishAuth(code) {
-    if (this.provider.entra) await this.provider.entra.finish(code);
-    else await super.finishAuth(code);
+    return this.provider.runRequest(async () => {
+      if (this.provider.entra) await this.provider.entra.finish(code);
+      else await super.finishAuth(code);
+    });
   }
 }
 

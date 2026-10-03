@@ -11,6 +11,18 @@ import { validateAccessToken } from './oauth-access-token.js';
 const host = 'login.microsoftonline.com';
 const tenantPattern = /^(organizations|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i;
 
+function canonicalMicrosoftUrl(value) {
+  try {
+    const url = safeOAuthUrl(value, true);
+    const path = typeof value === 'string' ? value.match(/^https:\/\/[^/?#]+(\/[^?#]*)$/i)?.[1] : undefined;
+    if (url.hostname !== host || url.port || url.search || path !== url.pathname) return undefined;
+    const parts = path.split('/');
+    if (!tenantPattern.test(parts[1] ?? '')) return undefined;
+    parts[1] = parts[1].toLowerCase();
+    return `https://${host}${parts.join('/')}`;
+  } catch { return undefined; }
+}
+
 export function microsoftAuthority(value) {
   const url = new URL(value);
   if (url.protocol !== 'https:' || url.hostname !== host) return undefined;
@@ -18,7 +30,7 @@ export function microsoftAuthority(value) {
   const parts = url.pathname.replace(/\/$/, '').split('/').filter(Boolean);
   if (url.hostname !== host || url.port || url.search || parts.length !== 2 ||
       parts[1] !== 'v2.0' || !tenantPattern.test(parts[0])) return undefined;
-  return `https://${host}/${parts[0]}`;
+  return `https://${host}/${parts[0].toLowerCase()}`;
 }
 
 export function validateMicrosoftDiscovery(discovery) {
@@ -28,12 +40,12 @@ export function validateMicrosoftDiscovery(discovery) {
   const tenant = new URL(authority).pathname.slice(1);
   const issuer = metadata?.issuer;
   const expectedIssuer = `${authority}/v2.0`;
-  if (issuer !== expectedIssuer &&
+  if (canonicalMicrosoftUrl(issuer) !== expectedIssuer &&
       !(tenant === 'organizations' && issuer === `https://${host}/{tenantid}/v2.0`)) {
     throw new GatewayError('oauth_invalid_issuer', 'Entra discovery issuer does not match the advertised Microsoft authority');
   }
   for (const [key, suffix] of [['authorization_endpoint', 'authorize'], ['token_endpoint', 'token']]) {
-    if (metadata?.[key] !== `${authority}/oauth2/v2.0/${suffix}`) {
+    if (canonicalMicrosoftUrl(metadata?.[key]) !== `${authority}/oauth2/v2.0/${suffix}`) {
       throw new GatewayError('oauth_invalid_issuer', 'Entra discovery endpoints do not match the advertised Microsoft authority');
     }
   }
@@ -61,10 +73,12 @@ export function entraServiceAuthority(config, discovery) {
   if (advertised !== authority && new URL(advertised).pathname !== '/organizations') {
     throw new GatewayError('oauth_invalid_issuer', 'Configured app-only tenant authority must match the resource-advertised tenant authority');
   }
-  if (!discovery.resourceMetadata?.authorization_servers?.includes(discovery.authorizationServerUrl)) {
+  const advertisedUrl = canonicalMicrosoftUrl(discovery.authorizationServerUrl);
+  if (!advertisedUrl || !discovery.resourceMetadata?.authorization_servers?.some(value =>
+    canonicalMicrosoftUrl(value) === advertisedUrl)) {
     throw new GatewayError('oauth_invalid_issuer', 'App-only authority must be advertised by verified protected-resource metadata');
   }
-  if (config.oauth.issuer && config.oauth.issuer !== discovery.authorizationServerUrl) {
+  if (config.oauth.issuer && canonicalMicrosoftUrl(config.oauth.issuer) !== advertisedUrl) {
     throw new GatewayError('oauth_invalid_issuer', 'Configured issuer must match the resource-advertised authority');
   }
   return authority;
@@ -97,7 +111,7 @@ export class EntraOAuth {
     const send = async (url, options, method) => {
       const target = safeOAuthUrl(url, true);
       if (target.hostname !== host || target.port) throw new GatewayError('oauth_invalid_issuer', 'MSAL network target is not the supported Microsoft cloud');
-      const endpoint = `${target.origin}${target.pathname}`;
+      const endpoint = canonicalMicrosoftUrl(`${target.origin}${target.pathname}`);
       if (method === 'POST' && endpoint !== `${this.authority}/oauth2/v2.0/token` &&
           !(!this.serviceAccount && endpoint === `${this.authority}/oauth2/v2.0/devicecode`)) {
         throw new GatewayError('oauth_invalid_issuer', 'MSAL credentials may only be sent to the verified authority endpoint');

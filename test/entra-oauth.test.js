@@ -49,6 +49,37 @@ test('exact Microsoft cloud, authority and endpoint trust; generic issuer remain
     resource: 'https://other.example/mcp' } }), { code: 'oauth_invalid_resource' });
 });
 
+test('Microsoft tenant GUID and selector casing canonicalizes without weakening issuer or endpoint binding', async () => {
+  const tenant = 'abcdefab-1234-5678-9abc-def012345678';
+  const canonical = `https://login.microsoftonline.com/${tenant}`;
+  const upper = `https://login.microsoftonline.com/${tenant.toUpperCase()}`;
+  assert.equal(microsoftAuthority(`${upper}/v2.0`), canonical);
+  assert.equal(microsoftAuthority('https://login.microsoftonline.com/ORGANIZATIONS/v2.0'), authority);
+  for (const [advertised, endpoints] of [[canonical, upper], [upper, canonical], [upper, upper]]) {
+    const info = { authorizationServerUrl: `${advertised}/v2.0`,
+      authorizationServerMetadata: { issuer: `${endpoints}/v2.0`,
+        authorization_endpoint: `${endpoints}/oauth2/v2.0/authorize`, token_endpoint: `${endpoints}/oauth2/v2.0/token` },
+      resourceMetadata: { resource: 'https://mcp.example/mcp', authorization_servers: [`${canonical}/v2.0`],
+        scopes_supported: ['api://fixture/.default'] } };
+    const config = { oauth: { authority: upper, issuer: `${upper}/v2.0`, clientId, tokenEndpointAuthMethod: 'client_secret_post',
+      scopes: ['api://fixture/.default'] } };
+    assert.equal(validateMicrosoftDiscovery(info), canonical);
+    assert.equal(entraServiceAuthority(config, info), canonical);
+    assert.throws(() => entraServiceAuthority({ oauth: { ...config.oauth,
+      authority: `https://login.microsoftonline.com/${clientId}` } }, info), { code: 'oauth_invalid_issuer' });
+    for (const token_endpoint of [`https://login.microsoftonline.com/${clientId}/oauth2/v2.0/token`,
+      `${canonical}/OAuth2/v2.0/token`, `${canonical}/oauth2/v2.0/token?extra=1`,
+      'https://login.microsoftonline.com.evil.test/organizations/oauth2/v2.0/token']) {
+      assert.throws(() => validateMicrosoftDiscovery({ ...info,
+        authorizationServerMetadata: { ...info.authorizationServerMetadata, token_endpoint } }), { code: 'oauth_invalid_issuer' });
+    }
+    const provider = { config, options: {}, saved: {}, serviceAccount: true, confidential: true, path: 'synthetic-backend' };
+    const entra = new EntraOAuth(provider, info, undefined, async () => new Response('{}'));
+    const sent = await entra.msalConfig.system.networkClient.sendPostRequestAsync(`${upper}/oauth2/v2.0/token`, { body: '', headers: {} });
+    assert.equal(sent.status, 200);
+  }
+});
+
 test('publisher identity fallback, override and missing provisioning; schema', t => {
   publisherId(t, '');
   assert.throws(() => entraClientId({}), error => error.code === 'entra_publisher_registration_required' &&

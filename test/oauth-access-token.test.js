@@ -5,6 +5,7 @@ import { AzureCliCredential, azureCliToken } from '../src/azure-cli-credential.j
 import { acquireServiceTokens } from '../src/oauth-client-auth.js';
 import { acquireDeviceTokens, DEVICE_GRANT } from '../src/oauth-device.js';
 import { isValidAccessToken, validateAccessToken } from '../src/oauth-access-token.js';
+import { OAuthTokensSchema } from '@modelcontextprotocol/sdk/shared/auth.js';
 
 const invalid = ['', 'TOKEN_CANARY space', 'TOKEN_CANARY\t', 'TOKEN_CANARY\0',
   'TOKEN_CANARY\r\n', 'TOKEN_CANARY\x7f', 'TOKEN_CANARY\x85', 'TOKEN_CANARY\u00a0',
@@ -114,6 +115,67 @@ test('obsolete service response cannot overwrite newer tokens or MSAL/host selec
     acquireServiceTokens(p, discovery, 'obsolete', async () => response(opaque)));
   assert.equal(JSON.stringify(p.saved), before);
   assert.equal(p.persistCount, 0);
+});
+
+test('fresh same-payload HTTP renewal records expiry once; delayed SDK saves and stale expiry-only actors cannot extend or overwrite it', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_800_000_000_000 });
+  const p = provider();
+  p.saved.tokens = { access_token: opaque, token_type: 'Bearer', expires_in: 3600 };
+  p.saved.expiresAt = Date.now() + 5000;
+  await p.runRequest(async () => {
+    const acquiredAt = Date.now();
+    const reply = await p.fetch(async () => response(opaque))(`${issuer}/token`,
+      { method: 'POST', body: new URLSearchParams({ grant_type: 'refresh_token' }) });
+    const tokens = OAuthTokensSchema.parse(await reply.json());
+    assert.equal(p.expiresAt, acquiredAt + 3600_000);
+    assert.equal(p.persistCount, 1);
+    t.mock.timers.tick(30_000);
+    await p.saveTokens(tokens);
+    assert.equal(p.expiresAt, acquiredAt + 3600_000, 'a second SDK save must not restart the relative lifetime');
+    assert.equal(p.persistCount, 1);
+    const generation = p.generation;
+    const newerExpiry = acquiredAt + 7200_000;
+    await p.context.run(undefined, () => p.saveTokens(tokens, false, newerExpiry));
+    assert.notEqual(p.generation, generation, 'expiry-only renewal changes the credential generation');
+    const before = JSON.stringify(p.saved);
+    const writes = p.persistCount;
+    await p.saveTokens(tokens, false, acquiredAt + 3600_000);
+    assert.equal(JSON.stringify(p.saved), before);
+    assert.equal(p.persistCount, writes);
+    assert.equal(p.expiresAt, newerExpiry);
+  });
+});
+
+test('invalid absolute expiry and cancelled renewal reject before credential mutation or publication', async () => {
+  const p = provider();
+  const before = JSON.stringify(p.saved);
+  for (const expiresAt of [NaN, Infinity, '3600', Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(p.saveTokens({ access_token: opaque, token_type: 'Bearer' }, false, expiresAt), rejected);
+    assert.equal(JSON.stringify(p.saved), before);
+    assert.equal(p.persistCount, 0);
+  }
+  p.options.signal = AbortSignal.abort();
+  await assert.rejects(p.saveTokens({ access_token: opaque, token_type: 'Bearer' }, false, Date.now() + 3600_000),
+    { name: 'AbortError' });
+  assert.equal(JSON.stringify(p.saved), before);
+  assert.equal(p.persistCount, 0);
+});
+
+test('cached SDK token response preserves recorded absolute expiry rather than treating it as a new acquisition', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_800_000_000_000 });
+  const p = provider();
+  p.saved.tokens = { access_token: opaque, token_type: 'Bearer', expires_in: 3600 };
+  const expiry = Date.now() + 5000;
+  p.saved.expiresAt = expiry;
+  p.saved.revision = 'newer';
+  await p.runRequest(async () => {
+    const reply = await p.fetch(async () => assert.fail('cached replacement must not acquire another token'))(`${issuer}/token`,
+      { method: 'POST', body: new URLSearchParams({ grant_type: 'refresh_token' }) });
+    t.mock.timers.tick(30_000);
+    await p.saveTokens(OAuthTokensSchema.parse(await reply.json()));
+    assert.equal(p.expiresAt, expiry);
+    assert.equal(p.persistCount, 0);
+  });
 });
 
 test('device grants reject malformed SDK token responses before creating any pending selection or tokens', async () => {

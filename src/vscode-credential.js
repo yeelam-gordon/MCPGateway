@@ -39,10 +39,11 @@ export function vscodeCallback({ nonce, binding, startedAt, deadline, onReady, o
     if (request.method === 'GET' && request.url === `${path}/status`) {
       response.writeHead(isClosing() ? 410 : 204).end(); return;
     }
-    if (request.method !== 'POST' || ![path, `${path}/ready`].includes(request.url) || isClosing() || consumed ||
+    if (request.method !== 'POST' || ![path, `${path}/ready`].includes(request.url) || isClosing() || (consumed && request.url === path) ||
         request.headers['content-type'] !== 'application/json' ||
         !/^\d+$/.test(request.headers['content-length'] ?? '') ||
         Number(request.headers['content-length']) > 65_536) return reject();
+    if (request.url === path) consumed = true;
     let size = 0;
     const chunks = [];
     try {
@@ -61,7 +62,6 @@ export function vscodeCallback({ nonce, binding, startedAt, deadline, onReady, o
           !body.error && (!isValidAccessToken(body.accessToken) || typeof body.sessionId !== 'string' || !body.sessionId ||
             typeof body.accountId !== 'string' || !body.accountId)) return reject();
       response.writeHead(204, { 'Cache-Control': 'no-store' }).end();
-      consumed = true;
       onResult(body);
     } catch { if (!response.headersSent) reject(); }
   };

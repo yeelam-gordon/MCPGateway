@@ -101,6 +101,32 @@ async function fixture(t, method, grantType = 'authorization_code') {
     scope: value => { scopes = value; } };
 }
 
+test('generic service identical-token renewal publishes fresh acquisition expiry once and the next request reuses it', async t => {
+  const f = await fixture(t, 'client_secret_post', 'client_credentials');
+  f.fixedToken('opaque-same-service-token');
+  const provider = await BackendOAuthProvider.load(f.config, f.directory);
+  await provider.saveDiscoveryState(f.discovery);
+  const fetch = boundedOAuthFetch(undefined, 10_000, f.config);
+  await acquireServiceTokens(provider, f.discovery, 'read', fetch);
+  const payload = JSON.stringify(provider.tokens());
+  const binding = provider.saved.service.binding;
+  provider.saved.expiresAt = Date.now() + 5000;
+  await provider.persist();
+  f.requests.length = 0;
+  let publications = 0;
+  const persist = provider.persist;
+  t.mock.method(provider, 'persist', async function () { publications++; return persist.call(this); });
+  await acquireServiceTokens(provider, f.discovery, 'read', fetch);
+  assert.equal(JSON.stringify(provider.tokens()), payload);
+  assert.equal(provider.saved.service.binding, binding);
+  assert.ok(provider.expiresAt > Date.now() + 30_000, 'identical payload and binding must still publish renewed expiry');
+  await acquireServiceTokens(provider, f.discovery, 'read', fetch);
+  assert.equal(f.requests.length, 1);
+  assert.equal(publications, 1);
+  const restarted = await BackendOAuthProvider.load(f.config, f.directory);
+  assert.equal(restarted.expiresAt, provider.expiresAt);
+});
+
 test('generic service identical-token scope publication survives restart and stale actors cannot overwrite a newer binding', async t => {
   const f = await fixture(t, 'client_secret_post', 'client_credentials');
   f.fixedToken('opaque-same-service-token');

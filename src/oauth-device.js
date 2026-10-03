@@ -3,7 +3,7 @@ import { fetchToken, registerClient, selectResourceURL } from '@modelcontextprot
 import { GatewayError } from './errors.js';
 import { safeOAuthUrl } from './config-schema.js';
 import { addRegisteredClientAuthentication, VERIFIED_DEVICE_AUTH_ENDPOINT } from './oauth-client-auth.js';
-import { validateAccessToken, validateTokenResponse } from './oauth-access-token.js';
+import { validateAccessToken } from './oauth-access-token.js';
 
 export const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
 
@@ -69,7 +69,8 @@ export async function acquireDeviceTokens(provider, discovery, challengeScope, f
   };
   const flow = new AbortController();
   const combined = signal ? AbortSignal.any([signal, flow.signal]) : flow.signal;
-  const timer = setTimeout(() => flow.abort(), Math.max(0, expiry - now()));
+  const timer = setTimeout(() => flow.abort(new GatewayError('oauth_device_expired', 'Device authorization expired before completion')),
+    Math.max(0, expiry - now()));
   try {
     for (;;) {
       check();
@@ -80,10 +81,12 @@ export async function acquireDeviceTokens(provider, discovery, challengeScope, f
       await wait(interval, combined);
       check();
       try {
+        let acquiredExpiry;
         const tokens = await fetchToken(sdkProvider, discovery.authorizationServerUrl, { metadata, resource,
           fetchFn: async (url, init) => {
             const response = await fetchFn(url, { ...init, signal: combined });
-            await validateTokenResponse(response);
+            const acquisition = await provider.captureTokenResponse(response);
+            if (acquisition) acquiredExpiry = acquisition.expiresAt;
             if (response.status === 400) {
               const body = await response.clone().json();
               if (['authorization_pending', 'slow_down'].includes(body?.error)) {
@@ -99,7 +102,7 @@ export async function acquireDeviceTokens(provider, discovery, challengeScope, f
         validateAccessToken(tokens.access_token);
         if (tokens.token_type.toLowerCase() !== 'bearer') throw new GatewayError('oauth_invalid_token', 'Invalid device authorization token');
         provider.pendingDevice = { binding: JSON.stringify([metadata.issuer, client.client_id, resource.href, DEVICE_GRANT, scope]) };
-        await provider.saveTokens(tokens, true);
+        await provider.saveTokens(tokens, true, acquiredExpiry);
         return;
       } catch (error) {
         check();
@@ -110,6 +113,10 @@ export async function acquireDeviceTokens(provider, discovery, challengeScope, f
         throw new GatewayError('oauth_device_failed', 'Device authorization denied, expired, or failed');
       }
     }
+  } catch (error) {
+    check();
+    if (flow.signal.aborted && flow.signal.reason?.code === 'oauth_device_expired') throw flow.signal.reason;
+    throw error;
   } finally {
     clearTimeout(timer);
     flow.abort();

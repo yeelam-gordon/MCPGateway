@@ -5,7 +5,7 @@ import { ClientCredentialsProvider, createPrivateKeyJwtAuth } from '@modelcontex
 import { fetchToken, selectResourceURL } from '@modelcontextprotocol/sdk/client/auth.js';
 import { GatewayError } from './errors.js';
 import { safeOAuthUrl } from './config-schema.js';
-import { validateAccessToken, validateTokenResponse } from './oauth-access-token.js';
+import { validateAccessToken } from './oauth-access-token.js';
 
 const failure = () => new GatewayError('oauth_client_credentials_invalid',
   'Registered OAuth credentials are unavailable or invalid; check the selected secretEnv or absolute PKCS#8 privateKeyPath and registration');
@@ -95,10 +95,12 @@ export async function acquireServiceTokens(provider, discovery, scope, fetchFn, 
       clientSecret: '', scope: resolvedScope });
     sdk.addClientAuthentication = provider.addClientAuthentication;
     try {
+      let acquiredExpiry;
       const tokens = await fetchToken(sdk, discovery.authorizationServerUrl, {
         metadata: discovery.authorizationServerMetadata, resource, fetchFn: async (url, init) => {
           const response = await fetchFn(url, init);
-          await validateTokenResponse(response);
+          const acquisition = await provider.captureTokenResponse(response);
+          if (acquisition) acquiredExpiry = acquisition.expiresAt;
           return response;
         } });
       validateAccessToken(tokens.access_token);
@@ -108,7 +110,7 @@ export async function acquireServiceTokens(provider, discovery, scope, fetchFn, 
         throw new GatewayError('oauth_invalid_token', 'Service token requires a non-empty Bearer credential and a safe lifetime longer than 30 seconds');
       }
       const { refresh_token, ...access } = tokens;
-      await provider.saveTokens(access, false, undefined, { binding, scope: resolvedScope });
+      await provider.saveTokens(access, false, acquiredExpiry, { binding, scope: resolvedScope });
     } catch (error) {
       if (error instanceof GatewayError) throw error;
       throw new GatewayError('oauth_service_auth_failed', 'Service-account token acquisition failed; check registered credentials, API scope and app-only consent');

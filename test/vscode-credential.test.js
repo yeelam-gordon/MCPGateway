@@ -164,8 +164,9 @@ test('callback validates nonce, Origin, Host, clock, resource, length and one-ti
   const startedAt = Date.now();
   let results = 0;
   let ready = 0;
-  const server = createServer(vscodeCallback({ nonce, binding: 'resource-bound', startedAt,
-    deadline: startedAt + 30_000, isClosing: () => false, onReady: () => ready++, onResult: () => results++ }));
+  const callback = () => vscodeCallback({ nonce, binding: 'resource-bound', startedAt,
+    deadline: startedAt + 30_000, isClosing: () => false, onReady: () => ready++, onResult: () => results++ });
+  const server = createServer(callback());
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
   const url = `http://127.0.0.1:${server.address().port}/host-token`;
@@ -221,12 +222,73 @@ test('callback validates nonce, Origin, Host, clock, resource, length and one-ti
   for (const value of [{ ...body, binding: 'other-resource' }, { ...body, issuedAt: startedAt - 1 },
     { ...body, issuedAt: Date.now() + 60_000 }, { ...body, accessToken: 'bad\r\ntoken' },
     { ...body, accessToken: 'x'.repeat(66_000) }]) {
+    server.removeAllListeners('request');
+    server.on('request', callback());
     assert.equal((await post(value)).status, 400);
   }
+  server.removeAllListeners('request');
+  server.on('request', callback());
   assert.equal((await post({ binding: 'resource-bound' }, {}, '/ready')).status, 204);
   assert.equal(ready, 1);
   assert.equal((await post()).status, 204);
   assert.equal((await post()).status, 400);
+  assert.equal(results, 1);
+  server.removeAllListeners('request');
+  server.on('request', callback());
+  assert.equal((await post({ ...body, binding: 'other-resource' })).status, 400);
+  assert.equal((await post()).status, 400, 'authenticated malformed completion consumes its reserved slot without publication');
+  assert.equal(results, 1);
+});
+
+test('callback reserves one authorized completion before reading concurrent streams; nonce failures and readiness do not consume it', async t => {
+  const nonce = randomBytes(32).toString('base64url');
+  const startedAt = Date.now();
+  let results = 0;
+  let ready = 0;
+  let entered;
+  const firstEntered = new Promise(resolve => { entered = resolve; });
+  const callback = vscodeCallback({ nonce, binding: 'stream-bound', startedAt, deadline: startedAt + 30_000,
+    isClosing: () => false, onReady: () => ready++, onResult: () => results++ });
+  const server = createServer((request, response) => {
+    void callback(request, response);
+    if (request.url === '/host-token' && request.headers.authorization === `Bearer ${nonce}`) entered();
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const url = `http://127.0.0.1:${server.address().port}/host-token`;
+  const data = JSON.stringify({ binding: 'stream-bound', issuedAt: Date.now(), accessToken: 'opaque-token',
+    accountId: 'opaque-account', sessionId: 'opaque-session' });
+  const start = (suffix = '', auth = nonce, body = data) => {
+    let request;
+    const completion = new Promise((resolve, reject) => {
+      request = httpRequest(url + suffix, { method: 'POST', headers: { authorization: `Bearer ${auth}`,
+        'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } }, response => {
+        response.resume(); response.on('end', () => resolve(response.statusCode));
+      });
+      request.on('error', reject);
+    });
+    return { request, completion, body };
+  };
+  const bad = start('', `${nonce[0] === 'a' ? 'b' : 'a'}${nonce.slice(1)}`);
+  bad.request.end(bad.body);
+  assert.equal(await bad.completion, 400);
+  const readiness = start('/ready', nonce, JSON.stringify({ binding: 'stream-bound' }));
+  readiness.request.end(readiness.body);
+  assert.equal(await readiness.completion, 204);
+  assert.equal(ready, 1);
+  const first = start();
+  first.request.write(data.slice(0, 1));
+  await firstEntered;
+  const status = await fetch(`${url}/status`, { headers: { authorization: `Bearer ${nonce}` } });
+  assert.equal(status.status, 204);
+  const second = start();
+  second.request.end(second.body);
+  try {
+    assert.equal(await second.completion, 400);
+  } finally {
+    first.request.end(data.slice(1));
+    assert.equal(await first.completion, 204);
+  }
   assert.equal(results, 1);
 });
 

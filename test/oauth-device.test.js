@@ -170,6 +170,27 @@ for (const registration of ['dcr', 'cimd']) {
   });
 }
 
+for (const mode of ['poll-sleep', 'token-request']) {
+  test(`device own lifetime expiry during ${mode} preserves oauth_device_expired without pending publication`, async t => {
+    const f = await fixture(t, { expires: mode === 'poll-sleep' ? 1 : 2, interval: mode === 'poll-sleep' ? 5 : 1,
+      hang: mode === 'token-request', errors: [] });
+    const base = f.config.url.replace('/mcp', '');
+    const provider = await BackendOAuthProvider.load(f.config, f.directory);
+    await provider.saveDiscoveryState({ authorizationServerUrl: base,
+      authorizationServerMetadata: { issuer: base, authorization_endpoint: `${base}/authorize`, token_endpoint: `${base}/token`,
+        device_authorization_endpoint: `${base}/device`, grant_types_supported: [DEVICE_GRANT], response_types_supported: ['code'] },
+      resourceMetadata: { resource: f.config.url, authorization_servers: [base], scopes_supported: ['authoritative'] } });
+    f.options.timeoutMs = 5000;
+    f.options.deviceClock = undefined;
+    await assert.rejects(authenticateBackend(f.config, f.directory, f.options), { code: 'oauth_device_expired' });
+    const polls = f.requests.filter(r => r.path === '/token').length;
+    assert.equal(polls, mode === 'poll-sleep' ? 0 : 1);
+    const saved = await BackendOAuthProvider.load(f.config, f.directory);
+    assert.equal(saved.tokens(), undefined);
+    assert.equal(saved.saved.device, undefined);
+  });
+}
+
 for (const mode of ['cancel', 'deadline']) {
   test(`device ${mode} stops polling and never publishes`, async t => {
     const f = await fixture(t);
