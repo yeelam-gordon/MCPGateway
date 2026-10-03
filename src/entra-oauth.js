@@ -6,6 +6,7 @@ import { safeOAuthUrl } from './config-schema.js';
 import { OAUTH_PROTOCOL_HEADERS } from './oauth-client-auth.js';
 import { boundMicrosoftScopes } from './microsoft-resource-binding.js';
 import { requiredMicrosoftScopes } from './microsoft-resource-scopes.js';
+import { validateAccessToken } from './oauth-access-token.js';
 
 const host = 'login.microsoftonline.com';
 const tenantPattern = /^(organizations|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z0-9-]+(?:\.[a-z0-9-]+)+)$/i;
@@ -177,6 +178,7 @@ export class EntraOAuth {
         const result = await action(saved?.binding === this.binding ? saved : undefined);
         provider.options.signal?.throwIfAborted();
         if (!result?.accessToken || (!this.serviceAccount && !result.account)) throw new GatewayError('auth_required', 'Entra sign-in did not return the required access token/account');
+        validateAccessToken(result.accessToken);
         if (!this.serviceAccount && saved?.authority === this.authority && saved?.trustedResource === this.trustedResource &&
             (saved.homeAccountId !== result.account.homeAccountId || saved.tenantId !== result.account.tenantId)) {
           throw new GatewayError('oauth_invalid_token', 'Microsoft scope consent must preserve the previously selected account and tenant');

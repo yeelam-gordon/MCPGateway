@@ -43,6 +43,7 @@ async function pluginFixture() {
   await cp(new URL('../src/config.js', import.meta.url), join(root, 'src', 'config.js'));
   await cp(new URL('../src/config-schema.js', import.meta.url), join(root, 'src', 'config-schema.js'));
   await cp(new URL('../src/microsoft-resource-binding.js', import.meta.url), join(root, 'src', 'microsoft-resource-binding.js'));
+  await cp(new URL('../src/oauth-access-token.js', import.meta.url), join(root, 'src', 'oauth-access-token.js'));
   await cp(new URL('../src/microsoft-host-env.js', import.meta.url), join(root, 'src', 'microsoft-host-env.js'));
   await cp(new URL('../src/errors.js', import.meta.url), join(root, 'src', 'errors.js'));
   await cp(new URL('../src/npx-package-warnings.js', import.meta.url), join(root, 'src', 'npx-package-warnings.js'));

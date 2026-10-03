@@ -22,6 +22,17 @@ const clientId = '11111111-1111-1111-1111-111111111111';
 const accountKey = 'a'.repeat(64);
 const binding = (oauth = {}, options = {}, saved = {}) => ({ config: { oauth }, options, saved });
 
+test('explicit sole /.default survives scope selection; only a mix with named API permissions removes it', () => {
+  const defaults = 'api://fixture/.default';
+  const read = 'api://fixture/Read';
+  assert.deepEqual(boundMicrosoftScopes(binding({ resource: 'api://fixture' }, { scopes: [defaults] }),
+    discovery).scopes, [defaults]);
+  assert.deepEqual(boundMicrosoftScopes(binding({ resource: 'api://fixture' }, { scopes: [defaults, 'openid'] }),
+    discovery).scopes, [defaults, 'openid']);
+  assert.deepEqual(boundMicrosoftScopes(binding({ resource: 'api://fixture' }, { scopes: [defaults, read] }),
+    discovery).scopes, [read]);
+});
+
 test('canonical operator API binding validates URLs, GUIDs and scope-derived pins independently', () => {
   for (const resource of ['', 'http://api.example', 'https://user:pass@api.example',
     'https://api.example?x=1', 'https://api.example#x', 'api://api\\evil', 'not-an-api',
@@ -144,7 +155,7 @@ for (const [mode, configured] of [
       assert.notEqual(changed.path, restarted.path);
       assert.equal(changed.tokens(), undefined);
     }
-    assert.equal(committed.expiresAt, mode === 'vscode' ? undefined : committed.expiresAt);
+    assert.equal(committed.expiresAt, undefined, 'neither host publishes a persisted access-token expiry');
   });
 }
 

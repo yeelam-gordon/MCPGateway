@@ -61,8 +61,12 @@ export function boundMicrosoftScopes(provider, discovery, challenged) {
   const selected = previous.length ? previous : configured ?? [];
   if (incoming.length && incoming.filter(scope => !OIDC_SCOPES.has(scope)).every(scope => scope.endsWith('/.default')) &&
       selected.some(scope => !OIDC_SCOPES.has(scope) && !scope.endsWith('/.default'))) scopes = selected;
-  if (requested.length) scopes = [...new Set([...scopes, ...previous, ...(configured ?? []), ...requested])]
-    .filter(scope => !scope.endsWith('/.default'));
+  if (requested.length) {
+    scopes = [...new Set([...scopes, ...previous, ...(configured ?? []), ...requested])];
+    if (scopes.some(scope => !OIDC_SCOPES.has(scope) && !scope.endsWith('/.default'))) {
+      scopes = scopes.filter(scope => !scope.endsWith('/.default'));
+    }
+  }
   for (const scope of scopes) {
     if (!OIDC_SCOPES.has(scope) && microsoftScopeBase(scope) !== resource) {
       throw new GatewayError('entra_invalid_scope', 'Selected Microsoft scopes do not match the approved API resource');

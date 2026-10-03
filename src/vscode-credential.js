@@ -9,6 +9,7 @@ import { GatewayError } from './errors.js';
 import { secureOwnerOnly } from './token.js';
 import { microsoftResourceScopes, requiredMicrosoftScopes } from './microsoft-resource-scopes.js';
 import { microsoftHostEnv } from './microsoft-host-env.js';
+import { isValidAccessToken, validateAccessToken } from './oauth-access-token.js';
 
 export function vscodeProfilePath(provider, credential) {
   return join(provider.directory, `vscode-${createHash('sha256')
@@ -57,8 +58,7 @@ export function vscodeCallback({ nonce, binding, startedAt, deadline, onReady, o
       }
       if (!Number.isFinite(body.issuedAt) || body.issuedAt < startedAt || body.issuedAt > Date.now() + 1000 ||
           body.error !== undefined && body.error !== 'auth_required' ||
-          !body.error && (typeof body.accessToken !== 'string' || !body.accessToken ||
-            /[\s\x00-\x1f\x7f]/.test(body.accessToken) || typeof body.sessionId !== 'string' || !body.sessionId ||
+          !body.error && (!isValidAccessToken(body.accessToken) || typeof body.sessionId !== 'string' || !body.sessionId ||
             typeof body.accountId !== 'string' || !body.accountId)) return reject();
       response.writeHead(204, { 'Cache-Control': 'no-store' }).end();
       consumed = true;
@@ -249,8 +249,8 @@ export class VSCodeCredential {
       provider.vscodeAcquisitions = (provider.vscodeAcquisitions ?? 0) + 1;
       const result = await (provider.options.vscodeAcquire ?? acquireVSCodeToken)(provider, this);
       provider.options.signal?.throwIfAborted();
-      if (!result?.accessToken || typeof result.accessToken !== 'string' || /[\s\x00-\x1f\x7f]/.test(result.accessToken) ||
-          !/^[a-f0-9]{64}$/.test(result.accountKey ?? '')) throw new GatewayError('oauth_invalid_token', 'VS Code host returned an invalid credential');
+      validateAccessToken(result?.accessToken);
+      if (!/^[a-f0-9]{64}$/.test(result.accountKey ?? '')) throw new GatewayError('oauth_invalid_token', 'VS Code host returned an invalid credential');
       if (current?.providerIdentity === this.providerIdentity && current.authority === this.authority &&
           current.resource === this.resource && current.accountKey && current.accountKey !== result.accountKey) {
         throw new GatewayError('oauth_invalid_token', 'VS Code host account changed; explicitly select the intended identity');

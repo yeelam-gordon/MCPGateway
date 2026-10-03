@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { BackendOAuthProvider, authenticateBackend, boundedOAuthFetch } from '../src/backend-oauth.js';
-import { VSCodeCredential, vscodeCallback, acquireVSCodeToken, stopVSCode, vscodeProfilePath } from '../src/vscode-credential.js';
+import { VSCodeCredential, vscodeCallback, acquireVSCodeToken, stopVSCode, vscodeProfilePath, resolveVSCode } from '../src/vscode-credential.js';
 import { validateBackendConfig } from '../src/config-schema.js';
 import { BackendRegistry } from '../src/backend-registry.js';
 import { selectedMicrosoftHostScope } from '../src/microsoft-resource-scopes.js';
@@ -230,6 +230,21 @@ test('callback validates nonce, Origin, Host, clock, resource, length and one-ti
   assert.equal(results, 1);
 });
 
+test('VS Code resolver enforces the actual platform before installation lookup', async () => {
+  let lookups = 0;
+  const options = { env: { ProgramFiles: 'C:\\fixture' }, exists: async command => {
+    lookups++;
+    assert.equal(command, join('C:\\fixture', 'Microsoft VS Code', 'Code.exe'));
+  } };
+  if (process.platform === 'win32') {
+    assert.equal(await resolveVSCode(options), join('C:\\fixture', 'Microsoft VS Code', 'Code.exe'));
+    assert.equal(lookups, 1);
+  } else {
+    await assert.rejects(resolveVSCode(options), { code: 'vscode_unavailable' });
+    assert.equal(lookups, 0);
+  }
+});
+
 test('launcher uses packaged public API helper, private profile and bounded owned cleanup, without starting Code', async t => {
   const canaries = { PRIVACY_CREDENTIAL_CANARY: 'excluded-credential',
     HARMLESS_UNUSED_USER_SETTING: 'excluded-setting', ELECTRON_RUN_AS_NODE: '1',
@@ -259,7 +274,7 @@ test('launcher uses packaged public API helper, private profile and bounded owne
       assert.equal(env.ELECTRON_RUN_AS_NODE, undefined);
       assert.notEqual(env.SHARED_MCP_VSCODE_NONCE, 'stale-nonce');
       assert.notEqual(env.SHARED_MCP_VSCODE_REQUEST, 'stale-request');
-      assert.ok(env.SystemRoot ?? env.SYSTEMROOT);
+      if (process.platform === 'win32') assert.ok(env.SystemRoot ?? env.SYSTEMROOT);
       assert.ok(env.Path ?? env.PATH);
       const request = JSON.parse(env.SHARED_MCP_VSCODE_REQUEST);
       void fetch(env.SHARED_MCP_VSCODE_CALLBACK, { method: 'POST',

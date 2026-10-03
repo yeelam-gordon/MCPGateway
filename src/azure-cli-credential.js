@@ -6,6 +6,7 @@ import { posix, win32 } from 'node:path';
 import { GatewayError } from './errors.js';
 import { microsoftResourceScopes, requiredMicrosoftScopes } from './microsoft-resource-scopes.js';
 import { microsoftHostEnv } from './microsoft-host-env.js';
+import { validateAccessToken } from './oauth-access-token.js';
 
 export async function resolveAzureCli({ platform = process.platform, env = process.env, read = readFile, exists = access } = {}) {
   const paths = (env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : ':').filter(Boolean);
@@ -103,8 +104,8 @@ export function azureCliToken(text) {
   catch { throw new GatewayError('oauth_invalid_token', 'Azure CLI returned invalid token JSON'); }
   const expiresAt = result?.expires_on !== undefined ? Number(result.expires_on) * 1000 :
     typeof result?.expiresOn === 'string' && /(?:Z|[+-]\d\d:\d\d)$/.test(result.expiresOn) ? Date.parse(result.expiresOn) : NaN;
-  if (typeof result?.accessToken !== 'string' || !result.accessToken || /[\r\n]/.test(result.accessToken) ||
-      typeof result.tokenType !== 'string' || result.tokenType.toLowerCase() !== 'bearer' ||
+  validateAccessToken(result?.accessToken);
+  if (typeof result.tokenType !== 'string' || result.tokenType.toLowerCase() !== 'bearer' ||
       !Number.isFinite(expiresAt) || expiresAt <= Date.now() + 30_000 ||
       !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(result.tenant ?? '')) {
     throw new GatewayError('oauth_invalid_token', 'Azure CLI returned an invalid token, tenant or expiry');

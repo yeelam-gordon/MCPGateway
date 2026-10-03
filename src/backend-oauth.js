@@ -20,6 +20,7 @@ import { AzureCliCredential, resolveAzureCli } from './azure-cli-credential.js';
 import { VSCodeCredential } from './vscode-credential.js';
 import { selectedMicrosoftHostScope } from './microsoft-resource-scopes.js';
 import { boundMicrosoftScopes, trustedMicrosoftResource, canonicalMicrosoftResource } from './microsoft-resource-binding.js';
+import { validateAccessToken, validateTokenResponse } from './oauth-access-token.js';
 
 export const HTTP_AUTH_REJECTED_BEFORE_EXECUTION = Symbol('http-auth-rejected-before-execution');
 export const MICROSOFT_REQUIRED_SCOPE = Symbol('microsoft-required-scope');
@@ -444,7 +445,12 @@ export class BackendOAuthProvider {
         }
       }
       const params = typeof init.body === 'string' || init.body instanceof URLSearchParams ? new URLSearchParams(init.body) : undefined;
-      if (params?.get('grant_type') !== 'refresh_token') return fetchFn(input, init);
+      if (params?.get('grant_type') !== 'refresh_token') {
+        const response = await fetchFn(input, init);
+        if (params?.has('grant_type') && String(input instanceof Request ? input.url : input) ===
+            this.saved.discovery?.authorizationServerMetadata?.token_endpoint) await validateTokenResponse(response);
+        return response;
+      }
       const generation = this.context.getStore()?.generation ?? this.generation;
       const tokenResponse = tokens => new Response(JSON.stringify(tokens), { headers: { 'Content-Type': 'application/json' } });
       if (generation !== this.generation && this.saved.tokens) return tokenResponse(this.saved.tokens);
@@ -460,7 +466,10 @@ export class BackendOAuthProvider {
         }
         const response = await fetchFn(input, init);
         if (response.ok) {
-          const tokens = OAuthTokensSchema.parse(await response.clone().json());
+          await validateTokenResponse(response);
+          let tokens;
+          try { tokens = OAuthTokensSchema.parse(await response.clone().json()); }
+          catch { throw new GatewayError('oauth_invalid_token', 'OAuth returned an invalid token response'); }
           await this.saveTokens(tokens);
         }
         return response;
@@ -512,7 +521,8 @@ export class BackendOAuthProvider {
     if (!tokens) return undefined;
     return tokens;
   }
-  async saveTokens(tokens, replace = false, expiresAt = tokens.expires_in === undefined ? undefined : Date.now() + tokens.expires_in * 1000) {
+  async saveTokens(tokens, replace = false, expiresAt = tokens?.expires_in === undefined ? undefined : Date.now() + tokens.expires_in * 1000) {
+    validateAccessToken(tokens?.access_token);
     const previous = this.pendingTokens ?? this.saved.tokens;
     const merged = { ...tokens, ...(replace || tokens.refresh_token ? {} : previous?.refresh_token ? { refresh_token: previous.refresh_token } : {}) };
     if (!replace && !this.options.interactive && JSON.stringify(merged) === JSON.stringify(previous)) return;
@@ -531,6 +541,7 @@ export class BackendOAuthProvider {
   }
   async commitTokens() {
     if (!this.pendingTokens) return;
+    validateAccessToken(this.pendingTokens.access_token);
     if (this.saved.discovery && microsoftAuthority(this.saved.discovery.authorizationServerUrl)) {
       this.saved.trustedMicrosoftResource = trustedMicrosoftResource(this);
     }

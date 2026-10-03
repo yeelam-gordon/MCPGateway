@@ -5,6 +5,7 @@ import { ClientCredentialsProvider, createPrivateKeyJwtAuth } from '@modelcontex
 import { fetchToken, selectResourceURL } from '@modelcontextprotocol/sdk/client/auth.js';
 import { GatewayError } from './errors.js';
 import { safeOAuthUrl } from './config-schema.js';
+import { validateAccessToken, validateTokenResponse } from './oauth-access-token.js';
 
 const failure = () => new GatewayError('oauth_client_credentials_invalid',
   'Registered OAuth credentials are unavailable or invalid; check the selected secretEnv or absolute PKCS#8 privateKeyPath and registration');
@@ -95,7 +96,12 @@ export async function acquireServiceTokens(provider, discovery, scope, fetchFn, 
     sdk.addClientAuthentication = provider.addClientAuthentication;
     try {
       const tokens = await fetchToken(sdk, discovery.authorizationServerUrl, {
-        metadata: discovery.authorizationServerMetadata, resource, fetchFn });
+        metadata: discovery.authorizationServerMetadata, resource, fetchFn: async (url, init) => {
+          const response = await fetchFn(url, init);
+          await validateTokenResponse(response);
+          return response;
+        } });
+      validateAccessToken(tokens.access_token);
       if (!tokens.access_token || tokens.token_type.toLowerCase() !== 'bearer' ||
           !Number.isFinite(tokens.expires_in) || tokens.expires_in <= 30 ||
           !Number.isSafeInteger(Math.ceil(Date.now() + tokens.expires_in * 1000))) {
