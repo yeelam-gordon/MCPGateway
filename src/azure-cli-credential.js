@@ -110,7 +110,7 @@ export function azureCliToken(text) {
       !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(result.tenant ?? '')) {
     throw new GatewayError('oauth_invalid_token', 'Azure CLI returned an invalid token, tenant or expiry');
   }
-  return { tokens: { access_token: result.accessToken, token_type: 'Bearer' }, expiresAt, tenant: result.tenant };
+  return { tokens: { access_token: result.accessToken, token_type: 'Bearer' }, expiresAt, tenant: result.tenant.toLowerCase() };
 }
 
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
@@ -122,7 +122,16 @@ function cliAccount(text) {
       typeof account.user.name !== 'string' || !account.user.name || !uuid.test(account.tenantId ?? '')) {
     throw new GatewayError('oauth_invalid_token', 'Azure CLI requires a delegated account in the verified Microsoft public cloud');
   }
-  return account;
+  return { ...account, tenantId: account.tenantId.toLowerCase() };
+}
+
+function cliAuthority(value) {
+  return typeof value === 'string' ? value.replace(/\/([0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/i,
+    (_match, tenant) => `/${tenant.toLowerCase()}`) : value;
+}
+
+function cliAccountKey(account, tenant) {
+  return createHash('sha256').update(JSON.stringify([account.user.type, account.user.name, tenant])).digest('hex');
 }
 
 export class AzureCliCredential {
@@ -130,6 +139,7 @@ export class AzureCliCredential {
     this.provider = provider;
     this.launch = launch;
     Object.assign(this, microsoftResourceScopes(discovery, scope, provider));
+    this.authority = cliAuthority(this.authority);
     this.binding = JSON.stringify(['azure-cli', provider.path, this.authority, discovery.resourceMetadata.resource, this.trustedResource, this.scopes]);
     this.resource = discovery.resourceMetadata.resource;
     this.advertisedScopes = discovery.resourceMetadata.scopes_supported ?? [];
@@ -150,10 +160,19 @@ export class AzureCliCredential {
       const current = provider.pendingAzureCli ?? provider.saved.azureCli;
       if (!forceLogin && current?.binding === this.binding && provider.tokens()?.access_token !== rejectedToken &&
           provider.expiresAt > Date.now() + 30_000) return;
-      const selection = current?.binding === this.binding ||
-        current?.authority === this.authority && current?.resource === this.resource ? current : undefined;
+      let sameBackend = false;
+      try {
+        const identity = JSON.parse(current?.binding);
+        sameBackend = Array.isArray(identity) && identity[0] === 'azure-cli' && identity[1] === provider.path;
+      } catch {}
+      const sameAuthority = cliAuthority(current?.authority) === this.authority && current?.resource === this.resource;
+      if (current && sameAuthority && !sameBackend) {
+        throw new GatewayError('oauth_invalid_token', 'Azure CLI selection belongs to a different backend identity');
+      }
+      const selection = current?.binding === this.binding || sameBackend && sameAuthority ? current : undefined;
       const advertisedTenant = new URL(this.authority).pathname.slice(1);
-      const tenant = selection?.tenant ?? (advertisedTenant !== 'organizations' ? advertisedTenant : undefined);
+      if (selection && !uuid.test(selection.tenant ?? '')) throw new GatewayError('oauth_invalid_token', 'Azure CLI selection has an invalid tenant');
+      const tenant = selection?.tenant?.toLowerCase() ?? (advertisedTenant !== 'organizations' ? advertisedTenant : undefined);
       const runner = provider.options.azureCliRunner ?? runAzureCli;
       let silentDeadline = Date.now() + 25_000;
       const silentOptions = () => ({ signal: provider.options.signal, timeoutMs: Math.max(1, silentDeadline - Date.now()) });
@@ -214,9 +233,10 @@ export class AzureCliCredential {
       if (account.tenantId.toLowerCase() !== result.tenant.toLowerCase()) {
         throw new GatewayError('oauth_invalid_token', 'Azure CLI requires a delegated account matching the returned token tenant');
       }
-      const accountKey = createHash('sha256').update(JSON.stringify([account.user.type, account.user.name, result.tenant])).digest('hex');
-      if (selection && selection.tenant !== result.tenant ||
-          selection?.accountKey && selection.accountKey !== accountKey ||
+      const accountKey = cliAccountKey(account, result.tenant);
+      const legacyKey = selection ? cliAccountKey(account, selection.tenant) : undefined;
+      if (selection && selection.tenant.toLowerCase() !== result.tenant ||
+          selection?.accountKey && selection.accountKey !== accountKey && selection.accountKey !== legacyKey ||
           /^[0-9a-f-]{36}$/i.test(advertisedTenant) && advertisedTenant.toLowerCase() !== result.tenant.toLowerCase()) {
         throw new GatewayError('oauth_invalid_token', 'Azure CLI token tenant does not match the verified selection');
       }

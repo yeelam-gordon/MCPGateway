@@ -20,6 +20,7 @@ async function fixture(t, method, grantType = 'authorization_code') {
   let rejected = false;
   let badLifetime = false;
   let tokenLifetime = 3600;
+  let fixedToken;
   let denied = false;
   let scopes = 'least';
   const server = createServer(async (req, res) => {
@@ -35,12 +36,12 @@ async function fixture(t, method, grantType = 'authorization_code') {
       requests.push({ headers: req.headers, params: new URLSearchParams(body), receivedAt: Date.now() });
       if (denied) return json(400, { error: 'invalid_client', error_description: 'DO-NOT-PRINT-RAW-BODY' });
       rejected = false;
-      return json(200, { access_token: `access-${requests.length}`, token_type: 'Bearer',
+      return json(200, { access_token: fixedToken ?? `access-${requests.length}`, token_type: 'Bearer',
         expires_in: badLifetime ? 0 : tokenLifetime, ...(grantType === 'authorization_code' ? { refresh_token: 'refresh' } : {}) });
     }
     if (req.url === '/register') { counts.registrations++; return json(500, {}); }
     if (req.url !== '/mcp') return json(404, {});
-    if (rejected || req.headers.authorization !== `Bearer access-${requests.length}` || !requests.length) {
+    if (rejected || req.headers.authorization !== `Bearer ${fixedToken ?? `access-${requests.length}`}` || !requests.length) {
       res.setHeader('WWW-Authenticate', `Bearer resource_metadata="${base}/resource", scope="${scopes}"`);
       return json(401, {});
     }
@@ -91,6 +92,7 @@ async function fixture(t, method, grantType = 'authorization_code') {
   };
   return { config, directory, requests, counts, browser, base, publicKey,
     lifetime: value => { tokenLifetime = value; },
+    fixedToken: value => { fixedToken = value; },
     discovery: { authorizationServerUrl: base, authorizationServerMetadata: { issuer: base,
       authorization_endpoint: `${base}/authorize`, token_endpoint: `${base}/token`,
       token_endpoint_auth_methods_supported: [method] },
@@ -98,6 +100,38 @@ async function fixture(t, method, grantType = 'authorization_code') {
     reject: () => { rejected = true; }, bad: () => { badLifetime = true; }, deny: () => { denied = true; },
     scope: value => { scopes = value; } };
 }
+
+test('generic service identical-token scope publication survives restart and stale actors cannot overwrite a newer binding', async t => {
+  const f = await fixture(t, 'client_secret_post', 'client_credentials');
+  f.fixedToken('opaque-same-service-token');
+  f.lifetime(604);
+  const provider = await BackendOAuthProvider.load(f.config, f.directory);
+  await provider.saveDiscoveryState(f.discovery);
+  const fetch = boundedOAuthFetch(undefined, 10_000, f.config);
+  await acquireServiceTokens(provider, f.discovery, 'read', fetch);
+  const initialTokens = JSON.stringify(provider.tokens());
+  let publications = 0;
+  const persist = provider.persist;
+  t.mock.method(provider, 'persist', async function () { publications++; return persist.call(this); });
+  await provider.runRequest(() => acquireServiceTokens(provider, f.discovery, 'read write', fetch));
+  assert.equal(JSON.stringify(provider.tokens()), initialTokens);
+  assert.equal(publications, 1, 'changed binding must publish with unchanged token JSON');
+  const restarted = await BackendOAuthProvider.load(f.config, f.directory);
+  assert.equal(restarted.saved.service.scope, 'read write');
+  assert.equal(restarted.saved.service.binding, provider.saved.service.binding);
+  await provider.runRequest(async () => {
+    const oldGeneration = provider.generation;
+    await provider.context.run(undefined, () => acquireServiceTokens(provider, f.discovery, 'read write extra', fetch));
+    assert.notEqual(provider.generation, oldGeneration, 'binding changes are credential-generation changes');
+    const before = await readFile(provider.path, 'utf8');
+    const saved = JSON.stringify(provider.saved);
+    const count = publications;
+    await acquireServiceTokens(provider, f.discovery, 'read obsolete', fetch);
+    assert.equal(publications, count, 'obsolete actor cannot force publication');
+    assert.equal(JSON.stringify(provider.saved), saved);
+    assert.equal(await readFile(provider.path, 'utf8'), before);
+  });
+});
 
 test('AUTH-PORTFOLIO-002 generic service acquisition expiry survives delayed verification and forces renewal', async t => {
   const f = await fixture(t, 'client_secret_post', 'client_credentials');

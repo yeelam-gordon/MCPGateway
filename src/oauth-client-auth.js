@@ -88,7 +88,7 @@ export async function acquireServiceTokens(provider, discovery, scope, fetchFn, 
       provider.saved = await provider.readState();
       provider.revision = provider.saved.revision;
     }
-    if (provider.saved.service?.binding === binding && provider.tokens()?.access_token &&
+    if ((provider.pendingService ?? provider.saved.service)?.binding === binding && provider.tokens()?.access_token &&
         Number.isSafeInteger(provider.expiresAt) && provider.expiresAt > Date.now() + 30_000 &&
         provider.tokens().access_token !== rejectedToken) return;
     const sdk = new ClientCredentialsProvider({ clientId: provider.config.oauth.clientId,
@@ -108,8 +108,7 @@ export async function acquireServiceTokens(provider, discovery, scope, fetchFn, 
         throw new GatewayError('oauth_invalid_token', 'Service token requires a non-empty Bearer credential and a safe lifetime longer than 30 seconds');
       }
       const { refresh_token, ...access } = tokens;
-      provider.saved.service = { binding, scope: resolvedScope };
-      await provider.saveTokens(access);
+      await provider.saveTokens(access, false, undefined, { binding, scope: resolvedScope });
     } catch (error) {
       if (error instanceof GatewayError) throw error;
       throw new GatewayError('oauth_service_auth_failed', 'Service-account token acquisition failed; check registered credentials, API scope and app-only consent');

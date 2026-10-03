@@ -41,10 +41,11 @@ async function main() {
   }
 }
 main().catch(error => {
-  console.error(error.code === 'oauth_resource_binding_required' || error.vscodeProfilePaths?.length ||
+  console.error(['oauth_resource_binding_required', 'oauth_cleanup_uncertain'].includes(error.code) || error.vscodeProfilePaths?.length ||
     error.code === 'auth_required' && Array.isArray(error.requiredScopes) ?
     JSON.stringify({ error: error.code, message: error.message,
       ...(error.requiredScopes ? { requiredScopes: error.requiredScopes } : {}),
+      ...(error.credentialLockPath ? { credentialLockPath: error.credentialLockPath } : {}),
       ...(error.vscodeProfilePaths ? { vscodeProfilePaths: error.vscodeProfilePaths } : {}) }) : error.message);
   process.exitCode = 1;
 });

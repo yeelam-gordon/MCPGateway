@@ -180,11 +180,13 @@ export class BackendOAuthProvider {
     this.refresh = undefined;
     this.releaseLock = undefined;
     this.pendingTokens = undefined;
+    this.pendingService = undefined;
     this.pendingExpiresAt = undefined;
     this.verifier = undefined;
     this.nonce = randomBytes(32).toString('base64url');
     this.clientMetadataUrl = config.oauth?.clientMetadataUrl;
     this.metadataExtensions = new Map();
+    this.pendingOperations = new Set();
     this.confidential = config.oauth?.tokenEndpointAuthMethod && config.oauth.tokenEndpointAuthMethod !== 'none';
     if (this.confidential) this.addClientAuthentication = (...args) => addRegisteredClientAuthentication(this, ...args);
   }
@@ -221,7 +223,11 @@ export class BackendOAuthProvider {
       token_endpoint_auth_method: this.config.oauth?.tokenEndpointAuthMethod ?? 'none', ...(this.config.oauth?.scopes ? { scope: this.config.oauth.scopes.join(' ') } : {}) };
   }
   state() { return this.nonce; }
-  get generation() { return JSON.stringify(this.pendingTokens ?? this.saved.tokens); }
+  get generation() {
+    const tokens = this.pendingTokens ?? this.saved.tokens;
+    const service = this.pendingService ?? this.saved.service;
+    return service ? JSON.stringify([tokens, service.binding]) : JSON.stringify(tokens);
+  }
   get expiresAt() { return this.pendingTokens ? this.pendingExpiresAt : this.saved.expiresAt; }
   async acquireLock() {
     this.options.signal?.throwIfAborted();
@@ -245,6 +251,35 @@ export class BackendOAuthProvider {
     };
   }
   async withLock(operation) {
+    this.options.signal?.throwIfAborted();
+    const pending = this.runLocked(operation);
+    this.pendingOperations.add(pending);
+    try { return await pending; }
+    finally { this.pendingOperations.delete(pending); }
+  }
+  async settleOperations(timeoutMs = 5000) {
+    if (this.cleanupUncertain) throw this.cleanupError;
+    if (!this.pendingOperations.size) return;
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 5000) throw new TypeError('OAuth cleanup budget must be 1..5000ms');
+    const remaining = (this.options.deadline ?? Date.now() + timeoutMs) - Date.now();
+    const budget = remaining > 0 ? Math.min(timeoutMs, remaining) : timeoutMs;
+    let timer;
+    try {
+      await Promise.race([
+        (async () => { while (this.pendingOperations.size) await Promise.allSettled([...this.pendingOperations]); })(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => {
+            this.cleanupUncertain = true;
+            const error = new GatewayError('oauth_cleanup_uncertain', 'OAuth credential cleanup did not settle within its bounded budget; the credential lock is retained until its recorded owner and pending writes are verified');
+            error.credentialLockPath = `${this.path}.lock`;
+            this.cleanupError = error;
+            reject(error);
+          }, budget);
+        })
+      ]);
+    } finally { clearTimeout(timer); }
+  }
+  async runLocked(operation) {
     if (this.releaseLock) {
       if (this.options.interactive || this.lockContext.getStore() === this.releaseLock) return operation();
       throw new GatewayError('oauth_busy', 'OAuth credentials are in use by another operation; retry after it finishes');
@@ -325,7 +360,7 @@ export class BackendOAuthProvider {
         if (microsoftAuthority(this.saved.discovery.authorizationServerUrl) || this.config.oauth?.provider === 'entra') {
           this.entra = new EntraOAuth(this, this.saved.discovery, this.saved.entra?.scope, underlying);
           await this.entra.service();
-        } else await acquireServiceTokens(this, this.saved.discovery, this.saved.service?.scope, underlying);
+        } else await acquireServiceTokens(this, this.saved.discovery, (this.pendingService ?? this.saved.service)?.scope, underlying);
         const headers = new Headers(init.headers);
         headers.set('authorization', `Bearer ${this.tokens().access_token}`);
         init = { ...init, headers };
@@ -491,6 +526,7 @@ export class BackendOAuthProvider {
     return this.withLock(() => this.persistLocked());
   }
   async persistLocked() {
+    this.options.signal?.throwIfAborted();
     const current = await this.readState();
     if (current.revision !== this.revision) throw new GatewayError('oauth_state_changed', 'OAuth credentials changed in another process; retry using the latest state');
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
@@ -500,6 +536,7 @@ export class BackendOAuthProvider {
     try {
       const saved = { ...this.saved, revision };
       if (this.azureCli) { delete saved.tokens; delete saved.expiresAt; delete saved.entra; delete saved.client; }
+      this.options.signal?.throwIfAborted();
       await writeFile(temporary, JSON.stringify(saved), { flag: 'wx', mode: 0o600 });
       await secureOwnerOnly([{ path: temporary, directory: false }], this.options);
       this.options.signal?.throwIfAborted();
@@ -521,27 +558,33 @@ export class BackendOAuthProvider {
     if (!tokens) return undefined;
     return tokens;
   }
-  async saveTokens(tokens, replace = false, expiresAt = tokens?.expires_in === undefined ? undefined : Date.now() + tokens.expires_in * 1000) {
+  async saveTokens(tokens, replace = false, expiresAt = tokens?.expires_in === undefined ? undefined : Date.now() + tokens.expires_in * 1000, serviceState) {
     validateAccessToken(tokens?.access_token);
+    this.options.signal?.throwIfAborted();
     const previous = this.pendingTokens ?? this.saved.tokens;
     const merged = { ...tokens, ...(replace || tokens.refresh_token ? {} : previous?.refresh_token ? { refresh_token: previous.refresh_token } : {}) };
-    if (!replace && !this.options.interactive && JSON.stringify(merged) === JSON.stringify(previous)) return;
     const context = this.context.getStore();
-    if (context && context.generation !== this.generation) return;
+    if (context && context.generation !== this.generation) return false;
+    const serviceChanged = serviceState && JSON.stringify(serviceState) !== JSON.stringify(this.saved.service);
+    if (!replace && !this.options.interactive && !serviceChanged && JSON.stringify(merged) === JSON.stringify(previous)) return false;
     if (this.options.interactive) {
       this.pendingTokens = merged;
+      if (serviceState) this.pendingService = serviceState;
       this.pendingExpiresAt = expiresAt;
       if (context) context.generation = this.generation;
-      return;
+      return true;
     }
     this.saved.tokens = merged;
+    if (serviceState) this.saved.service = serviceState;
     if (context) context.generation = this.generation;
     this.saved.expiresAt = expiresAt;
     await this.persist();
+    return true;
   }
   async commitTokens() {
     if (!this.pendingTokens) return;
     validateAccessToken(this.pendingTokens.access_token);
+    if (this.pendingService) this.saved.service = this.pendingService;
     if (this.saved.discovery && microsoftAuthority(this.saved.discovery.authorizationServerUrl)) {
       this.saved.trustedMicrosoftResource = trustedMicrosoftResource(this);
     }
@@ -563,6 +606,7 @@ export class BackendOAuthProvider {
     this.saved.expiresAt = this.pendingExpiresAt;
     await this.persist();
     this.pendingTokens = undefined;
+    this.pendingService = undefined;
     this.pendingExpiresAt = undefined;
     this.pendingEntra = undefined;
     this.pendingDevice = undefined;
@@ -629,7 +673,7 @@ export class BackendOAuthProvider {
   async invalidateCredentials(scope) {
     const context = this.context.getStore();
     if (context && context.generation !== this.generation) return;
-    if (scope === 'all' || scope === 'tokens') { delete this.saved.tokens; delete this.saved.entra; delete this.saved.azureCli; delete this.saved.vscode; delete this.saved.expiresAt; this.pendingTokens = undefined; this.pendingExpiresAt = undefined; this.pendingEntra = undefined; this.pendingAzureCli = undefined; this.pendingVSCode = undefined; }
+    if (scope === 'all' || scope === 'tokens') { delete this.saved.tokens; delete this.saved.entra; delete this.saved.azureCli; delete this.saved.vscode; delete this.saved.expiresAt; this.pendingTokens = undefined; this.pendingService = undefined; this.pendingExpiresAt = undefined; this.pendingEntra = undefined; this.pendingAzureCli = undefined; this.pendingVSCode = undefined; }
     if (scope === 'all' || scope === 'client') delete this.saved.client;
     if (scope === 'all' || scope === 'discovery') delete this.saved.discovery;
     if (scope === 'all' || scope === 'verifier') this.verifier = undefined;
@@ -651,6 +695,14 @@ export class OAuthHTTPClientTransport extends StreamableHTTPClientTransport {
   }
   send(message, options) {
     return this.provider.runRequest(() => super.send(message, options), message);
+  }
+  async close() {
+    await super.close();
+    try { await this.provider.settleOperations(); }
+    catch (error) {
+      if (error.code !== 'oauth_cleanup_uncertain') throw error;
+      this.onerror?.(error);
+    }
   }
   async finishAuth(code) {
     if (this.provider.entra) await this.provider.entra.finish(code);
@@ -796,11 +848,15 @@ export async function authenticateBackend(config, stateDir, options = {}) {
     try { await client.close(); }
     finally {
       try {
-        callback.closeAllConnections();
-        if (callback.listening) await new Promise((resolve, reject) => callback.close(error => error ? reject(error) : resolve()));
+        if (provider) await provider.settleOperations();
       } finally {
-        if (provider) provider.verifier = undefined;
-        if (provider?.releaseLock) await provider.releaseLock();
+        try {
+          callback.closeAllConnections();
+          if (callback.listening) await new Promise((resolve, reject) => callback.close(error => error ? reject(error) : resolve()));
+        } finally {
+          if (provider) provider.verifier = undefined;
+          if (provider?.releaseLock && !provider.cleanupUncertain) await provider.releaseLock();
+        }
       }
     }
   }

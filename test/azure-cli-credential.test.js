@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { AzureCliCredential, resolveAzureCli, azureCliToken, runAzureCli } from '../src/azure-cli-credential.js';
 import { BackendOAuthProvider, authenticateBackend, hasStaticAuthorization, boundedOAuthFetch, MICROSOFT_REQUIRED_SCOPE } from '../src/backend-oauth.js';
 import { errorResult } from '../src/errors.js';
@@ -217,6 +218,66 @@ test('host credentials reject generic discovery and switched accounts without pu
   switched = true;
   await assert.rejects(credential.silent('private-fixture-token'), { code: 'oauth_invalid_token' });
   assert.equal(await readFile(f.provider.path, 'utf8'), before);
+});
+
+test('Azure CLI GUID casing preserves selection and migrates only the proven same-account legacy hash', async t => {
+  const canonical = 'abcdefab-1234-5678-9abc-def012345678';
+  const upper = canonical.toUpperCase();
+  let returnedTenant = canonical;
+  let username = accountInfo.user.name;
+  let acquisitions = 0;
+  const f = await fixture(t, { azureCliRunner: async (_launch, args) => {
+    if (args[1] === 'show') return JSON.stringify({ ...accountInfo, tenantId: returnedTenant,
+      user: { ...accountInfo.user, name: username } });
+    assert.equal(args[1], 'get-access-token');
+    acquisitions++;
+    return JSON.stringify({ accessToken: 'private-fixture-token', tokenType: 'Bearer', tenant: returnedTenant,
+      expires_on: Math.floor(Date.now() / 1000) + 3600 });
+  } });
+  await f.provider.saveDiscoveryState(discovery);
+  const credential = await f.provider.microsoftCredential(discovery);
+  await credential.silent();
+  const key = value => createHash('sha256').update(JSON.stringify([accountInfo.user.type, accountInfo.user.name, value])).digest('hex');
+  const authorityBindings = [];
+  for (const spelling of [canonical, upper]) {
+    const tenantAuthority = `https://login.microsoftonline.com/${spelling}`;
+    const info = { authorizationServerUrl: `${tenantAuthority}/v2.0`,
+      authorizationServerMetadata: { issuer: `${tenantAuthority}/v2.0`,
+        authorization_endpoint: `${tenantAuthority}/oauth2/v2.0/authorize`,
+        token_endpoint: `${tenantAuthority}/oauth2/v2.0/token` },
+      resourceMetadata: { ...discovery.resourceMetadata, authorization_servers: [`${tenantAuthority}/v2.0`] } };
+    const selected = new AzureCliCredential(f.provider, info, undefined, launch);
+    assert.equal(selected.authority, `https://login.microsoftonline.com/${canonical}`);
+    authorityBindings.push(selected.binding);
+  }
+  assert.equal(authorityBindings[0], authorityBindings[1]);
+  returnedTenant = upper;
+  await credential.silent('private-fixture-token');
+  assert.equal(f.provider.saved.azureCli.tenant, canonical);
+  assert.equal(f.provider.saved.azureCli.accountKey, key(canonical));
+  f.provider.saved.azureCli.tenant = upper;
+  f.provider.saved.azureCli.accountKey = key(upper);
+  await f.provider.persist();
+  returnedTenant = canonical;
+  await credential.silent('private-fixture-token');
+  returnedTenant = upper;
+  await credential.silent('private-fixture-token');
+  assert.equal(acquisitions, 4);
+  assert.equal(f.provider.saved.azureCli.tenant, canonical);
+  assert.equal(f.provider.saved.azureCli.accountKey, key(canonical));
+  const before = await readFile(f.provider.path, 'utf8');
+  username = 'different@example.invalid';
+  await assert.rejects(credential.silent('private-fixture-token'), { code: 'oauth_invalid_token' });
+  assert.equal(await readFile(f.provider.path, 'utf8'), before);
+  username = accountInfo.user.name;
+  returnedTenant = 'fedcbafe-1234-5678-9abc-def012345678';
+  await assert.rejects(credential.silent('private-fixture-token'), { code: 'oauth_invalid_token' });
+  assert.equal(await readFile(f.provider.path, 'utf8'), before);
+  const other = await BackendOAuthProvider.load({ ...f.config, name: 'another-alias' }, f.stateDir, f.provider.options);
+  other.saved.azureCli = structuredClone(f.provider.saved.azureCli);
+  const count = acquisitions;
+  await assert.rejects(new AzureCliCredential(other, discovery, undefined, launch).silent(), { code: 'oauth_invalid_token' });
+  assert.equal(acquisitions, count, 'a borrowed alias selection cannot start acquisition');
 });
 
 for (const outcome of ['success', 'denied', 'cancelled', 'restore-failed']) {

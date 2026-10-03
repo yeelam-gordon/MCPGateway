@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const pwshAclTimeoutMs = 5_000;
-const windowsPowerShellAclTimeoutMs = 10_000;
+const windowsPowerShellAclTimeoutMs = 15_000;
 const tokenWriteWaitMs = 2_000;
 const tokenWritePollMs = 20;
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));

@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
 import { constants, createHash, generateKeyPairSync, verify } from 'node:crypto';
-import { mkdtemp, rm, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, readdir, writeFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PublicClientApplication, ConfidentialClientApplication } from '@azure/msal-node';
-import { authenticateBackend, BackendOAuthProvider, boundedOAuthFetch } from '../src/backend-oauth.js';
+import { authenticateBackend, BackendOAuthProvider, OAuthHTTPClientTransport, boundedOAuthFetch } from '../src/backend-oauth.js';
 import { BackendRegistry } from '../src/backend-registry.js';
 import { EntraOAuth, microsoftAuthority, validateMicrosoftDiscovery, entraClientId, entraServiceAuthority } from '../src/entra-oauth.js';
 import { validateBackendConfig } from '../src/config-schema.js';
@@ -289,6 +289,80 @@ for (const mode of ['missing-secret', 'expiry', 'timeout', 'resource-reject']) {
     assert.equal(provider.saved.entra, undefined);
     assert.equal((await readdir(provider.directory)).some(file => file.endsWith('.lock') || file.endsWith('.tmp')), false);
   });
+}
+
+for (const stalled of [false, true]) {
+test(`helper cancellation waits for delayed private staging cleanup before releasing its lock; stalled=${stalled}`, async t => {
+  const f = await fixture(t, true);
+  f.serviceResult('timeout');
+  const controller = new AbortController();
+  let enterWrite;
+  let releaseWrite;
+  let finishWrite;
+  let enterClose;
+  const writing = new Promise(resolve => { enterWrite = resolve; });
+  const writeGate = new Promise(resolve => { releaseWrite = resolve; });
+  const cleaned = new Promise(resolve => { finishWrite = resolve; });
+  const closing = new Promise(resolve => { enterClose = resolve; });
+  let delayed = false;
+  let closeSettled = false;
+  const persist = BackendOAuthProvider.prototype.persistLocked;
+  t.mock.method(BackendOAuthProvider.prototype, 'persistLocked', async function () {
+    if (delayed) return persist.call(this);
+    delayed = true;
+    const staged = `${this.path}.delayed-fixture.tmp`;
+    await writeFile(staged, JSON.stringify(this.saved), { flag: 'wx', mode: 0o600 });
+    enterWrite(this);
+    try { await writeGate; return await persist.call(this); }
+    finally { try { await unlink(staged); } finally { finishWrite(); } }
+  });
+  const close = OAuthHTTPClientTransport.prototype.close;
+  t.mock.method(OAuthHTTPClientTransport.prototype, 'close', function () {
+    const result = close.call(this);
+    result.then(() => { closeSettled = true; }, () => { closeSettled = true; });
+    enterClose();
+    return result;
+  });
+  let failure;
+  const authentication = authenticateBackend(f.config, f.stateDir, { signal: controller.signal, timeoutMs: 20_000 })
+    .then(() => assert.fail('cancelled helper must not authenticate'), error => { failure = error; });
+  const owner = await writing;
+  if (stalled) {
+    const settle = owner.settleOperations;
+    owner.settleOperations = () => settle.call(owner, 50);
+  }
+  try {
+    controller.abort();
+    await closing;
+    if (!stalled) {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(closeSettled, false, 'transport cleanup must await the owned private write, not only abort HTTP');
+    }
+    assert.ok((await readdir(owner.directory)).includes(`${owner.path.split(/[\\/]/).at(-1)}.lock`),
+      'helper must retain its credential lock until the delayed staging file is cleaned');
+    if (stalled) {
+      await authentication;
+      assert.equal(failure?.code, 'oauth_cleanup_uncertain');
+      assert.equal(failure.credentialLockPath, `${owner.path}.lock`);
+      assert.equal(owner.cleanupUncertain, true);
+      assert.ok((await readdir(owner.directory)).includes(`${owner.path.split(/[\\/]/).at(-1)}.lock`),
+        'a timed-out cleanup barrier must retain the owned lock and provenance');
+    }
+  } finally {
+    releaseWrite();
+    await cleaned;
+    await authentication;
+  }
+  if (stalled) {
+    await Promise.allSettled([...owner.pendingOperations]);
+    await owner.releaseLock();
+  }
+  assert.equal(failure?.code, stalled ? 'oauth_cleanup_uncertain' : 'oauth_cancelled');
+  assert.equal((await readdir(owner.directory)).some(file => file.endsWith('.lock') || file.endsWith('.tmp')), false);
+  const restarted = await BackendOAuthProvider.load(f.config, f.stateDir);
+  assert.equal(restarted.tokens(), undefined);
+  assert.equal(restarted.saved.entra, undefined);
+});
 }
 
 test('actual MSAL certificate assertion uses token endpoint audience and registered SHA-256 thumbprint', async t => {

@@ -102,6 +102,20 @@ test('service renewal rejects malformed SDK token responses before mutating or p
   }
 });
 
+test('obsolete service response cannot overwrite newer tokens or MSAL/host selection metadata', async () => {
+  const p = provider(false, true);
+  const obsolete = p.generation;
+  p.saved.tokens = { access_token: 'newer-opaque-token', token_type: 'Bearer' };
+  p.saved.service = { binding: 'newer-service-owner', scope: 'newer' };
+  p.saved.entra = { binding: 'newer-msal-owner' };
+  p.saved.vscode = { binding: 'newer-host-owner' };
+  const before = JSON.stringify(p.saved);
+  await p.context.run({ generation: obsolete }, () =>
+    acquireServiceTokens(p, discovery, 'obsolete', async () => response(opaque)));
+  assert.equal(JSON.stringify(p.saved), before);
+  assert.equal(p.persistCount, 0);
+});
+
 test('device grants reject malformed SDK token responses before creating any pending selection or tokens', async () => {
   const p = provider(true);
   let clock = Date.now();
