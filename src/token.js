@@ -43,7 +43,9 @@ $security.SetAccessRuleProtection($true, $false)
 foreach ($rule in @($security.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))) {
   [void]$security.RemoveAccessRuleSpecific($rule)
 }
-$security.SetOwner($sid)
+if (-not $security.GetOwner([Security.Principal.SecurityIdentifier]).Equals($sid)) {
+  $security.SetOwner($sid)
+}
 $newRule = [Security.AccessControl.FileSystemAccessRule]::new($sid, $expectedRights, $inheritance, $expectedPropagation, [Security.AccessControl.AccessControlType]::Allow)
 [void]$security.AddAccessRule($newRule)
 if ($PSVersionTable.PSEdition -eq 'Desktop') {

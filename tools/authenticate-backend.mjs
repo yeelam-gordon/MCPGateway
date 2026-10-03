@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig } from '../src/config.js';
 import { authenticateBackend } from '../src/backend-oauth.js';
 
-const usage = `Usage: node '${fileURLToPath(import.meta.url).replaceAll("'", "''")}' --server ALIAS [--config PATH] [--state-dir PATH] [--timeout SECONDS] [--no-browser]`;
+const usage = `Usage: node '${fileURLToPath(import.meta.url).replaceAll("'", "''")}' --server ALIAS [--config PATH] [--state-dir PATH] [--resource API_ID] [--scope FULLY_QUALIFIED_SCOPE ...] [--timeout SECONDS] [--no-browser] [--device-code] [--azure-cli | --vscode] [--force-login]`;
 async function main() {
   const options = { config: resolve(homedir(), '.shared-mcp-gateway', 'backends.json'),
     stateDir: resolve(homedir(), '.shared-mcp-gateway'), timeoutMs: 180_000 };
@@ -13,8 +13,14 @@ async function main() {
     const flag = argv[index];
     if (flag === '--help') { console.log(usage); return; }
     if (flag === '--no-browser') { options.noBrowser = true; continue; }
+    if (flag === '--device-code') { options.deviceCode = true; continue; }
+    if (flag === '--azure-cli') { options.azureCli = true; continue; }
+    if (flag === '--vscode') { options.vscode = true; continue; }
+    if (flag === '--force-login') { options.forceLogin = true; continue; }
     const value = argv[++index];
-    if (!value || !['--server', '--config', '--state-dir', '--timeout'].includes(flag)) throw new Error(usage);
+    if (!value || !['--server', '--config', '--state-dir', '--timeout', '--resource', '--scope'].includes(flag)) throw new Error(usage);
+    if (flag === '--resource') options.resource = value;
+    if (flag === '--scope') (options.scopes ??= []).push(value);
     if (flag === '--server') options.server = value;
     if (flag === '--config') options.config = resolve(value);
     if (flag === '--state-dir') options.stateDir = resolve(value);
@@ -34,4 +40,11 @@ async function main() {
     process.removeListener('SIGTERM', cancel);
   }
 }
-main().catch(error => { console.error(error.message); process.exitCode = 1; });
+main().catch(error => {
+  console.error(error.code === 'oauth_resource_binding_required' || error.vscodeProfilePaths?.length ||
+    error.code === 'auth_required' && Array.isArray(error.requiredScopes) ?
+    JSON.stringify({ error: error.code, message: error.message,
+      ...(error.requiredScopes ? { requiredScopes: error.requiredScopes } : {}),
+      ...(error.vscodeProfilePaths ? { vscodeProfilePaths: error.vscodeProfilePaths } : {}) }) : error.message);
+  process.exitCode = 1;
+});
