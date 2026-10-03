@@ -22,7 +22,7 @@ async function listen(server) {
   return server.address().port;
 }
 async function mock(t, { dcr = true, oidc = false, wrongResource = false, rotating = false, invalidRefresh = false,
-  registration = {}, advertisedMethods = ['none'], authStatus = 401 } = {}) {
+  registration = {}, advertisedMethods = ['none'], authStatus = 401, issRequired, callbackIss } = {}) {
   const stateDir = await mkdtemp(join(tmpdir(), 'gateway-oauth-test-'));
   t.after(() => rm(stateDir, { recursive: true, force: true }));
   const counter = { registrations: 0, refreshes: 0, calls: 0, discoveries: 0, resourceFetches: 0, refreshTokens: [], bareBearer: 0, tokenExchanges: 0 };
@@ -50,6 +50,7 @@ async function mock(t, { dcr = true, oidc = false, wrongResource = false, rotati
         ...(oidc ? { jwks_uri: `${base}/jwks`, subject_types_supported: ['public'], id_token_signing_alg_values_supported: ['RS256'] } : {}),
         ...(dcr ? { registration_endpoint: `${base}/register` } : {}),
         response_types_supported: ['code'], grant_types_supported: ['authorization_code', 'refresh_token'],
+        ...(issRequired === undefined ? {} : { authorization_response_iss_parameter_supported: issRequired }),
         token_endpoint_auth_methods_supported: advertisedMethods, code_challenge_methods_supported: ['S256'] });
     }
     let body = '';
@@ -113,6 +114,7 @@ async function mock(t, { dcr = true, oidc = false, wrongResource = false, rotati
     const callback = new URL(url.searchParams.get('redirect_uri'));
     callback.searchParams.set('state', url.searchParams.get('state'));
     callback.searchParams.set('code', 'one-use-code');
+    for (const issuer of callbackIss ?? []) callback.searchParams.append('iss', issuer === 'bound' ? base : issuer);
     assert.equal((await fetch(callback, { method: 'POST' })).status, 400);
     assert.equal((await fetch(callback, { headers: { Origin: 'https://foreign.example' } })).status, 400);
     assert.equal(await new Promise((resolve, reject) => {
@@ -124,7 +126,8 @@ async function mock(t, { dcr = true, oidc = false, wrongResource = false, rotati
     wrongPath.pathname = '/different';
     assert.equal((await fetch(wrongPath)).status, 400);
     const response = await fetch(callback);
-    assert.equal(response.status, 200);
+    assert.equal(response.status, callbackIss?.some(issuer => issuer !== 'bound') || callbackIss?.length > 1 ||
+      (issRequired && !callbackIss?.length) ? 400 : 200);
   };
   return { config, stateDir, counter, browser, base,
     rejectAccess: () => { token = 'revoked-access'; },
@@ -132,6 +135,27 @@ async function mock(t, { dcr = true, oidc = false, wrongResource = false, rotati
     discovery: () => ({ authorizationServerUrl: base, resourceMetadataUrl: `${base}/resource`,
       authorizationServerMetadata: metadata(), resourceMetadata: { resource: `${base}/mcp`, authorization_servers: [base] } })
   };
+}
+
+for (const [name, issRequired, callbackIss, succeeds] of [
+  ['optional absent', false, undefined, true],
+  ['optional exact', false, ['bound'], true],
+  ['required exact', true, ['bound'], true],
+  ['required absent', true, undefined, false],
+  ['optional mismatch', false, ['https://wrong.example'], false],
+  ['duplicate exact', true, ['bound', 'bound'], false],
+  ['required OIDC absent', true, undefined, false]
+]) {
+  test(`generic callback issuer: ${name}`, async t => {
+    const f = await mock(t, { issRequired, callbackIss, oidc: name.includes('OIDC') });
+    const operation = authenticateBackend(f.config, f.stateDir, { onAuthorization: f.browser, timeoutMs: 20_000 });
+    if (succeeds) await operation;
+    else {
+      await assert.rejects(operation, error => error.code === 'oauth_invalid_issuer');
+      assert.equal(f.counter.tokenExchanges, 0);
+      assert.equal((await BackendOAuthProvider.load(f.config, f.stateDir)).tokens(), undefined);
+    }
+  });
 }
 
 async function seed(fixture, expires_in = 3600) {
@@ -142,6 +166,29 @@ async function seed(fixture, expires_in = 3600) {
   await provider.saveTokens({ access_token: 'initial-access', refresh_token: 'persistent-refresh', token_type: 'Bearer', expires_in });
   return provider;
 }
+
+test('AUTH-PORTFOLIO-002 pending code/device publication retains acquisition expiry and refresh rotation', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'gateway-oauth-expiry-test-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  t.mock.timers.enable({ apis: ['Date'], now: 1_800_000_000_000 });
+  const config = { name: 'expiry', url: 'https://mcp.example/mcp', oauth: { clientId: 'registered' } };
+  const provider = await BackendOAuthProvider.load(config, directory, { interactive: true });
+  await provider.saveTokens({ access_token: 'first', refresh_token: 'rotated', token_type: 'Bearer', expires_in: 31 });
+  t.mock.timers.tick(10_000);
+  await provider.saveTokens({ access_token: 'second', token_type: 'Bearer', expires_in: 60 });
+  const expiry = Date.now() + 60_000;
+  t.mock.timers.tick(30_000);
+  await provider.commitTokens();
+  assert.equal(provider.saved.expiresAt, expiry);
+  assert.equal(provider.saved.tokens.refresh_token, 'rotated');
+  assert.equal(provider.pendingExpiresAt, undefined);
+  assert.equal((await BackendOAuthProvider.load(config, directory)).saved.expiresAt, expiry);
+  await provider.saveTokens({ access_token: 'device', token_type: 'Bearer' }, true);
+  t.mock.timers.tick(30_000);
+  await provider.commitTokens();
+  assert.equal(provider.saved.expiresAt, undefined);
+  assert.equal(provider.saved.tokens.refresh_token, undefined);
+});
 
 test('SDK OAuth challenge, DCR, PKCE, discovery, call and restart refresh persistence', async t => {
   const fixture = await mock(t);

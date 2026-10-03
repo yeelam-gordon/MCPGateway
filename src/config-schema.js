@@ -1,3 +1,5 @@
+import { canonicalMicrosoftResource } from './microsoft-resource-binding.js';
+
 export function safeOAuthUrl(value, httpsOnly = false) {
   const url = new URL(value);
   if (url.username || url.password || url.hash ||
@@ -46,7 +48,11 @@ export function validateBackendConfig(value, path = 'server', options = {}) {
   if (value.oauth !== undefined) {
     if (!hasUrl || !object(value.oauth)) fail(`${path}.oauth`, 'requires an HTTP backend and an object');
     safeOAuthUrl(value.url);
-    for (const key of Object.keys(value.oauth)) if (!['clientId', 'scopes', 'redirectPort', 'clientMetadataUrl'].includes(key)) fail(`${path}.oauth.${key}`, 'is not an approved field');
+    for (const key of Object.keys(value.oauth)) if (!['resource', 'credentialProvider', 'provider', 'clientId', 'scopes', 'redirectPort', 'clientMetadataUrl', 'grantType', 'issuer', 'authority', 'certificateThumbprintSha256', 'tokenEndpointAuthMethod', 'secretEnv', 'privateKeyPath', 'alg', 'kid'].includes(key)) fail(`${path}.oauth`, 'contains an unapproved field');
+    if (value.oauth.resource !== undefined) canonicalMicrosoftResource(value.oauth.resource);
+    if (value.oauth.credentialProvider !== undefined && !['azure-cli', 'vscode'].includes(value.oauth.credentialProvider)) fail(`${path}.oauth.credentialProvider`, 'must be azure-cli or vscode');
+    if (value.oauth.credentialProvider && (value.oauth.grantType === 'client_credentials' || value.oauth.clientMetadataUrl)) fail(`${path}.oauth`, 'Host credentials are delegated-only and do not use client metadata registration');
+    if (value.oauth.provider !== undefined && value.oauth.provider !== 'entra') fail(`${path}.oauth.provider`, 'must be entra');
     if (value.oauth.clientId !== undefined && (typeof value.oauth.clientId !== 'string' || !value.oauth.clientId.trim())) fail(`${path}.oauth.clientId`, 'must be a non-empty public client ID');
     if (value.oauth.scopes !== undefined && (!Array.isArray(value.oauth.scopes) || value.oauth.scopes.some(scope => typeof scope !== 'string' || !scope || /\s/.test(scope)))) fail(`${path}.oauth.scopes`, 'must be an array of non-empty scope strings without whitespace');
     if (value.oauth.redirectPort !== undefined && (!Number.isInteger(value.oauth.redirectPort) || value.oauth.redirectPort < 1 || value.oauth.redirectPort > 65535)) fail(`${path}.oauth.redirectPort`, 'must be 1..65535');
@@ -54,6 +60,35 @@ export function validateBackendConfig(value, path = 'server', options = {}) {
       if (typeof value.oauth.clientMetadataUrl !== 'string') fail(`${path}.oauth.clientMetadataUrl`, 'must be an HTTPS URL');
       if (safeOAuthUrl(value.oauth.clientMetadataUrl, true).pathname === '/') fail(`${path}.oauth.clientMetadataUrl`, 'must have a non-root path');
     }
+    const oauth = value.oauth;
+    if (oauth.grantType !== undefined && !['authorization_code', 'client_credentials'].includes(oauth.grantType)) fail(`${path}.oauth.grantType`, 'must be authorization_code or client_credentials');
+    if (oauth.tokenEndpointAuthMethod !== undefined && !['none', 'client_secret_basic', 'client_secret_post', 'private_key_jwt'].includes(oauth.tokenEndpointAuthMethod)) fail(`${path}.oauth.tokenEndpointAuthMethod`, 'unsupported method');
+    const confidential = oauth.tokenEndpointAuthMethod && oauth.tokenEndpointAuthMethod !== 'none';
+    const entra = oauth.provider === 'entra' || (oauth.issuer && new URL(oauth.issuer).hostname === 'login.microsoftonline.com');
+    for (const key of ['issuer', 'authority', 'certificateThumbprintSha256', 'secretEnv', 'privateKeyPath', 'alg', 'kid']) {
+      if (oauth[key] !== undefined && (typeof oauth[key] !== 'string' || !oauth[key].trim())) fail(`${path}.oauth.${key}`, 'must be a non-empty string');
+    }
+    if (confidential) {
+      if (!oauth.clientId || (!entra && !oauth.issuer) || oauth.clientMetadataUrl) fail(`${path}.oauth`, 'confidential clients require registered clientId and explicit issuer (or Entra provider), without clientMetadataUrl');
+      if (oauth.issuer) safeOAuthUrl(oauth.issuer);
+      if (entra && oauth.grantType !== 'client_credentials') fail(`${path}.oauth`, 'Entra confidential authentication requires client_credentials');
+      if (entra && oauth.tokenEndpointAuthMethod === 'private_key_jwt') {
+        if (oauth.secretEnv || !oauth.privateKeyPath || !isAbsolute(oauth.privateKeyPath) ||
+            !/^[0-9a-f]{64}$/i.test(oauth.certificateThumbprintSha256 ?? '') || oauth.alg || oauth.kid) {
+          fail(`${path}.oauth`, 'Entra certificate authentication requires absolute privateKeyPath and certificateThumbprintSha256 (64 hex characters), without secretEnv, alg or kid');
+        }
+      } else if (oauth.tokenEndpointAuthMethod === 'private_key_jwt') {
+        if (oauth.secretEnv || !oauth.privateKeyPath || !isAbsolute(oauth.privateKeyPath) || !['RS256', 'PS256'].includes(oauth.alg) || !oauth.kid) fail(`${path}.oauth`, 'private_key_jwt requires absolute privateKeyPath, alg RS256 or PS256, and kid; secretEnv is forbidden');
+      } else if (!oauth.secretEnv || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(oauth.secretEnv) || oauth.privateKeyPath || oauth.alg || oauth.kid) {
+        fail(`${path}.oauth`, 'secret authentication requires only a valid secretEnv credential reference');
+      }
+      if (entra && oauth.tokenEndpointAuthMethod === 'client_secret_basic') fail(`${path}.oauth`, 'MSAL Entra secret authentication requires client_secret_post');
+    } else if (['issuer', 'secretEnv', 'privateKeyPath', 'alg', 'kid'].some(key => oauth[key] !== undefined)) {
+      fail(`${path}.oauth`, 'credential references require an explicit confidential authentication method');
+    }
+    if ((oauth.authority !== undefined || oauth.certificateThumbprintSha256 !== undefined) && (!entra || !confidential)) fail(`${path}.oauth`, 'authority and certificate thumbprint are Entra confidential-only settings');
+    if (oauth.certificateThumbprintSha256 && oauth.tokenEndpointAuthMethod !== 'private_key_jwt') fail(`${path}.oauth`, 'certificate thumbprint requires private_key_jwt');
+    if (oauth.grantType === 'client_credentials' && (!confidential || oauth.redirectPort !== undefined)) fail(`${path}.oauth`, 'client_credentials requires confidential authentication and no redirectPort');
   }
   if (value.tools !== undefined && (!Array.isArray(value.tools) || value.tools.some(item => typeof item !== 'string' || item.length === 0))) fail(`${path}.tools`, 'must be an array of non-empty strings');
   if (value.timeout !== undefined && (!Number.isSafeInteger(value.timeout) || value.timeout <= 0)) fail(`${path}.timeout`, 'must be a positive safe integer');
@@ -71,3 +106,4 @@ export function validateConfig(config, options = {}) {
   }
   return { key, servers: config[key] };
 }
+import { isAbsolute } from 'node:path';

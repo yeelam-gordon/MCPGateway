@@ -39,8 +39,13 @@ async function pluginFixture() {
   await mkdir(join(root, 'integrity'), { recursive: true });
   await cp(new URL('../integrity/client-runtime-dependencies.json', import.meta.url), join(root, 'integrity', 'client-runtime-dependencies.json'));
   await mkdir(join(root, 'src'), { recursive: true });
+  await cp(new URL('../src/vscode-helper', import.meta.url), join(root, 'src', 'vscode-helper'), { recursive: true });
   await cp(new URL('../src/config.js', import.meta.url), join(root, 'src', 'config.js'));
   await cp(new URL('../src/config-schema.js', import.meta.url), join(root, 'src', 'config-schema.js'));
+  await cp(new URL('../src/microsoft-resource-binding.js', import.meta.url), join(root, 'src', 'microsoft-resource-binding.js'));
+  await cp(new URL('../src/oauth-access-token.js', import.meta.url), join(root, 'src', 'oauth-access-token.js'));
+  await cp(new URL('../src/microsoft-host-env.js', import.meta.url), join(root, 'src', 'microsoft-host-env.js'));
+  await cp(new URL('../src/errors.js', import.meta.url), join(root, 'src', 'errors.js'));
   await cp(new URL('../src/npx-package-warnings.js', import.meta.url), join(root, 'src', 'npx-package-warnings.js'));
   await writeFile(join(root, 'src', 'request-budget.js'), "export const CLIENT_REQUEST_TIMEOUT_MS = 120000;\n");
   await writeFile(join(root, 'src', 'token.js'), `import { mkdir, readFile, writeFile } from 'node:fs/promises';\nimport { join } from 'node:path';\nexport async function loadOrCreateToken(stateDir) { await mkdir(stateDir, { recursive: true }); const path = join(stateDir, 'owner.token'); try { return { token: (await readFile(path, 'utf8')).trim(), path }; } catch (error) { if (error.code !== 'ENOENT') throw error; await writeFile(path, 'fixture-token\\n'); return { token: 'fixture-token', path }; } }\n`);
@@ -154,6 +159,8 @@ test('apply publishes a stable runtime then invokes copied migration with exact 
   assert.ok(result.runtimePath.startsWith(join(item.stateDir, 'runtime')));
   assert.equal(await readFile(join(result.runtimePath, 'LICENSE'), 'utf8'), await readFile(join(sourceRoot, 'LICENSE'), 'utf8'));
   assert.equal(result.runtimePath.includes(sourceRoot), false);
+  assert.equal(await readFile(join(result.runtimePath, 'src', 'vscode-helper', 'extension.cjs'), 'utf8'),
+    await readFile(join(sourceRoot, 'src', 'vscode-helper', 'extension.cjs'), 'utf8'));
   await assert.rejects(() => stat(join(result.runtimePath, 'node_modules', 'excluded-package', 'secret.txt')), error => error.code === 'ENOENT');
   assert.deepEqual(await readFile(result.migration.privatePath), item.bytes);
   assert.deepEqual(await readFile(result.migration.backupPath), item.bytes);

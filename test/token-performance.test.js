@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { test } from 'node:test';
@@ -18,7 +17,7 @@ test('warm token loading batches directory and token ACL checks into one subproc
   };
   syncBuiltinESMExports();
 
-  const stateDir = await mkdtemp(join(tmpdir(), 'mcp-gateway-token-performance-'));
+  const stateDir = await mkdtemp(join(process.cwd(), '.mcp-gateway-token-performance-'));
   try {
     const { loadOrCreateToken } = await import(`../src/token.js?performance=${Date.now()}`);
     const coldStartedAt = performance.now();

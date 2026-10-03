@@ -1,0 +1,9 @@
+{
+  "name": "shared-mcp-gateway-auth",
+  "displayName": "Shared MCP Gateway Authentication",
+  "publisher": "shared-mcp-gateway",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.100.0" },
+  "main": "./extension.cjs",
+  "activationEvents": ["onStartupFinished"]
+}

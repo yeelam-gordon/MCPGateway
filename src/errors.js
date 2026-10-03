@@ -7,6 +7,8 @@ export class GatewayError extends Error {
 }
 export function errorResult(error) {
   return { isError: true, content: [{ type: 'text', text: JSON.stringify({
-    error: error instanceof GatewayError ? error.code : 'backend_error', message: error.message
+    error: error instanceof GatewayError ? error.code : 'backend_error', message: error.message,
+    ...(error instanceof GatewayError && error.code === 'auth_required' && Array.isArray(error.requiredScopes) ?
+      { requiredScopes: error.requiredScopes } : {})
   }) }] };
 }

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { test } from 'node:test';
@@ -32,7 +31,69 @@ $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentif
   rules = $rules
 } | ConvertTo-Json -Compress -Depth 4`;
   const encoded = Buffer.from(script, 'utf16le').toString('base64');
-  const { stdout } = await execFileAsync(shell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true, timeout: 5_000 });
+  const { stdout } = await execFileAsync(shell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+    { windowsHide: true, timeout: shell === 'pwsh.exe' ? 5_000 : 15_000 });
+  return JSON.parse(stdout.trim());
+}
+
+async function prepareOwnedEmptyDacl(shell, path) {
+  const payload = Buffer.from(JSON.stringify({ path }), 'utf8').toString('base64');
+  const script = String.raw`$ErrorActionPreference = 'Stop'
+$payload = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}')))
+$item = [IO.DirectoryInfo]::new([string]$payload.path)
+$sections = [Security.AccessControl.AccessControlSections]::Access -bor [Security.AccessControl.AccessControlSections]::Owner
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+function ReadAcl {
+  if ($PSVersionTable.PSEdition -eq 'Desktop') { $item.GetAccessControl($sections) }
+  else { [IO.FileSystemAclExtensions]::GetAccessControl($item, $sections) }
+}
+function WriteAcl($acl) {
+  if ($PSVersionTable.PSEdition -eq 'Desktop') { $item.SetAccessControl($acl) }
+  else { [IO.FileSystemAclExtensions]::SetAccessControl($item, $acl) }
+}
+function ClearDacl {
+  $acl = ReadAcl
+  if (-not $acl.GetOwner([Security.Principal.SecurityIdentifier]).Equals($sid)) { throw 'Fixture must already belong to the current user' }
+  $acl.SetAccessRuleProtection($true, $false)
+  foreach ($rule in @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))) {
+    [void]$acl.RemoveAccessRuleSpecific($rule)
+  }
+  WriteAcl $acl
+}
+$acl = ReadAcl
+$initialOwner = $acl.GetOwner([Security.Principal.SecurityIdentifier])
+if (-not $initialOwner.Equals($sid)) {
+  $acl.SetOwner($sid)
+  WriteAcl $acl
+}
+ClearDacl
+$legacyDenied = $false
+try {
+  $acl = ReadAcl
+  $acl.SetOwner($sid)
+  $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, [Security.AccessControl.FileSystemRights]::FullControl, [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit', [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+  [void]$acl.AddAccessRule($rule)
+  WriteAcl $acl
+} catch {
+  $exception = $_.Exception
+  while ($exception.InnerException) { $exception = $exception.InnerException }
+  if ($exception -isnot [UnauthorizedAccessException]) { throw }
+  $legacyDenied = $true
+}
+ClearDacl
+$acl = ReadAcl
+[pscustomobject]@{
+  owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+  current = $sid.Value
+  protected = $acl.AreAccessRulesProtected
+  rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])).Count
+  legacyDenied = $legacyDenied
+  ownerPrepared = -not $initialOwner.Equals($sid)
+  elevated = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+} | ConvertTo-Json -Compress`;
+  const encoded = Buffer.from(script, 'utf16le').toString('base64');
+  const { stdout } = await execFileAsync(shell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded],
+    { windowsHide: true, timeout: shell === 'pwsh.exe' ? 5_000 : 15_000 });
   return JSON.parse(stdout.trim());
 }
 
@@ -108,7 +169,7 @@ test('concurrent first token loads converge while the winner has created but not
   };
   syncBuiltinESMExports();
 
-  const root = await mkdtemp(join(tmpdir(), 'mcp-gateway-token-race-'));
+  const root = await mkdtemp(join(process.cwd(), '.mcp-gateway-token-race-'));
   try {
     const { loadOrCreateToken } = await import(`../src/token.js?race=${Date.now()}-${Math.random()}`);
     const loads = Array.from({ length: 8 }, () => loadOrCreateToken(root));
@@ -136,7 +197,7 @@ test('concurrent first token loads converge while the winner has created but not
 test('startup ACL checks share the remaining deadline without weakening failures', { skip: process.platform !== 'win32' }, async t => {
   const childProcess = require('node:child_process');
   const original = childProcess.execFile;
-  const root = await mkdtemp(join(tmpdir(), 'gateway-token-budget-'));
+  const root = await mkdtemp(join(process.cwd(), '.gateway-token-budget-'));
   const time = t.mock.method(Date, 'now', () => 1000);
   const budgets = [];
   childProcess.execFile = (file, args, options, callback) => {
@@ -164,7 +225,7 @@ test('startup ACL checks share the remaining deadline without weakening failures
 test('waiting for an empty token is clipped to the startup deadline', { timeout: 5000 }, async () => {
   const childProcess = require('node:child_process');
   const original = childProcess.execFile;
-  const root = await mkdtemp(join(tmpdir(), 'gateway-empty-token-deadline-'));
+  const root = await mkdtemp(join(process.cwd(), '.gateway-empty-token-deadline-'));
   const fs = require('node:fs/promises');
   await fs.writeFile(join(root, 'owner.token'), '', { mode: 0o600 });
   childProcess.execFile = (file, args, options, callback) => {
@@ -185,12 +246,47 @@ test('waiting for an empty token is clipped to the startup deadline', { timeout:
   }
 });
 
+test('Windows PowerShell default budget and fallback are clipped to the remaining startup deadline',
+  { skip: process.platform !== 'win32' }, async t => {
+    const childProcess = require('node:child_process');
+    const original = childProcess.execFile;
+    const root = await mkdtemp(join(process.cwd(), '.mcp-gateway-token-fallback-deadline-'));
+    let now = 1000;
+    const clock = t.mock.method(Date, 'now', () => now);
+    const invocations = [];
+    childProcess.execFile = (file, args, options, callback) => {
+      invocations.push({ file, timeout: options.timeout });
+      now += 250;
+      queueMicrotask(() => file === 'pwsh.exe'
+        ? callback(Object.assign(new Error('spawn pwsh.exe ENOENT'), { code: 'ENOENT' }))
+        : callback(null, '', ''));
+    };
+    syncBuiltinESMExports();
+    try {
+      const { loadOrCreateToken } = await import('../src/token.js?fallback-deadline');
+      await loadOrCreateToken(root, { deadline: 2000 });
+      assert.deepEqual(invocations, [
+        { file: 'pwsh.exe', timeout: 1000 },
+        { file: 'powershell.exe', timeout: 750 },
+        { file: 'pwsh.exe', timeout: 500 },
+        { file: 'powershell.exe', timeout: 250 }
+      ]);
+      await assert.rejects(() => loadOrCreateToken(root, { deadline: 2000 }), /deadline expired/);
+      assert.equal(invocations.length, 4, 'expired fallback must not receive a fresh 15-second budget');
+    } finally {
+      childProcess.execFile = original;
+      syncBuiltinESMExports();
+      clock.mock.restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
 test('deadline failure after token creation removes only the unpublished file and allows retry', { timeout: 5000 }, async t => {
   const fs = require('node:fs/promises');
   const childProcess = require('node:child_process');
   const originalOpen = fs.open;
   const originalExec = childProcess.execFile;
-  const root = await mkdtemp(join(tmpdir(), 'gateway-unpublished-token-'));
+  const root = await mkdtemp(join(process.cwd(), '.gateway-unpublished-token-'));
   let now = 1000;
   const clock = t.mock.method(Date, 'now', () => now);
   fs.open = async (...args) => {
@@ -218,10 +314,10 @@ test('deadline failure after token creation removes only the unpublished file an
   }
 });
 
-test('Windows token ACL supports PowerShell 7 and Windows PowerShell 5.1 fallback', { skip: process.platform !== 'win32', timeout: 30_000 }, async t => {
+test('Windows token ACL supports PowerShell 7 and Windows PowerShell 5.1 fallback', { skip: process.platform !== 'win32', timeout: 120_000 }, async t => {
   for (const route of ['pwsh', 'powershell']) {
     await t.test(route === 'pwsh' ? 'uses PowerShell 7 when available' : 'falls back to Windows PowerShell 5.1 when pwsh is unavailable', async () => {
-      const root = await mkdtemp(join(tmpdir(), 'mcp gateway token compat '));
+      const root = await mkdtemp(join(process.cwd(), '.mcp gateway token compat '));
       const stateDir = join(root, 'state with spaces \u6e2c\u8a66');
       try {
         const { result, invocations } = await loadWithShellRoute(route, stateDir);
@@ -251,7 +347,7 @@ test('Windows token ACL supports PowerShell 7 and Windows PowerShell 5.1 fallbac
       return undefined;
     };
     syncBuiltinESMExports();
-    const root = await mkdtemp(join(tmpdir(), 'mcp-gateway-token-unavailable-'));
+    const root = await mkdtemp(join(process.cwd(), '.mcp-gateway-token-unavailable-'));
     try {
       const { loadOrCreateToken } = await import(`../src/token.js?unavailable=${Date.now()}`);
       await loadOrCreateToken(join(root, 'state'));
@@ -271,21 +367,21 @@ test('Windows token ACL supports PowerShell 7 and Windows PowerShell 5.1 fallbac
       invocations.push({ file, timeout: options.timeout });
       queueMicrotask(() => {
         if (file === 'pwsh.exe') callback(Object.assign(new Error('spawn pwsh.exe ENOENT'), { code: 'ENOENT' }));
-        else if (options.timeout > 5_000) callback(null, '', '');
-        else callback(Object.assign(new Error('Windows PowerShell cold start exceeded 5 seconds'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' }));
+        else if (options.timeout > 10_000) callback(null, '', '');
+        else callback(Object.assign(new Error('Windows PowerShell cold start exceeded 10 seconds'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' }));
       });
       return undefined;
     };
     syncBuiltinESMExports();
-    const root = await mkdtemp(join(tmpdir(), 'mcp-gateway-token-cold-start-'));
+    const root = await mkdtemp(join(process.cwd(), '.mcp-gateway-token-cold-start-'));
     try {
       const { loadOrCreateToken } = await import('../src/token.js?cold-start=' + Date.now());
       await loadOrCreateToken(join(root, 'state'));
       assert.deepEqual(invocations, [
         { file: 'pwsh.exe', timeout: 5_000 },
-        { file: 'powershell.exe', timeout: 10_000 },
+        { file: 'powershell.exe', timeout: 15_000 },
         { file: 'pwsh.exe', timeout: 5_000 },
-        { file: 'powershell.exe', timeout: 10_000 }
+        { file: 'powershell.exe', timeout: 15_000 }
       ]);
     } finally {
       childProcess.execFile = originalExecFile;
@@ -298,7 +394,7 @@ test('Windows token ACL supports PowerShell 7 and Windows PowerShell 5.1 fallbac
     const childProcess = require('node:child_process');
     const originalExecFile = childProcess.execFile;
     const invocations = [];
-    const timeoutError = Object.assign(new Error('command timed out after 10000ms'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' });
+    const timeoutError = Object.assign(new Error('command timed out after 15000ms'), { code: 'ETIMEDOUT', killed: true, signal: 'SIGTERM' });
     childProcess.execFile = function timedOutExecFile(file, args, options, callback) {
       invocations.push({ file, timeout: options.timeout });
       queueMicrotask(() => file === 'pwsh.exe'
@@ -307,7 +403,7 @@ test('Windows token ACL supports PowerShell 7 and Windows PowerShell 5.1 fallbac
       return undefined;
     };
     syncBuiltinESMExports();
-    const root = await mkdtemp(join(tmpdir(), 'mcp-gateway-token-timeout-'));
+    const root = await mkdtemp(join(process.cwd(), '.mcp-gateway-token-timeout-'));
     try {
       const { loadOrCreateToken } = await import('../src/token.js?timeout=' + Date.now());
       await assert.rejects(() => loadOrCreateToken(join(root, 'state')), error => {
@@ -319,7 +415,7 @@ test('Windows token ACL supports PowerShell 7 and Windows PowerShell 5.1 fallbac
       });
       assert.deepEqual(invocations, [
         { file: 'pwsh.exe', timeout: 5_000 },
-        { file: 'powershell.exe', timeout: 10_000 }
+        { file: 'powershell.exe', timeout: 15_000 }
       ]);
     } finally {
       childProcess.execFile = originalExecFile;
@@ -337,7 +433,7 @@ test('Windows token ACL supports PowerShell 7 and Windows PowerShell 5.1 fallbac
       return undefined;
     };
     syncBuiltinESMExports();
-    const root = await mkdtemp(join(tmpdir(), 'mcp-gateway-token-error-'));
+    const root = await mkdtemp(join(process.cwd(), '.mcp-gateway-token-error-'));
     try {
       const { loadOrCreateToken } = await import(`../src/token.js?failure=${Date.now()}`);
       await assert.rejects(() => loadOrCreateToken(join(root, 'state')), error => {
@@ -353,3 +449,30 @@ test('Windows token ACL supports PowerShell 7 and Windows PowerShell 5.1 fallbac
     }
   });
 });
+
+test('Windows token repairs a current-user-owned empty DACL without rewriting its owner',
+  { skip: process.platform !== 'win32', timeout: 120_000 }, async t => {
+    for (const route of ['pwsh', 'powershell']) {
+      await t.test(route, async () => {
+        const shell = route === 'pwsh' ? 'pwsh.exe' : 'powershell.exe';
+        const root = await mkdtemp(join(process.cwd(), '.mcp-gateway-token-empty-dacl-'));
+        try {
+          const before = await prepareOwnedEmptyDacl(shell, root);
+          assert.equal(before.owner, before.current);
+          assert.equal(before.protected, true);
+          assert.equal(before.rules, 0);
+          t.diagnostic(`${shell}: elevated=${before.elevated}; fixture owner prepared=${before.ownerPrepared}; legacy same-owner SetOwner denied=${before.legacyDenied}`);
+          const { result } = await loadWithShellRoute(route, root);
+          const after = await inspectAcl(shell, root, true);
+          assert.equal(after.owner, before.owner);
+          assertOwnerOnlyAcl(after, 3);
+          assertOwnerOnlyAcl(await inspectAcl(shell, result.path, false), 0);
+          assert.ok(result.token.length > 0);
+        } finally {
+          const { secureOwnerOnly } = await import('../src/token.js');
+          await secureOwnerOnly([{ path: root, directory: true }]);
+          await rm(root, { recursive: true, force: true });
+        }
+      });
+    }
+  });
