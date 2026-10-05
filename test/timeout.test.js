@@ -161,7 +161,7 @@ test('keeps Playwright locked after a timeout with unknown outcome', async () =>
 test('connector forwards abort and the larger explicit request budget', async () => {
   const source = await readFile(join(process.cwd(), 'tools', 'connector.mjs'), 'utf8');
   assert.match(source, /requestOptions\(CONNECTOR_REQUEST_TIMEOUT_MS, extra\.signal\)/);
-  assert.match(source, /remote\.callTool\([\s\S]*CallToolResultSchema,[\s\S]*requestOptions\(CONNECTOR_REQUEST_TIMEOUT_MS, extra\.signal\)/);
+  assert.match(source, /invokeRemote\(client => client\.callTool\(request\.params, CallToolResultSchema,[\s\S]*requestOptions\(CONNECTOR_REQUEST_TIMEOUT_MS, extra\.signal\)\), discovery, extra\.signal\)/);
   assert.match(source, /downstream outcome is unknown and the request was not retried/);
   assert.doesNotMatch(source, /JSON\.stringify\(request\.params\?\.arguments/);
 });

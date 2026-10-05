@@ -3,13 +3,14 @@ import { execFile } from 'node:child_process';
 import { access, chmod, lstat, mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 const execFileAsync = promisify(execFile);
 const pwshAclTimeoutMs = 5_000;
 const windowsPowerShellAclTimeoutMs = 15_000;
 const tokenWriteWaitMs = 2_000;
 const tokenWritePollMs = 20;
-const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+const delay = (milliseconds, signal) => sleep(milliseconds, undefined, { signal });
 const windowsAclScript = String.raw`$ErrorActionPreference = 'Stop'
 $payloadBase64 = '__PAYLOAD__'
 $payload = ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payloadBase64)))
@@ -56,6 +57,7 @@ if ($PSVersionTable.PSEdition -eq 'Desktop') {
 }`;
 
 export async function secureOwnerOnly(items, options = {}) {
+  options.signal?.throwIfAborted();
   if (options.deadline !== undefined && Date.now() >= options.deadline)
     throw new Error('Gateway startup deadline expired before owner-only ACL verification');
   if (process.platform !== 'win32') {
@@ -66,13 +68,15 @@ export async function secureOwnerOnly(items, options = {}) {
   const encodedCommand = Buffer.from(windowsAclScript.replace('__PAYLOAD__', payload), 'utf16le').toString('base64');
   let lastError;
   for (const shell of ['pwsh.exe', 'powershell.exe']) {
+    options.signal?.throwIfAborted();
     const budget = options.aclTimeoutMs ?? (shell === 'pwsh.exe' ? pwshAclTimeoutMs : windowsPowerShellAclTimeoutMs);
     const timeout = options.deadline === undefined ? budget : Math.min(budget, options.deadline - Date.now());
     if (timeout <= 0) throw new Error('Gateway startup deadline expired before owner-only ACL verification');
     try {
-      await execFileAsync(shell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand], { windowsHide: true, timeout });
+      await execFileAsync(shell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand], { windowsHide: true, timeout, signal: options.signal });
       return;
     } catch (error) {
+      options.signal?.throwIfAborted();
       lastError = error;
       if (shell === 'pwsh.exe' && (error.code === 'ENOENT' || error.code === 'EACCES')) continue;
       break;
@@ -85,16 +89,19 @@ async function readToken(path, stateDir, options) {
   await secureOwnerOnly([{ path: stateDir, directory: true }, { path, directory: false }], options);
   const deadline = Math.min(Date.now() + tokenWriteWaitMs, options.deadline ?? Infinity);
   do {
+    options.signal?.throwIfAborted();
     if (options.deadline !== undefined && Date.now() >= options.deadline)
       throw new Error('Gateway startup deadline expired while waiting for the owner token');
-    const token = (await readFile(path, 'utf8')).trim();
+    const token = (await readFile(path, { encoding: 'utf8', signal: options.signal })).trim();
     if (token) return { token, path };
     if (Date.now() >= deadline) throw new Error(`Owner token file is empty: ${path}`);
-    await delay(Math.min(tokenWritePollMs, deadline - Date.now()));
+    await delay(Math.min(tokenWritePollMs, deadline - Date.now()), options.signal);
   } while (true);
 }
 
 export async function loadOrCreateToken(stateDir, options = {}) {
+  if (options.signal !== undefined && !(options.signal instanceof AbortSignal)) throw new TypeError('signal must be an AbortSignal');
+  options.signal?.throwIfAborted();
   if (options.aclTimeoutMs !== undefined && (!Number.isInteger(options.aclTimeoutMs) || options.aclTimeoutMs < 1))
     throw new TypeError('aclTimeoutMs must be a positive integer');
   if (options.deadline !== undefined && !Number.isFinite(options.deadline))
@@ -111,6 +118,7 @@ export async function loadOrCreateToken(stateDir, options = {}) {
   const token = randomBytes(32).toString('base64url');
   let file;
   try {
+    options.signal?.throwIfAborted();
     file = await open(path, 'wx', 0o600);
   } catch (error) {
     if (error.code === 'EEXIST') return readToken(path, stateDir, options);
@@ -118,6 +126,7 @@ export async function loadOrCreateToken(stateDir, options = {}) {
   }
   try {
     await secureOwnerOnly([{ path, directory: false }], options);
+    options.signal?.throwIfAborted();
     await file.writeFile(`${token}\n`, 'utf8');
   } catch (error) {
     try {

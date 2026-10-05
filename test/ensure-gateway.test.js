@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
-import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -147,6 +147,77 @@ test('live startup-lock waiters do not spawn process-inspection shells', { timeo
   } finally {
     childProcess.execFile = original;
     syncBuiltinESMExports();
+  }
+});
+
+for (const lockKind of ['token-init', 'gateway-start']) {
+  test(`cancellation settles a live ${lockKind} lock wait without stealing or launching`, { timeout: 30_000 }, async () => {
+    const directory = await mkdtemp(join(process.cwd(), '.gateway-cancel-lock-'));
+    fixtures.push(directory);
+    const item = { directory, stateDir: join(directory, 'state'), configPath: join(directory, 'config.json'), port: await unusedPort() };
+    await writeFile(item.configPath, JSON.stringify({ mcpServers: {} }));
+    await mkdir(item.stateDir);
+    if (lockKind === 'gateway-start') await loadOrCreateToken(item.stateDir);
+    const lockPath = lockKind === 'token-init' ? `${item.stateDir}.token-init.lock` : join(item.stateDir, 'gateway-start.lock');
+    const record = JSON.stringify({ nonce: 'live-cancel-fixture', pid: process.pid, createdAt: new Date().toISOString() });
+    await writeFile(lockPath, record);
+    const controller = new AbortController();
+    const operation = ensureGateway(options(item, { signal: controller.signal }));
+    const rejected = assert.rejects(operation, error => error.name === 'AbortError');
+    const parent = lockKind === 'token-init' ? directory : item.stateDir;
+    const waitDeadline = Date.now() + 20_000;
+    while (!(await readdir(parent)).some(name => name.includes(lockKind) && name.endsWith('.prepared'))) {
+      assert.ok(Date.now() < waitDeadline, 'ensure must enter the lock wait');
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    const started = Date.now();
+    controller.abort();
+    await rejected;
+    assert.ok(Date.now() - started < 1500, 'cancellation must settle, not leave startup running');
+    assert.equal(await readFile(lockPath, 'utf8'), record);
+    assert.equal((await readdir(parent)).some(name => name.endsWith('.prepared')), false);
+    await rm(lockPath);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    await assert.rejects(access(join(item.stateDir, 'gateway-instance.json')), { code: 'ENOENT' });
+    await assert.rejects(access(join(item.stateDir, 'gateway.stdout.log')), { code: 'ENOENT' });
+  });
+}
+
+test('cancellation aborts an in-flight authenticated probe and releases its timers and locks', { timeout: 30_000 }, async () => {
+  const directory = await mkdtemp(join(process.cwd(), '.gateway-cancel-probe-'));
+  fixtures.push(directory);
+  const item = { directory, stateDir: join(directory, 'state'), configPath: join(directory, 'config.json') };
+  await writeFile(item.configPath, JSON.stringify({ mcpServers: {} }));
+  const received = Promise.withResolvers();
+  const disconnected = Promise.withResolvers();
+  const listener = createHttpServer((request, response) => {
+    request.resume();
+    response.once('close', disconnected.resolve);
+    received.resolve();
+  });
+  await new Promise(resolve => listener.listen(0, '127.0.0.1', resolve));
+  item.port = listener.address().port;
+  const controller = new AbortController();
+  const operation = ensureGateway(options(item, { signal: controller.signal }));
+  const rejected = assert.rejects(operation, error => error.name === 'AbortError');
+  let timer;
+  try {
+    await Promise.race([received.promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('probe was not reached')), 20_000);
+    })]).finally(() => clearTimeout(timer));
+    const started = Date.now();
+    controller.abort();
+    await rejected;
+    await Promise.race([disconnected.promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('probe connection did not close')), 1500);
+    })]).finally(() => clearTimeout(timer));
+    assert.ok(Date.now() - started < 1500);
+    await assert.rejects(access(`${item.stateDir}.token-init.lock`), { code: 'ENOENT' });
+    await assert.rejects(access(join(item.stateDir, 'gateway.stdout.log')), { code: 'ENOENT' });
+  } finally {
+    controller.abort();
+    listener.closeAllConnections();
+    await new Promise(resolve => listener.close(resolve));
   }
 });
 

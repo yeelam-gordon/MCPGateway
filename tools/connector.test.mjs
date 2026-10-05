@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -32,6 +32,7 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
   let delayedInvalidResponse;
   let disconnectNextTool;
   let disconnectAfterHeadersTool;
+  let interruptedContentType = 'application/json';
   app.use((request, response, next) => request.headers.authorization === `Bearer ${token}` ? next() : response.status(401).json({ error: 'unauthorized' }));
   app.use('/mcp', express.json({ limit: '64kb' }));
   app.all('/mcp', async (request, response) => {
@@ -99,9 +100,9 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
     if (request.body?.method === 'tools/call' && request.body.params?.name === disconnectAfterHeadersTool) {
       disconnectAfterHeadersTool = null;
       if (request.body.params.name === 'call_tool') mutations += 1;
-      response.status(200).set('content-type', 'application/json');
+      response.status(200).set('content-type', interruptedContentType);
       response.flushHeaders();
-      response.write('{"jsonrpc":"2.0","result":');
+      response.write((interruptedContentType === 'text/event-stream' ? 'event: message\ndata: ' : '') + '{"jsonrpc":"2.0","result":');
       setTimeout(() => response.destroy(), 30);
       return;
     }
@@ -131,7 +132,10 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
     claims: () => claims,
     failMutation: () => { failMutationResponse = true; },
     disconnectNext: tool => { disconnectNextTool = tool; },
-    disconnectAfterHeaders: tool => { disconnectAfterHeadersTool = tool; },
+    disconnectAfterHeaders: (tool, contentType = 'application/json') => {
+      disconnectAfterHeadersTool = tool;
+      interruptedContentType = contentType;
+    },
     sessionCount: () => sessions.size,
     async close() {
       clearInterval(sweep);
@@ -348,8 +352,9 @@ test('a socket interruption after dispatch never replays a downstream call', asy
   } finally { await client.close(); await gateway.close(); }
 });
 
+for (const contentType of ['application/json', 'text/event-stream']) {
 for (const discovery of [true, false]) {
-  test(`body interruption after HTTP headers ${discovery ? 'recovers discovery' : 'never replays a downstream call'}`, async () => {
+  test(`${contentType} body interruption after HTTP headers ${discovery ? 'recovers discovery' : 'never replays a downstream call'}`, async () => {
     const stateDir = await mkdtemp(join(tmpdir(), 'gateway-body-interruption-'));
     await writeFile(join(stateDir, 'owner.token'), 'body-interruption-token');
     const gateway = await startFakeGateway('body-interruption-token');
@@ -361,7 +366,7 @@ for (const discovery of [true, false]) {
     try {
       await client.connect(transport);
       const name = discovery ? 'search_tools' : 'call_tool';
-      gateway.disconnectAfterHeaders(name);
+      gateway.disconnectAfterHeaders(name, contentType);
       const operation = client.callTool({ name, arguments: discovery ? { query: 'mail' } :
         { server: 'fake', tool: 'mutate', arguments: { text: 'once' } } }, undefined, { timeout: 5000 });
       if (discovery) {
@@ -375,6 +380,7 @@ for (const discovery of [true, false]) {
       }
     } finally { await client.close(); await gateway.close(); }
   });
+}
 }
 
 
@@ -564,6 +570,7 @@ test('retained connectors auto-start one owned replacement after a real daemon r
       transport.stderr?.on('data', value => {
         if (String(value).includes('rebuilt an expired or interrupted')) recoveryMessages += 1;
       });
+
       const client = new Client({ name: `retained-restart-${index}`, version: '1' });
       clients.push(client);
       await client.connect(transport, { timeout: 90000 });
@@ -590,6 +597,79 @@ test('retained connectors auto-start one owned replacement after a real daemon r
   } finally {
     await Promise.allSettled(clients.map(client => client.close()));
     await stopOwnedGateway({ stateDir, port, timeoutMs: 5000 });
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test('EOF cancels auto-start recovery waiting on a live lock without a later daemon launch', { timeout: 90_000 }, async t => {
+  const stateDir = await mkdtemp(join(process.cwd(), '.gateway-connector-cancel-'));
+  const configPath = join(stateDir, 'backends.json');
+  const port = await unusedPort();
+  await writeFile(configPath, JSON.stringify({ mcpServers: {} }));
+  const child = spawn(process.execPath, [join(process.cwd(), 'tools', 'connector.mjs'),
+    '--state-dir', stateDir, '--port', String(port), '--auto-start', '--config', configPath,
+    '--heartbeat-interval-ms', '60000'], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  let stderr = '';
+  const responses = new Map();
+  let buffered = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', chunk => {
+    buffered += chunk;
+    let newline;
+    while ((newline = buffered.indexOf('\n')) >= 0) {
+      const message = JSON.parse(buffered.slice(0, newline));
+      buffered = buffered.slice(newline + 1);
+      if (message.id !== undefined) responses.set(message.id, message);
+    }
+  });
+  const exited = new Promise(resolve => child.once('exit', code => resolve(code)));
+  const send = message => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
+  const lockPath = `${stateDir}.token-init.lock`;
+  let timer;
+  try {
+    send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25',
+      capabilities: {}, clientInfo: { name: 'cancel-recovery-fixture', version: '1' } } });
+    await waitFor(() => responses.has(1), 60_000);
+    assert.ok(responses.get(1).result, stderr);
+    send({ method: 'notifications/initialized' });
+    const before = JSON.parse(await readFile(join(stateDir, 'gateway-instance.json'), 'utf8'));
+    assert.equal(await stopOwnedGateway({ stateDir, port, timeoutMs: 5000 }), true);
+    const record = JSON.stringify({ nonce: 'live-recovery-fixture', pid: process.pid, createdAt: new Date().toISOString() });
+    await writeFile(lockPath, record);
+    send({ id: 2, method: 'tools/call', params: { name: 'search_tools', arguments: { query: 'mail' } } });
+    const waitDeadline = Date.now() + 5000;
+    while (!(await readdir(join(stateDir, '..'))).some(name =>
+      name.startsWith(stateDir.split(/[\\/]/).at(-1) + '.token-init.lock.') && name.endsWith('.prepared'))) {
+      assert.ok(Date.now() < waitDeadline, 'RPC must reach the real ensureGateway lock wait');
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    const started = Date.now();
+    child.stdin.end();
+    const code = await Promise.race([exited, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('recovery EOF exit exceeded bound')), 3000);
+    })]).finally(() => clearTimeout(timer));
+    assert.equal(code, 0, stderr);
+    assert.ok(Date.now() - started < 3000);
+    t.diagnostic(`Recovery EOF exit: ${Date.now() - started}ms; exit code ${code}`);
+    assert.equal(await readFile(lockPath, 'utf8'), record, 'foreign lock stays untouched');
+    assert.doesNotMatch(stderr, /connector failed|rebuilt an expired|heartbeat failed twice/);
+    await rm(lockPath);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    await assert.rejects(access(join(stateDir, 'gateway-instance.json')), { code: 'ENOENT' });
+    assert.equal((await readFile(join(stateDir, 'gateway.stdout.log'), 'utf8')).match(/Shared MCP gateway listening/g)?.length, 1);
+    assert.doesNotThrow(() => process.kill(process.pid, 0));
+    assert.ok(before.pid > 0);
+    assert.equal((await readdir(join(stateDir, '..'))).some(name =>
+      name.startsWith(stateDir.split(/[\\/]/).at(-1) + '.token-init.lock.') && name.endsWith('.prepared')), false);
+  } finally {
+    if (child.exitCode === null) {
+      child.kill();
+      await exited;
+    }
+    await stopOwnedGateway({ stateDir, port, timeoutMs: 5000 });
+    await rm(lockPath, { force: true });
     await rm(stateDir, { recursive: true, force: true });
   }
 });

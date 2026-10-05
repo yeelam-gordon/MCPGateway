@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -86,9 +87,10 @@ function isConnectionFailure(error) {
 
 async function run() {
   const options = parseArgs(process.argv.slice(2));
+  const lifetime = new AbortController();
   if (options.autoStart) {
     const { ensureGateway } = await import('../src/ensure-gateway.js');
-    await ensureGateway({ configPath: options.configPath, adaptersPath: options.adaptersPath, stateDir: options.stateDir, port: options.port });
+    await ensureGateway({ configPath: options.configPath, adaptersPath: options.adaptersPath, stateDir: options.stateDir, port: options.port, signal: lifetime.signal });
   }
 
   const tokenPath = resolve(options.stateDir, 'owner.token');
@@ -121,13 +123,19 @@ async function run() {
       });
     }
   };
-  const invokeClient = async (client, operation) => {
+  const invokeClient = async (client, operation, signal) => {
     const session = clientSessions.get(client);
+    let rejectInterrupted;
+    const interrupted = new Promise((_, reject) => { rejectInterrupted = reject; });
+    const context = { rejectInterrupted, signal };
     session.active += 1;
-    try { return await operation(client); }
+    try {
+      return await session.requests.run(context, () => Promise.race([operation(client), interrupted]));
+    }
     finally { session.active -= 1; retireClient(client); }
   };
   const connectRemote = async () => {
+    lifetime.signal.throwIfAborted();
     const controller = new AbortController();
     sessionControllers.add(controller);
     const transport = new StreamableHTTPClientTransport(endpoint, {
@@ -153,16 +161,37 @@ async function run() {
             throw new GatewaySessionExpired();
           }
         }
+        const context = clientSessions.get(client).requests.getStore();
+        if (context && init.method === 'POST' && response.body &&
+            response.headers.get('content-type')?.split(';')[0].trim() === 'text/event-stream') {
+          const reader = response.body.getReader();
+          const body = new ReadableStream({
+            async pull(stream) {
+              try {
+                const next = await reader.read();
+                if (next.done) stream.close();
+                else stream.enqueue(next.value);
+              } catch (error) {
+                if (!controller.signal.aborted && !init.signal?.aborted && !context.signal?.aborted && isConnectionFailure(error)) {
+                  context.rejectInterrupted(new GatewayConnectionInterrupted(error));
+                }
+                stream.error(error);
+              }
+            },
+            cancel(reason) { return reader.cancel(reason); }
+          });
+          return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+        }
         return response;
       }
     });
     const client = new Client({ name: 'shared-mcp-gateway-stdio-connector', version: VERSION });
-    clientSessions.set(client, { controller, active: 0, retiring: false, closing: null });
+    clientSessions.set(client, { controller, active: 0, retiring: false, closing: null, requests: new AsyncLocalStorage() });
     sessionClients.add(client);
     try {
       await withTimeout(client.connect(transport), options.connectTimeoutMs,
         `Gateway did not become ready within ${options.connectTimeoutMs}ms at ${endpoint}`);
-      if (closing) throw new Error('Connector is shutting down');
+      lifetime.signal.throwIfAborted();
       remote = client;
       remoteTransport = transport;
     } catch (error) {
@@ -181,7 +210,7 @@ async function run() {
       if (options.autoStart) {
         const { ensureGateway } = await import('../src/ensure-gateway.js');
         await ensureGateway({ configPath: options.configPath, adaptersPath: options.adaptersPath,
-          stateDir: options.stateDir, port: options.port });
+          stateDir: options.stateDir, port: options.port, signal: lifetime.signal });
       }
       await connectRemote();
       clientSessions.get(failedClient).retiring = true;
@@ -195,14 +224,14 @@ async function run() {
   const invokeRemote = async (operation, retryDiscovery, signal) => {
     if (recovery) await recovery;
     const client = remote;
-    try { return await invokeClient(client, operation); }
+    try { return await invokeClient(client, operation, signal); }
     catch (error) {
       if (closing || signal?.aborted || isRequestTimeout(error)) throw error;
       if (!isExpiredSession(error)) {
         if (isConnectionInterrupted(error) || isConnectionFailure(error)) {
           if (retryDiscovery) {
             await recoverSession(client);
-            return invokeClient(remote, operation);
+            return invokeClient(remote, operation, signal);
           }
           throw new Error('Gateway connection was interrupted; downstream outcome is unknown and the request was not retried. Review the previous workflow before continuing.', { cause: error });
         }
@@ -212,7 +241,7 @@ async function run() {
       if (!retryDiscovery) {
         throw new Error('Gateway HTTP session was lost; this request was rejected before dispatch and was not replayed. Previous workflow ownership may be lost; claim the server again before continuing.', { cause: error });
       }
-      return invokeClient(remote, operation);
+      return invokeClient(remote, operation, signal);
     }
   };
   let connected = false;
@@ -227,7 +256,7 @@ async function run() {
   const closeRemote = () => {
     if (closing) return closing;
     stopHeartbeat();
-    closing = (async () => {
+    closing = Promise.resolve().then(async () => {
       try {
         await withTimeout((async () => {
           if (connected) {
@@ -242,7 +271,8 @@ async function run() {
         for (const controller of sessionControllers) controller.abort();
         sessionControllers.clear();
       }
-    })();
+    });
+    lifetime.abort();
     return closing;
   };
   const heartbeat = async () => {
@@ -255,6 +285,7 @@ async function run() {
       ), true);
       heartbeatFailures = 0;
     } catch (error) {
+      if (lifetime.signal.aborted) return;
       heartbeatFailures += 1;
       if (heartbeatFailures >= 2) {
         stopHeartbeat();
