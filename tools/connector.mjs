@@ -188,20 +188,53 @@ async function runConnector(options, lifetime, startupInput) {
   const closeClient = client => {
     const session = clientSessions.get(client);
     if (session.closing) return session.closing;
-    session.closing = withTimeout(client.close(), 3000, 'Gateway client session close').finally(() => {
-      session.controller.abort();
-      sessionControllers.delete(session.controller);
-      sessionClients.delete(client);
-    });
+    session.closing = (async () => {
+      try {
+        if (session.transport.sessionId) {
+          try {
+            const cleanup = new StreamableHTTPClientTransport(endpoint, {
+              sessionId: session.transport.sessionId,
+              requestInit: { headers: { authorization: `Bearer ${token}` } },
+              fetch: async (url, init = {}) => {
+                const response = await fetch(url, { ...init, redirect: 'error', signal: AbortSignal.timeout(1000) });
+                if ([400, 404].includes(response.status) && response.headers.get('content-type')?.includes('application/json')) {
+                  let body;
+                  try { body = await response.clone().json(); } catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+                  if (body?.error === 'invalid_session') {
+                    await response.body?.cancel();
+                    throw new GatewaySessionExpired();
+                  }
+                }
+                return response;
+              }
+            });
+            if (session.transport.protocolVersion) cleanup.setProtocolVersion(session.transport.protocolVersion);
+            await withTimeout(cleanup.terminateSession(), 1000, 'Gateway HTTP session termination');
+          } catch (error) {
+            if (!isExpiredSession(error)) process.stderr.write(`Gateway session termination warning: ${safeMessage(error)}\n`);
+          }
+        }
+      } finally {
+        session.controller.abort();
+        try { await withTimeout(client.close(), 1000, 'Gateway client session close'); }
+        finally {
+          sessionControllers.delete(session.controller);
+          sessionClients.delete(client);
+        }
+      }
+    })();
     return session.closing;
   };
   const retireClient = client => {
     const session = clientSessions.get(client);
     if (session.retiring && session.active === 0) {
-      void closeClient(client).catch(error => {
+      const retirement = closeClient(client);
+      void retirement.catch(error => {
         process.stderr.write(`Expired gateway session cleanup warning: ${safeMessage(error)}\n`);
       });
+      return retirement;
     }
+    return null;
   };
   const invokeClient = async (client, operation, signal) => {
     const session = clientSessions.get(client);
@@ -224,7 +257,9 @@ async function runConnector(options, lifetime, startupInput) {
         let response;
         try {
           response = await fetch(url, { ...init, redirect: 'error',
-            signal: AbortSignal.any([controller.signal, init.signal, AbortSignal.timeout(CONNECTOR_REQUEST_TIMEOUT_MS)].filter(Boolean)) });
+            signal: AbortSignal.any([controller.signal, init.signal,
+              ...(init.method === 'DELETE' ? [] : [lifetime.signal]),
+              AbortSignal.timeout(CONNECTOR_REQUEST_TIMEOUT_MS)].filter(Boolean)) });
         } catch (error) {
           if (!controller.signal.aborted && !init.signal?.aborted && isConnectionFailure(error)) {
             throw new GatewayConnectionInterrupted(error);
@@ -266,10 +301,10 @@ async function runConnector(options, lifetime, startupInput) {
       }
     });
     const client = new Client({ name: 'shared-mcp-gateway-stdio-connector', version: VERSION });
-    clientSessions.set(client, { controller, active: 0, retiring: false, closing: null, requests: new AsyncLocalStorage() });
+    clientSessions.set(client, { controller, transport, active: 0, retiring: false, closing: null, requests: new AsyncLocalStorage() });
     sessionClients.add(client);
     try {
-      const connection = withTimeout(client.connect(transport), options.connectTimeoutMs,
+      const connection = withTimeout(client.connect(transport, { signal: lifetime.signal, timeout: options.connectTimeoutMs }), options.connectTimeoutMs,
         `Gateway did not become ready within ${options.connectTimeoutMs}ms at ${endpoint}`);
       if (!remote) {
         remoteTransport = transport;
@@ -281,7 +316,6 @@ async function runConnector(options, lifetime, startupInput) {
       remoteTransport = transport;
     } catch (error) {
       if (lifetime.signal.aborted) await closeRemote();
-      controller.abort();
       await closeClient(client).catch(() => {});
       throw error;
     } finally {
@@ -300,7 +334,8 @@ async function runConnector(options, lifetime, startupInput) {
       }
       await connectRemote();
       clientSessions.get(failedClient).retiring = true;
-      retireClient(failedClient);
+      const retirement = retireClient(failedClient);
+      if (retirement) await retirement;
       process.stderr.write('Connector rebuilt an expired or interrupted gateway HTTP session; no downstream tool or ownership operation was replayed.\n');
     })();
     recovery = operation;
@@ -346,9 +381,6 @@ async function runConnector(options, lifetime, startupInput) {
       try {
         await withTimeout((async () => {
           if (!connected && initialConnection) await initialConnection.catch(() => {});
-          if (remoteTransport?.sessionId) {
-            try { await remoteTransport.terminateSession(); } catch (error) { process.stderr.write(`Connector session termination warning: ${safeMessage(error)}\n`); }
-          }
           await Promise.all([...sessionClients].map(client => closeClient(client)));
         })(), 3000, 'connector shutdown exceeded 3 seconds');
       } catch (error) {

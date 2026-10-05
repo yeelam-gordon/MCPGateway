@@ -33,6 +33,12 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
   let disconnectNextTool;
   let disconnectAfterHeadersTool;
   let interruptedContentType = 'application/json';
+  const exclusiveClaims = new Map();
+  let heldRecoveryNotification;
+  let recoveryNotifications = 0;
+  let initializedNotifications = 0;
+  let interruptedNotifications = 0;
+  let deleteDelayMs = 0;
   app.use((request, response, next) => request.headers.authorization === `Bearer ${token}` ? next() : response.status(401).json({ error: 'unauthorized' }));
   app.use('/mcp', express.json({ limit: '64kb' }));
   app.all('/mcp', async (request, response) => {
@@ -61,7 +67,11 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
           });
         }
       );
-      server.registerTool('claim_server', { inputSchema: { server: z.string() } }, async () => {
+      server.registerTool('claim_server', { inputSchema: { server: z.string() } }, async ({ server: name }) => {
+        if (exclusiveClaims.has(name) && exclusiveClaims.get(name) !== transport.sessionId) {
+          return { isError: true, content: [{ type: 'text', text: '{"error":"lease_busy"}' }] };
+        }
+        exclusiveClaims.set(name, transport.sessionId);
         claims += 1;
         return { content: [{ type: 'text', text: 'claimed' }] };
       });
@@ -83,9 +93,18 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
       return response.status(503).json({ error: token });
     }
     if (request.method === 'DELETE') {
+      if (deleteDelayMs) await new Promise(resolve => setTimeout(resolve, deleteDelayMs));
       deletes += 1;
       sessions.delete(id);
+      for (const [name, owner] of exclusiveClaims) if (owner === id) exclusiveClaims.delete(name);
       return response.status(200).end();
+    }
+    if (request.body?.method === 'notifications/initialized') initializedNotifications += 1;
+    if (heldRecoveryNotification && initialized > 1 && request.body?.method === 'notifications/initialized') {
+      recoveryNotifications += 1;
+      response.once('close', () => { if (!response.writableFinished) interruptedNotifications += 1; });
+      await heldRecoveryNotification;
+      if (response.destroyed) return;
     }
     if (failMutationResponse && request.body?.method === 'tools/call' && request.body.params?.name === 'call_tool') {
       mutations += 1;
@@ -136,6 +155,11 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
       disconnectAfterHeadersTool = tool;
       interruptedContentType = contentType;
     },
+    holdRecoveryNotification: promise => { heldRecoveryNotification = promise; },
+    recoveryNotifications: () => recoveryNotifications,
+    initializedNotifications: () => initializedNotifications,
+    interruptedNotifications: () => interruptedNotifications,
+    delayDeletes: milliseconds => { deleteDelayMs = milliseconds; },
     sessionCount: () => sessions.size,
     async close() {
       clearInterval(sweep);
@@ -352,6 +376,57 @@ test('a socket interruption after dispatch never replays a downstream call', asy
   } finally { await client.close(); await gateway.close(); }
 });
 
+test('retirement deletes the previous valid session so an explicit idle claim can be reacquired', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'gateway-claim-recovery-'));
+  await writeFile(join(stateDir, 'owner.token'), 'claim-recovery-token');
+  const gateway = await startFakeGateway('claim-recovery-token');
+  const transport = new StdioClientTransport({ command: process.execPath,
+    args: [join(process.cwd(), 'tools', 'connector.mjs'), '--state-dir', stateDir, '--port', String(gateway.port)],
+    stderr: 'pipe' });
+  transport.stderr?.resume();
+  const client = new Client({ name: 'claim-recovery-test', version: '1' });
+  try {
+    await client.connect(transport);
+    assert.notEqual((await client.callTool({ name: 'claim_server', arguments: { server: 'exclusive' } })).isError, true);
+    gateway.disconnectNext('search_tools');
+    await client.callTool({ name: 'search_tools', arguments: {} }, undefined, { timeout: 5000 });
+    assert.equal(gateway.deletes(), 1);
+    assert.equal(gateway.claims(), 1, 'Recovery must not replay the previous claim');
+    assert.notEqual((await client.callTool({ name: 'claim_server', arguments: { server: 'exclusive' } })).isError, true);
+    assert.equal(gateway.claims(), 2, 'Only the explicit caller reclaim may acquire ownership');
+  } finally { await client.close(); await gateway.close(); }
+});
+
+test('EOF aborts a replacement handshake and deletes both minted HTTP sessions', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'gateway-handshake-eof-'));
+  await writeFile(join(stateDir, 'owner.token'), 'handshake-eof-token');
+  const gateway = await startFakeGateway('handshake-eof-token');
+  let release;
+  gateway.holdRecoveryNotification(new Promise(resolve => { release = resolve; }));
+  const child = spawn(process.execPath, [join(process.cwd(), 'tools', 'connector.mjs'),
+    '--state-dir', stateDir, '--port', String(gateway.port),
+    '--heartbeat-interval-ms', '20', '--heartbeat-timeout-ms', '5000'], { stdio: ['pipe', 'pipe', 'pipe'] });
+  child.stdout.resume();
+  let stderr = '';
+  child.stderr.on('data', value => { stderr += value; });
+  try {
+    await waitFor(() => gateway.listCalls() > 0, 5000);
+    gateway.delayDeletes(500);
+    gateway.disconnectNext('list_servers');
+    await waitFor(() => gateway.recoveryNotifications() === 1, 5000);
+    const exited = new Promise(resolve => child.once('exit', resolve));
+    child.stdin.end();
+    await waitFor(() => gateway.interruptedNotifications() === 1, 1000);
+    release();
+    const code = await Promise.race([exited,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Handshake EOF close exceeded bound')), 4000))]);
+    assert.equal(code, 0);
+    assert.equal(gateway.deletes(), 2, stderr);
+    assert.equal(gateway.sessionCount(), 0);
+    assert.equal(gateway.mutations(), 0);
+  } finally { release(); if (child.exitCode === null) child.kill(); await gateway.close(); }
+});
+
 for (const contentType of ['application/json', 'text/event-stream']) {
 for (const discovery of [true, false]) {
   test(`${contentType} body interruption after HTTP headers ${discovery ? 'recovers discovery' : 'never replays a downstream call'}`, async () => {
@@ -403,7 +478,7 @@ test('heartbeat keeps an idle connector session alive until EOF cleanup', async 
     child.stdin.end();
     const code = await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error('heartbeat EOF exit exceeded bound')), 4000))]);
     assert.equal(code, 0, stderr);
-    assert.equal(gateway.deletes(), 1);
+    assert.equal(gateway.deletes(), 1, stderr);
     assert.doesNotMatch(stderr, new RegExp(token));
   } finally {
     if (child.exitCode === null) child.kill();
@@ -448,7 +523,7 @@ test('stdin EOF exits connector and deletes its remote session', async () => {
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', chunk => { stderr += chunk; });
   try {
-    await waitFor(() => gateway.sessionCount() === 1, 3000);
+    await waitFor(() => gateway.initializedNotifications() === 1, 3000);
     const exited = new Promise(resolve => child.once('exit', code => resolve(code)));
     child.stdin.end();
     const code = await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error('EOF exit exceeded bound')), 4000))]);
