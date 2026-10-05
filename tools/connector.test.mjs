@@ -673,3 +673,127 @@ test('EOF cancels auto-start recovery waiting on a live lock without a later dae
     await rm(stateDir, { recursive: true, force: true });
   }
 });
+
+async function heldInitialStartup(extraArgs = []) {
+  const stateDir = await mkdtemp(join(process.cwd(), '.gateway-initial-cancel-'));
+  const configPath = join(stateDir, 'backends.json');
+  const port = await unusedPort();
+  const lockPath = `${stateDir}.token-init.lock`;
+  const lockRecord = JSON.stringify({ nonce: 'live-initial-fixture', pid: process.pid, createdAt: new Date().toISOString() });
+  await writeFile(configPath, JSON.stringify({ mcpServers: {} }));
+  await writeFile(lockPath, lockRecord);
+  const child = spawn(process.execPath, [join(process.cwd(), 'tools', 'connector.mjs'),
+    '--state-dir', stateDir, '--port', String(port), '--auto-start', '--config', configPath,
+    '--heartbeat-interval-ms', '60000', ...extraArgs], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', chunk => { stdout += chunk; });
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));
+  return {
+    stateDir, port, lockPath, lockRecord, child, exited,
+    stdout: () => stdout,
+    stderr: () => stderr,
+    async waiting() {
+      const deadline = Date.now() + 5000;
+      while (!(await readdir(join(stateDir, '..'))).some(name =>
+        name.startsWith(stateDir.split(/[\\/]/).at(-1) + '.token-init.lock.') && name.endsWith('.prepared'))) {
+        assert.ok(Date.now() < deadline, 'initial ensureGateway must reach its live lock wait');
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    },
+    async exitWithin(milliseconds = 3000) {
+      let timer;
+      return Promise.race([exited, new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('initial startup exit exceeded bound')), milliseconds);
+      })]).finally(() => clearTimeout(timer));
+    },
+    async cleanup() {
+      if (child.exitCode === null && child.signalCode === null) { child.kill(); await exited; }
+      await stopOwnedGateway({ stateDir, port, timeoutMs: 5000 });
+      await rm(lockPath, { force: true });
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  };
+}
+
+const initialMessage = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize',
+  params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'initial-buffer-fixture', version: '1' } } }) + '\n';
+
+for (const shutdown of ['empty EOF', 'buffered initialize EOF', 'SIGTERM']) {
+  test(`initial auto-start observes ${shutdown} before any HTTP initialization`, {
+    timeout: 30_000, skip: shutdown === 'SIGTERM' && process.platform === 'win32'
+  }, async t => {
+    const fixture = await heldInitialStartup();
+    try {
+      await fixture.waiting();
+      const started = Date.now();
+      if (shutdown === 'SIGTERM') fixture.child.kill('SIGTERM');
+      else fixture.child.stdin.end(shutdown === 'empty EOF' ? '' : initialMessage);
+      const result = await fixture.exitWithin();
+      assert.equal(result.code, 0, fixture.stderr());
+      t.diagnostic(`Initial ${shutdown}: ${Date.now() - started}ms`);
+      assert.equal(fixture.stdout(), '', 'no frontend initialize response after shutdown');
+      assert.doesNotMatch(fixture.stderr(), /connector failed/);
+      assert.equal(await readFile(fixture.lockPath, 'utf8'), fixture.lockRecord);
+      await rm(fixture.lockPath);
+      await new Promise(resolve => setTimeout(resolve, 150));
+      await assert.rejects(access(join(fixture.stateDir, 'gateway-instance.json')), { code: 'ENOENT' });
+      await assert.rejects(access(join(fixture.stateDir, 'gateway.stdout.log')), { code: 'ENOENT' });
+      assert.equal((await readdir(join(fixture.stateDir, '..'))).some(name =>
+        name.startsWith(fixture.stateDir.split(/[\\/]/).at(-1) + '.token-init.lock.') && name.endsWith('.prepared')), false);
+    } finally { await fixture.cleanup(); }
+  });
+}
+
+test('initial startup replays buffered MCP initialize and pipelined requests exactly once', { timeout: 60_000 }, async () => {
+  const fixture = await heldInitialStartup();
+  try {
+    await fixture.waiting();
+    const pipeline = initialMessage +
+      JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n' +
+      JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }) + '\n' +
+      JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_servers', arguments: {} } }) + '\n';
+    fixture.child.stdin.write(pipeline.slice(0, 23));
+    fixture.child.stdin.write(pipeline.slice(23));
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(fixture.stdout(), '');
+    await rm(fixture.lockPath);
+    await waitFor(() => fixture.stdout().trim().split('\n').length === 3, 50_000);
+    const responses = fixture.stdout().trim().split('\n').map(line => JSON.parse(line));
+    assert.deepEqual(responses.map(response => response.id).sort(), [1, 2, 3]);
+    assert.ok(responses.find(response => response.id === 1).result);
+    assert.equal(responses.find(response => response.id === 2).result.tools.length, 6);
+    assert.deepEqual(responses.find(response => response.id === 3).result.structuredContent.servers, []);
+    fixture.child.stdin.end();
+    assert.equal((await fixture.exitWithin()).code, 0, fixture.stderr());
+  } finally { await fixture.cleanup(); }
+});
+
+test('initial --check ignores stdin EOF while auto-start is pending', { timeout: 60_000 }, async () => {
+  const fixture = await heldInitialStartup(['--check']);
+  try {
+    await fixture.waiting();
+    fixture.child.stdin.end(initialMessage);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(fixture.child.exitCode, null, fixture.stderr());
+    await rm(fixture.lockPath);
+    assert.equal((await fixture.exitWithin(50_000)).code, 0, fixture.stderr());
+    assert.match(fixture.stdout(), /Gateway ready/);
+    assert.ok(JSON.parse(await readFile(join(fixture.stateDir, 'gateway-instance.json'), 'utf8')).pid > 0);
+  } finally { await fixture.cleanup(); }
+});
+
+test('initial startup input is bounded and rejects overflow without launching a daemon', { timeout: 30_000 }, async () => {
+  const fixture = await heldInitialStartup();
+  try {
+    await fixture.waiting();
+    fixture.child.stdin.write(Buffer.alloc(1024 * 1024 + 1, 'x'));
+    assert.equal((await fixture.exitWithin()).code, 1);
+    assert.match(fixture.stderr(), /startup input exceeded the 1 MiB buffering limit/);
+    assert.equal(await readFile(fixture.lockPath, 'utf8'), fixture.lockRecord);
+    await assert.rejects(access(join(fixture.stateDir, 'gateway.stdout.log')), { code: 'ENOENT' });
+  } finally { await fixture.cleanup(); }
+});

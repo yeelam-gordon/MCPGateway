@@ -85,22 +85,102 @@ function isConnectionFailure(error) {
     Boolean(Array.isArray(error?.errors) && error.errors.some(isConnectionFailure));
 }
 
+function watchStartupInput(options, lifetime) {
+  const shutdownReason = new DOMException('Connector is shutting down', 'AbortError');
+  let chunks = [];
+  let bytes = 0;
+  let shutdownRemote;
+  let failureReason;
+  const detachInput = () => {
+    if (options.check) return;
+    process.stdin.pause();
+    process.stdin.off('data', collect);
+    process.stdin.off('error', inputError);
+  };
+  const shutdown = (reason = shutdownReason) => {
+    if (lifetime.signal.aborted) return;
+    detachInput();
+    chunks = [];
+    if (reason !== shutdownReason) failureReason = reason;
+    lifetime.abort(reason);
+    if (shutdownRemote) void shutdownRemote().finally(() => {
+      if (!options.check) process.stdin.destroy();
+      if (reason === shutdownReason && process.exitCode === undefined) process.exitCode = 0;
+    });
+  };
+  const collect = chunk => {
+    bytes += chunk.length;
+    if (bytes > 1024 * 1024) {
+      shutdown(new Error('Connector startup input exceeded the 1 MiB buffering limit'));
+      return;
+    }
+    chunks.push(chunk);
+  };
+  const inputError = error => shutdown(error);
+  const end = () => shutdown();
+  const interrupt = () => shutdown();
+  if (!options.check) {
+    process.stdin.once('end', end);
+    process.stdin.on('error', inputError);
+    process.stdin.on('data', collect);
+    if (process.stdin.readableEnded) shutdown();
+  }
+  process.once('SIGINT', interrupt);
+  process.once('SIGTERM', interrupt);
+  return {
+    shutdown,
+    isNormalShutdown: () => lifetime.signal.reason === shutdownReason,
+    failure: () => failureReason,
+    setRemoteShutdown(callback) { shutdownRemote = callback; },
+    replay() {
+      detachInput();
+      lifetime.signal.throwIfAborted();
+      for (let index = chunks.length - 1; index >= 0; index -= 1) process.stdin.unshift(chunks[index]);
+      chunks = [];
+    },
+    dispose(destroy = false) {
+      detachInput();
+      chunks = [];
+      process.stdin.off('end', end);
+      process.off('SIGINT', interrupt);
+      process.off('SIGTERM', interrupt);
+      if (destroy && !options.check) process.stdin.destroy();
+    }
+  };
+}
+
 async function run() {
   const options = parseArgs(process.argv.slice(2));
   const lifetime = new AbortController();
+  const startupInput = watchStartupInput(options, lifetime);
+  try {
+    await runConnector(options, lifetime, startupInput);
+    if (options.check) startupInput.dispose();
+  } catch (error) {
+    startupInput.dispose(true);
+    if (startupInput.isNormalShutdown()) {
+      if (process.exitCode === undefined) process.exitCode = 0;
+      return;
+    }
+    throw startupInput.failure() ?? error;
+  }
+}
+
+async function runConnector(options, lifetime, startupInput) {
   if (options.autoStart) {
     const { ensureGateway } = await import('../src/ensure-gateway.js');
     await ensureGateway({ configPath: options.configPath, adaptersPath: options.adaptersPath, stateDir: options.stateDir, port: options.port, signal: lifetime.signal });
   }
 
   const tokenPath = resolve(options.stateDir, 'owner.token');
-  const token = (await readFile(tokenPath, 'utf8')).trim();
+  const token = (await readFile(tokenPath, { encoding: 'utf8', signal: lifetime.signal })).trim();
   secretForRedaction = token;
   if (!token) throw new Error(`Gateway owner token is empty: ${tokenPath}`);
 
   const endpoint = new URL(`http://127.0.0.1:${options.port}/mcp`);
   let remoteTransport;
   let remote;
+  let initialConnection;
   let recovery;
   const sessionControllers = new Set();
   const sessionClients = new Set();
@@ -189,12 +269,18 @@ async function run() {
     clientSessions.set(client, { controller, active: 0, retiring: false, closing: null, requests: new AsyncLocalStorage() });
     sessionClients.add(client);
     try {
-      await withTimeout(client.connect(transport), options.connectTimeoutMs,
+      const connection = withTimeout(client.connect(transport), options.connectTimeoutMs,
         `Gateway did not become ready within ${options.connectTimeoutMs}ms at ${endpoint}`);
+      if (!remote) {
+        remoteTransport = transport;
+        initialConnection = connection;
+      }
+      await connection;
       lifetime.signal.throwIfAborted();
       remote = client;
       remoteTransport = transport;
     } catch (error) {
+      if (lifetime.signal.aborted) await closeRemote();
       controller.abort();
       await closeClient(client).catch(() => {});
       throw error;
@@ -259,7 +345,8 @@ async function run() {
     closing = Promise.resolve().then(async () => {
       try {
         await withTimeout((async () => {
-          if (connected) {
+          if (!connected && initialConnection) await initialConnection.catch(() => {});
+          if (remoteTransport?.sessionId) {
             try { await remoteTransport.terminateSession(); } catch (error) { process.stderr.write(`Connector session termination warning: ${safeMessage(error)}\n`); }
           }
           await Promise.all([...sessionClients].map(client => closeClient(client)));
@@ -275,6 +362,7 @@ async function run() {
     lifetime.abort();
     return closing;
   };
+  startupInput.setRemoteShutdown(closeRemote);
   const heartbeat = async () => {
     if (heartbeatStopped) return;
     try {
@@ -331,11 +419,10 @@ async function run() {
     });
 
     const stdio = new StdioServerTransport();
+    startupInput.replay();
     await server.connect(stdio);
-    stdio.onclose = () => { void closeRemote().finally(() => { if (process.exitCode === undefined) process.exitCode = 0; }); };
-    process.stdin.once('end', () => { void closeRemote().finally(() => { if (process.exitCode === undefined) process.exitCode = 0; }); });
-    process.once('SIGINT', () => { void closeRemote().finally(() => process.exit(0)); });
-    process.once('SIGTERM', () => { void closeRemote().finally(() => process.exit(0)); });
+    stdio.onclose = () => startupInput.shutdown();
+    process.stdin.resume();
     heartbeatTimer = setTimeout(heartbeat, options.heartbeatIntervalMs);
     heartbeatTimer.unref?.();
   } finally {
