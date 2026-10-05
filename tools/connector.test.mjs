@@ -29,6 +29,7 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
   let failMutationResponse = false;
   let invalidRequests = 0;
   let delayedInvalidResponse;
+  let disconnectNextTool;
   app.use((request, response, next) => request.headers.authorization === `Bearer ${token}` ? next() : response.status(401).json({ error: 'unauthorized' }));
   app.use('/mcp', express.json({ limit: '64kb' }));
   app.all('/mcp', async (request, response) => {
@@ -87,6 +88,12 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
       mutations += 1;
       return response.status(502).json({ error: 'after_dispatch_failure' });
     }
+    if (request.body?.method === 'tools/call' && request.body.params?.name === disconnectNextTool) {
+      disconnectNextTool = null;
+      if (request.body.params.name === 'call_tool') mutations += 1;
+      request.socket.destroy();
+      return;
+    }
     await session.transport.handleRequest(request, response, request.body);
   });
   const sweep = idleTimeoutMs > 0 ? setInterval(() => {
@@ -112,6 +119,7 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
     mutations: () => mutations,
     claims: () => claims,
     failMutation: () => { failMutationResponse = true; },
+    disconnectNext: tool => { disconnectNextTool = tool; },
     sessionCount: () => sessions.size,
     async close() {
       clearInterval(sweep);
@@ -287,6 +295,45 @@ test('shutdown cancels a held retired-session request within a bounded close', a
     await assert.rejects(second);
     assert.equal(gateway.mutations(), 0);
   } finally { release(); await client.close(); await gateway.close(); }
+});
+
+test('rebuilds discovery after a confirmed local socket interruption', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'gateway-socket-recovery-'));
+  await writeFile(join(stateDir, 'owner.token'), 'socket-recovery-token');
+  const gateway = await startFakeGateway('socket-recovery-token');
+  const transport = new StdioClientTransport({ command: process.execPath,
+    args: [join(process.cwd(), 'tools', 'connector.mjs'), '--state-dir', stateDir, '--port', String(gateway.port)],
+    stderr: 'pipe' });
+  transport.stderr?.resume();
+  const client = new Client({ name: 'socket-recovery-test', version: '1' });
+  try {
+    await client.connect(transport);
+    gateway.disconnectNext('search_tools');
+    const result = await client.callTool({ name: 'search_tools', arguments: { query: 'mail' } }, undefined, { timeout: 5000 });
+    assert.notEqual(result.isError, true);
+    assert.equal(gateway.initializations(), 2);
+    assert.equal(gateway.mutations(), 0);
+  } finally { await client.close(); await gateway.close(); }
+});
+
+test('a socket interruption after dispatch never replays a downstream call', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'gateway-socket-no-replay-'));
+  await writeFile(join(stateDir, 'owner.token'), 'socket-no-replay-token');
+  const gateway = await startFakeGateway('socket-no-replay-token');
+  const transport = new StdioClientTransport({ command: process.execPath,
+    args: [join(process.cwd(), 'tools', 'connector.mjs'), '--state-dir', stateDir, '--port', String(gateway.port)],
+    stderr: 'pipe' });
+  transport.stderr?.resume();
+  const client = new Client({ name: 'socket-no-replay-test', version: '1' });
+  try {
+    await client.connect(transport);
+    gateway.disconnectNext('call_tool');
+    await assert.rejects(client.callTool({ name: 'call_tool', arguments: {
+      server: 'fake', tool: 'mutate', arguments: { text: 'once' }
+    } }, undefined, { timeout: 5000 }), /outcome is unknown.*not retried/);
+    assert.equal(gateway.mutations(), 1);
+    assert.equal(gateway.initializations(), 1);
+  } finally { await client.close(); await gateway.close(); }
 });
 
 

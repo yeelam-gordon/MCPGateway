@@ -67,6 +67,23 @@ function isExpiredSession(error) {
   return error instanceof GatewaySessionExpired || Boolean(error?.cause && isExpiredSession(error.cause));
 }
 
+class GatewayConnectionInterrupted extends Error {
+  constructor(cause) {
+    super('Gateway HTTP connection was interrupted', { cause });
+    this.name = 'GatewayConnectionInterrupted';
+  }
+}
+
+function isConnectionInterrupted(error) {
+  return error instanceof GatewayConnectionInterrupted || Boolean(error?.cause && isConnectionInterrupted(error.cause));
+}
+
+function isConnectionFailure(error) {
+  return ['ECONNREFUSED', 'ECONNRESET', 'EPIPE', 'UND_ERR_SOCKET'].includes(error?.code) ||
+    Boolean(error?.cause && isConnectionFailure(error.cause)) ||
+    Boolean(Array.isArray(error?.errors) && error.errors.some(isConnectionFailure));
+}
+
 async function run() {
   const options = parseArgs(process.argv.slice(2));
   if (options.autoStart) {
@@ -116,8 +133,16 @@ async function run() {
     const transport = new StreamableHTTPClientTransport(endpoint, {
       requestInit: { headers: { authorization: `Bearer ${token}` } },
       fetch: async (url, init = {}) => {
-        const response = await fetch(url, { ...init, redirect: 'error',
-          signal: AbortSignal.any([controller.signal, init.signal, AbortSignal.timeout(CONNECTOR_REQUEST_TIMEOUT_MS)].filter(Boolean)) });
+        let response;
+        try {
+          response = await fetch(url, { ...init, redirect: 'error',
+            signal: AbortSignal.any([controller.signal, init.signal, AbortSignal.timeout(CONNECTOR_REQUEST_TIMEOUT_MS)].filter(Boolean)) });
+        } catch (error) {
+          if (!controller.signal.aborted && !init.signal?.aborted && isConnectionFailure(error)) {
+            throw new GatewayConnectionInterrupted(error);
+          }
+          throw error;
+        }
         if ([400, 404].includes(response.status) && response.headers.get('content-type')?.includes('application/json')) {
           let body;
           try { body = await response.clone().json(); } catch (error) {
@@ -161,7 +186,7 @@ async function run() {
       await connectRemote();
       clientSessions.get(failedClient).retiring = true;
       retireClient(failedClient);
-      process.stderr.write('Connector rebuilt an expired gateway HTTP session; no downstream tool or ownership operation was replayed.\n');
+      process.stderr.write('Connector rebuilt an expired or interrupted gateway HTTP session; no downstream tool or ownership operation was replayed.\n');
     })();
     recovery = operation;
     try { await operation; }
@@ -172,7 +197,16 @@ async function run() {
     const client = remote;
     try { return await invokeClient(client, operation); }
     catch (error) {
-      if (!isExpiredSession(error)) throw error;
+      if (!isExpiredSession(error)) {
+        if (isConnectionInterrupted(error)) {
+          if (retryDiscovery) {
+            await recoverSession(client);
+            return invokeClient(remote, operation);
+          }
+          throw new Error('Gateway connection was interrupted; downstream outcome is unknown and the request was not retried. Review the previous workflow before continuing.', { cause: error });
+        }
+        throw error;
+      }
       await recoverSession(client);
       if (!retryDiscovery) {
         throw new Error('Gateway HTTP session was lost; this request was rejected before dispatch and was not replayed. Previous workflow ownership may be lost; claim the server again before continuing.', { cause: error });
