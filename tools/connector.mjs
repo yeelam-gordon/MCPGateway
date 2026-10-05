@@ -56,6 +56,17 @@ function withTimeout(promise, milliseconds, message) {
   ]).finally(() => clearTimeout(timer));
 }
 
+class GatewaySessionExpired extends Error {
+  constructor() {
+    super('Gateway HTTP session expired (invalid_session)');
+    this.name = 'GatewaySessionExpired';
+  }
+}
+
+function isExpiredSession(error) {
+  return error instanceof GatewaySessionExpired || Boolean(error?.cause && isExpiredSession(error.cause));
+}
+
 async function run() {
   const options = parseArgs(process.argv.slice(2));
   if (options.autoStart) {
@@ -69,8 +80,106 @@ async function run() {
   if (!token) throw new Error(`Gateway owner token is empty: ${tokenPath}`);
 
   const endpoint = new URL(`http://127.0.0.1:${options.port}/mcp`);
-  const remoteTransport = new StreamableHTTPClientTransport(endpoint, { requestInit: { headers: { authorization: `Bearer ${token}` } } });
-  const remote = new Client({ name: 'shared-mcp-gateway-stdio-connector', version: VERSION });
+  let remoteTransport;
+  let remote;
+  let recovery;
+  const sessionControllers = new Set();
+  const sessionClients = new Set();
+  const clientSessions = new WeakMap();
+  const closeClient = client => {
+    const session = clientSessions.get(client);
+    if (session.closing) return session.closing;
+    session.closing = withTimeout(client.close(), 3000, 'Gateway client session close').finally(() => {
+      session.controller.abort();
+      sessionControllers.delete(session.controller);
+      sessionClients.delete(client);
+    });
+    return session.closing;
+  };
+  const retireClient = client => {
+    const session = clientSessions.get(client);
+    if (session.retiring && session.active === 0) {
+      void closeClient(client).catch(error => {
+        process.stderr.write(`Expired gateway session cleanup warning: ${safeMessage(error)}\n`);
+      });
+    }
+  };
+  const invokeClient = async (client, operation) => {
+    const session = clientSessions.get(client);
+    session.active += 1;
+    try { return await operation(client); }
+    finally { session.active -= 1; retireClient(client); }
+  };
+  const connectRemote = async () => {
+    const controller = new AbortController();
+    sessionControllers.add(controller);
+    const transport = new StreamableHTTPClientTransport(endpoint, {
+      requestInit: { headers: { authorization: `Bearer ${token}` } },
+      fetch: async (url, init = {}) => {
+        const response = await fetch(url, { ...init, redirect: 'error',
+          signal: AbortSignal.any([controller.signal, init.signal, AbortSignal.timeout(CONNECTOR_REQUEST_TIMEOUT_MS)].filter(Boolean)) });
+        if ([400, 404].includes(response.status) && response.headers.get('content-type')?.includes('application/json')) {
+          let body;
+          try { body = await response.clone().json(); } catch (error) {
+            if (!(error instanceof SyntaxError)) throw error;
+          }
+          if (body?.error === 'invalid_session') {
+            await response.body?.cancel();
+            throw new GatewaySessionExpired();
+          }
+        }
+        return response;
+      }
+    });
+    const client = new Client({ name: 'shared-mcp-gateway-stdio-connector', version: VERSION });
+    clientSessions.set(client, { controller, active: 0, retiring: false, closing: null });
+    sessionClients.add(client);
+    try {
+      await withTimeout(client.connect(transport), options.connectTimeoutMs,
+        `Gateway did not become ready within ${options.connectTimeoutMs}ms at ${endpoint}`);
+      if (closing) throw new Error('Connector is shutting down');
+      remote = client;
+      remoteTransport = transport;
+    } catch (error) {
+      controller.abort();
+      await closeClient(client).catch(() => {});
+      throw error;
+    } finally {
+      if (controller.signal.aborted) sessionControllers.delete(controller);
+    }
+  };
+  const recoverSession = async failedClient => {
+    if (recovery) return recovery;
+    if (remote !== failedClient) return;
+    if (closing) throw new Error('Connector is shutting down');
+    const operation = (async () => {
+      if (options.autoStart) {
+        const { ensureGateway } = await import('../src/ensure-gateway.js');
+        await ensureGateway({ configPath: options.configPath, adaptersPath: options.adaptersPath,
+          stateDir: options.stateDir, port: options.port });
+      }
+      await connectRemote();
+      clientSessions.get(failedClient).retiring = true;
+      retireClient(failedClient);
+      process.stderr.write('Connector rebuilt an expired gateway HTTP session; no downstream tool or ownership operation was replayed.\n');
+    })();
+    recovery = operation;
+    try { await operation; }
+    finally { if (recovery === operation) recovery = undefined; }
+  };
+  const invokeRemote = async (operation, retryDiscovery) => {
+    if (recovery) await recovery;
+    const client = remote;
+    try { return await invokeClient(client, operation); }
+    catch (error) {
+      if (!isExpiredSession(error)) throw error;
+      await recoverSession(client);
+      if (!retryDiscovery) {
+        throw new Error('Gateway HTTP session was lost; this request was rejected before dispatch and was not replayed. Previous workflow ownership may be lost; claim the server again before continuing.', { cause: error });
+      }
+      return invokeClient(remote, operation);
+    }
+  };
   let connected = false;
   let closing;
   let heartbeatTimer;
@@ -89,11 +198,14 @@ async function run() {
           if (connected) {
             try { await remoteTransport.terminateSession(); } catch (error) { process.stderr.write(`Connector session termination warning: ${safeMessage(error)}\n`); }
           }
-          await remote.close();
+          await Promise.all([...sessionClients].map(client => closeClient(client)));
         })(), 3000, 'connector shutdown exceeded 3 seconds');
       } catch (error) {
         process.stderr.write(`Connector shutdown warning: ${safeMessage(error)}\n`);
         try { await remoteTransport.close(); } catch (closeError) { process.stderr.write(`Connector transport close warning: ${safeMessage(closeError)}\n`); }
+      } finally {
+        for (const controller of sessionControllers) controller.abort();
+        sessionControllers.clear();
       }
     })();
     return closing;
@@ -101,11 +213,11 @@ async function run() {
   const heartbeat = async () => {
     if (heartbeatStopped) return;
     try {
-      await remote.callTool(
+      await invokeRemote(client => client.callTool(
         { name: 'list_servers', arguments: {} },
         CallToolResultSchema,
         requestOptions(options.heartbeatTimeoutMs)
-      );
+      ), true);
       heartbeatFailures = 0;
     } catch (error) {
       heartbeatFailures += 1;
@@ -124,7 +236,7 @@ async function run() {
   };
 
   try {
-    await withTimeout(remote.connect(remoteTransport), options.connectTimeoutMs, `Gateway did not become ready within ${options.connectTimeoutMs}ms at ${endpoint}`);
+    await connectRemote();
     connected = true;
 
     if (options.check) {
@@ -134,16 +246,21 @@ async function run() {
 
     const server = new Server({ name: 'shared-mcp-gateway', version: VERSION }, { capabilities: { tools: {} } });
     localServer = server;
-    server.setRequestHandler(ListToolsRequestSchema, (request, extra) => remote.listTools(request.params ?? {}, requestOptions(CONNECTOR_REQUEST_TIMEOUT_MS, extra.signal)));
+    server.setRequestHandler(ListToolsRequestSchema, (request, extra) => invokeRemote(
+      client => client.listTools(request.params ?? {}, requestOptions(CONNECTOR_REQUEST_TIMEOUT_MS, extra.signal)), true));
     server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
-      const serverName = request.params?.arguments?.server ?? 'unknown backend';
+      const serverName = request.params?.arguments?.server ?? 'gateway';
       const toolName = request.params?.arguments?.tool ?? request.params?.name ?? 'unknown tool';
       try {
-        return await remote.callTool(request.params, CallToolResultSchema, requestOptions(CONNECTOR_REQUEST_TIMEOUT_MS, extra.signal));
+        const discovery = ['list_servers', 'search_tools', 'get_tool_schema'].includes(request.params.name);
+        return await invokeRemote(client => client.callTool(request.params, CallToolResultSchema,
+          requestOptions(CONNECTOR_REQUEST_TIMEOUT_MS, extra.signal)), discovery);
       } catch (error) {
         const context = `${serverName}.${toolName}`;
         if (isRequestTimeout(error)) throw new Error(`Gateway request timed out after ${CONNECTOR_REQUEST_TIMEOUT_MS}ms while calling ${context}; downstream outcome is unknown and the request was not retried`, { cause: error });
-        throw new Error(`Gateway request failed while calling ${context}: ${safeMessage(error)}`, { cause: error });
+        const status = Number.isInteger(error?.code) && error.code >= 100 && error.code <= 599 ? ` [HTTP ${error.code}]` : '';
+        const detail = (safeMessage(error) || `${error?.name ?? 'Error'}${error?.code === undefined ? '' : ` (${error.code})`}`) + status;
+        throw new Error(`Gateway request failed while calling ${context}: ${detail}`, { cause: error });
       }
     });
 

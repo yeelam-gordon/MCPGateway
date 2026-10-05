@@ -22,12 +22,20 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
   let deletes = 0;
   let listCalls = 0;
   let failHeartbeatRequests = false;
+  let invalidSessionStatus = 400;
+  let initialized = 0;
+  let mutations = 0;
+  let claims = 0;
+  let failMutationResponse = false;
+  let invalidRequests = 0;
+  let delayedInvalidResponse;
   app.use((request, response, next) => request.headers.authorization === `Bearer ${token}` ? next() : response.status(401).json({ error: 'unauthorized' }));
   app.use('/mcp', express.json({ limit: '64kb' }));
   app.all('/mcp', async (request, response) => {
     const id = request.headers['mcp-session-id'];
     let session = id ? sessions.get(id) : null;
     if (!session && request.method === 'POST' && request.body?.method === 'initialize') {
+      initialized += 1;
       const server = new McpServer({ name: 'fake-shared-gateway', version: '1' });
       server.registerTool('list_servers', {}, async () => { listCalls += 1; return { content: [{ type: 'text', text: '[]' }], structuredContent: { servers: [] } }; });
       server.registerTool('search_tools', { inputSchema: { query: z.string().optional() } }, async () => ({ content: [{ type: 'text', text: '[]' }] }));
@@ -41,19 +49,31 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
             arguments: z.record(z.string(), z.unknown()).optional()
           }
         },
-        async ({ arguments: args }) => ({
+        async ({ arguments: args }) => {
+          mutations += 1;
+          return ({
           content: [{ type: 'text', text: args.text }],
           structuredContent: { echoed: args.text, nested: { preserved: true } }
-        })
+          });
+        }
       );
-      server.registerTool('claim_server', { inputSchema: { server: z.string() } }, async () => ({ content: [{ type: 'text', text: 'claimed' }] }));
+      server.registerTool('claim_server', { inputSchema: { server: z.string() } }, async () => {
+        claims += 1;
+        return { content: [{ type: 'text', text: 'claimed' }] };
+      });
       server.registerTool('release_server', { inputSchema: { server: z.string() } }, async () => ({ content: [{ type: 'text', text: 'released' }] }));
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: randomUUID, onsessioninitialized: sessionId => sessions.set(sessionId, { server, transport, lastActivityAt: Date.now() }) });
       transport.onclose = () => { if (transport.sessionId) sessions.delete(transport.sessionId); };
       await server.connect(transport);
       session = { server, transport };
     }
-    if (!session) return response.status(400).json({ error: 'invalid_session' });
+    if (!session) {
+      if (request.method === 'POST') {
+        invalidRequests += 1;
+        if (delayedInvalidResponse && invalidRequests === 2) await delayedInvalidResponse;
+      }
+      return response.status(invalidSessionStatus).json({ error: 'invalid_session' });
+    }
     if (request.method === 'POST') session.lastActivityAt = Date.now();
     if (failHeartbeatRequests && request.method === 'POST' && request.body?.method === 'tools/call' && request.body?.params?.name === 'list_servers') {
       return response.status(503).json({ error: token });
@@ -62,6 +82,10 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
       deletes += 1;
       sessions.delete(id);
       return response.status(200).end();
+    }
+    if (failMutationResponse && request.body?.method === 'tools/call' && request.body.params?.name === 'call_tool') {
+      mutations += 1;
+      return response.status(502).json({ error: 'after_dispatch_failure' });
     }
     await session.transport.handleRequest(request, response, request.body);
   });
@@ -76,6 +100,18 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
     deletes: () => deletes,
     listCalls: () => listCalls,
     failHeartbeats: () => { failHeartbeatRequests = true; },
+    expireSessions: async (status = 400) => {
+      invalidSessionStatus = status;
+      const existing = [...sessions.values()];
+      sessions.clear();
+      await Promise.all(existing.map(session => session.transport.close()));
+    },
+    initializations: () => initialized,
+    invalidRequests: () => invalidRequests,
+    delaySecondInvalidResponse: promise => { delayedInvalidResponse = promise; },
+    mutations: () => mutations,
+    claims: () => claims,
+    failMutation: () => { failMutationResponse = true; },
     sessionCount: () => sessions.size,
     async close() {
       clearInterval(sweep);
@@ -83,6 +119,31 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
     }
   };
 }
+
+test('delayed old-session discovery receives its rejection before retirement', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'gateway-delayed-recovery-'));
+  await writeFile(join(stateDir, 'owner.token'), 'delayed-recovery-token');
+  const gateway = await startFakeGateway('delayed-recovery-token');
+  let release;
+  gateway.delaySecondInvalidResponse(new Promise(resolve => { release = resolve; }));
+  const transport = new StdioClientTransport({ command: process.execPath,
+    args: [join(process.cwd(), 'tools', 'connector.mjs'), '--state-dir', stateDir, '--port', String(gateway.port)],
+    stderr: 'pipe' });
+  transport.stderr?.resume();
+  const client = new Client({ name: 'delayed-recovery-test', version: '1' });
+  try {
+    await client.connect(transport);
+    await gateway.expireSessions();
+    const first = client.listTools(undefined, { timeout: 5000 });
+    const second = client.callTool({ name: 'search_tools', arguments: { query: 'mail' } }, undefined, { timeout: 5000 });
+    await waitFor(() => gateway.invalidRequests() === 2 && gateway.initializations() === 2, 5000);
+    release();
+    const results = await Promise.all([first, second]);
+    assert.equal(results[0].tools.length, 6);
+    assert.equal(gateway.initializations(), 2);
+    assert.equal(gateway.mutations(), 0);
+  } finally { release(); await client.close(); await gateway.close(); }
+});
 
 test('forwards tools and closes only its authenticated client session', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'gateway-connector-'));
@@ -110,6 +171,122 @@ test('forwards tools and closes only its authenticated client session', async ()
   } finally {
     await Promise.allSettled([client.close(), gateway.close()]);
   }
+});
+
+for (const status of [400, 404]) {
+  test(`rebuilds an expired HTTP session once for concurrent discovery (${status})`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'gateway-session-recovery-'));
+    const token = 'session-recovery-private-token';
+    await writeFile(join(stateDir, 'owner.token'), token);
+    const gateway = await startFakeGateway(token);
+    const transport = new StdioClientTransport({ command: process.execPath,
+      args: [join(process.cwd(), 'tools', 'connector.mjs'), '--state-dir', stateDir, '--port', String(gateway.port)],
+      stderr: 'pipe' });
+    let stderr = '';
+    transport.stderr?.on('data', value => { stderr += value; });
+    const client = new Client({ name: 'session-recovery-test', version: '1' });
+    try {
+      await client.connect(transport);
+      await gateway.expireSessions(status);
+      const results = await Promise.all([
+        client.listTools(undefined, { timeout: 5000 }),
+        client.callTool({ name: 'search_tools', arguments: { query: 'mail' } }, undefined, { timeout: 5000 }),
+        client.callTool({ name: 'list_servers', arguments: {} }, undefined, { timeout: 5000 })
+      ]);
+      assert.equal(results[0].tools.length, 6);
+      assert.equal(gateway.initializations(), 2, 'concurrent recovery must share one new initialization');
+      assert.equal(gateway.mutations(), 0);
+      assert.doesNotMatch(stderr, new RegExp(token));
+      assert.match(stderr, /rebuilt an expired/);
+    } finally { await client.close(); await gateway.close(); }
+  });
+}
+
+for (const name of ['call_tool', 'claim_server', 'release_server']) {
+  test(`does not replay ${name} after HTTP session loss`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'gateway-no-replay-'));
+    await writeFile(join(stateDir, 'owner.token'), 'no-replay-owner-token');
+    const gateway = await startFakeGateway('no-replay-owner-token');
+    const transport = new StdioClientTransport({ command: process.execPath,
+      args: [join(process.cwd(), 'tools', 'connector.mjs'), '--state-dir', stateDir, '--port', String(gateway.port)],
+      stderr: 'pipe' });
+    transport.stderr?.resume();
+    const client = new Client({ name: 'no-replay-test', version: '1' });
+    try {
+      await client.connect(transport);
+      await gateway.expireSessions();
+      const args = name === 'call_tool' ? { server: 'fake', tool: 'echo', arguments: { text: 'not executed' } } : { server: 'fake' };
+      await assert.rejects(client.callTool({ name, arguments: args }, undefined, { timeout: 5000 }), /not replayed.*ownership may be lost/);
+      assert.equal(gateway.mutations(), 0);
+      assert.equal(gateway.claims(), 0);
+      assert.equal(gateway.initializations(), 2);
+      assert.equal((await client.listTools()).tools.length, 6);
+    } finally { await client.close(); await gateway.close(); }
+  });
+}
+
+test('heartbeat repairs an expired HTTP session without disconnecting the local client', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'gateway-heartbeat-recovery-'));
+  await writeFile(join(stateDir, 'owner.token'), 'heartbeat-recovery-owner');
+  const gateway = await startFakeGateway('heartbeat-recovery-owner');
+  const transport = new StdioClientTransport({ command: process.execPath,
+    args: [join(process.cwd(), 'tools', 'connector.mjs'), '--state-dir', stateDir, '--port', String(gateway.port),
+      '--heartbeat-interval-ms', '20', '--heartbeat-timeout-ms', '1000'], stderr: 'pipe' });
+  transport.stderr?.resume();
+  const client = new Client({ name: 'heartbeat-recovery-test', version: '1' });
+  try {
+    await client.connect(transport);
+    await gateway.expireSessions();
+    await waitFor(() => gateway.initializations() === 2 && gateway.listCalls() > 0, 5000);
+    assert.equal((await client.listTools()).tools.length, 6);
+  } finally { await client.close(); await gateway.close(); }
+});
+
+test('does not retry ambiguous post-dispatch HTTP failures', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'gateway-post-dispatch-'));
+  await writeFile(join(stateDir, 'owner.token'), 'post-dispatch-owner');
+  const gateway = await startFakeGateway('post-dispatch-owner');
+  const transport = new StdioClientTransport({ command: process.execPath,
+    args: [join(process.cwd(), 'tools', 'connector.mjs'), '--state-dir', stateDir, '--port', String(gateway.port)],
+    stderr: 'pipe' });
+  transport.stderr?.resume();
+  const client = new Client({ name: 'post-dispatch-test', version: '1' });
+  try {
+    await client.connect(transport);
+    gateway.failMutation();
+    await assert.rejects(client.callTool({ name: 'call_tool', arguments: {
+      server: 'fake', tool: 'mutate', arguments: { text: 'once' }
+    } }, undefined, { timeout: 5000     }), /Gateway request failed.*HTTP 502/);
+    assert.equal(gateway.mutations(), 1);
+    assert.equal(gateway.initializations(), 1);
+  } finally { await client.close(); await gateway.close(); }
+});
+
+test('shutdown cancels a held retired-session request within a bounded close', async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), 'gateway-retired-shutdown-'));
+  await writeFile(join(stateDir, 'owner.token'), 'retired-shutdown-token');
+  const gateway = await startFakeGateway('retired-shutdown-token');
+  let release;
+  gateway.delaySecondInvalidResponse(new Promise(resolve => { release = resolve; }));
+  const transport = new StdioClientTransport({ command: process.execPath,
+    args: [join(process.cwd(), 'tools', 'connector.mjs'), '--state-dir', stateDir, '--port', String(gateway.port)],
+    stderr: 'pipe' });
+  transport.stderr?.resume();
+  const client = new Client({ name: 'retired-shutdown-test', version: '1' });
+  try {
+    await client.connect(transport);
+    await gateway.expireSessions();
+    const first = client.listTools(undefined, { timeout: 5000 });
+    const second = client.callTool({ name: 'search_tools', arguments: { query: 'held' } }, undefined, { timeout: 5000 });
+    second.catch(() => {});
+    await waitFor(() => gateway.invalidRequests() === 2 && gateway.initializations() === 2, 5000);
+    await first;
+    const started = Date.now();
+    await client.close();
+    assert.ok(Date.now() - started < 4000, 'held old-session request must not block connector shutdown');
+    await assert.rejects(second);
+    assert.equal(gateway.mutations(), 0);
+  } finally { release(); await client.close(); await gateway.close(); }
 });
 
 
