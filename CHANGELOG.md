@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. This project follows semantic versioning while recognizing that pre-1.0 releases may introduce breaking changes.
 
+## [0.7.2] - 2026-10-05
+
+### Fixed
+
+- Resumed connectors rebuild obsolete gateway HTTP sessions after a daemon restart instead of failing discovery with `invalid_session` and disconnecting after failed heartbeats.
+- Discovery and heartbeat can recover once from refused or interrupted local gateway connections, starting or reusing only the verified owned daemon when auto-start is configured.
+- Concurrent recovery shares one initialization; outstanding old-session requests settle before retirement, while connector shutdown still cancels them within a bounded close.
+- Downstream calls, claims and releases are never replayed automatically. Confirmed session rejection reports lost workflow ownership; ambiguous post-dispatch connection failures retain unknown-outcome guidance.
+- Connector failures retain useful HTTP status and error context; gateway discovery no longer misleadingly identifies an "unknown backend".
+
 ## [0.7.1] - 2026-10-03
 
 ### Added
