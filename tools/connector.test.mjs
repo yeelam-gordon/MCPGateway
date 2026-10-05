@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer as createHttpServer } from 'node:http';
 import { createServer as createNetServer } from 'node:net';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -15,6 +15,7 @@ import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
+import { stopOwnedGateway } from '../src/ensure-gateway.js';
 
 async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
   const app = createMcpExpressApp({ host: '127.0.0.1', allowedHosts: undefined });
@@ -30,6 +31,7 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
   let invalidRequests = 0;
   let delayedInvalidResponse;
   let disconnectNextTool;
+  let disconnectAfterHeadersTool;
   app.use((request, response, next) => request.headers.authorization === `Bearer ${token}` ? next() : response.status(401).json({ error: 'unauthorized' }));
   app.use('/mcp', express.json({ limit: '64kb' }));
   app.all('/mcp', async (request, response) => {
@@ -94,6 +96,15 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
       request.socket.destroy();
       return;
     }
+    if (request.body?.method === 'tools/call' && request.body.params?.name === disconnectAfterHeadersTool) {
+      disconnectAfterHeadersTool = null;
+      if (request.body.params.name === 'call_tool') mutations += 1;
+      response.status(200).set('content-type', 'application/json');
+      response.flushHeaders();
+      response.write('{"jsonrpc":"2.0","result":');
+      setTimeout(() => response.destroy(), 30);
+      return;
+    }
     await session.transport.handleRequest(request, response, request.body);
   });
   const sweep = idleTimeoutMs > 0 ? setInterval(() => {
@@ -120,6 +131,7 @@ async function startFakeGateway(token, { idleTimeoutMs = 0 } = {}) {
     claims: () => claims,
     failMutation: () => { failMutationResponse = true; },
     disconnectNext: tool => { disconnectNextTool = tool; },
+    disconnectAfterHeaders: tool => { disconnectAfterHeadersTool = tool; },
     sessionCount: () => sessions.size,
     async close() {
       clearInterval(sweep);
@@ -336,6 +348,35 @@ test('a socket interruption after dispatch never replays a downstream call', asy
   } finally { await client.close(); await gateway.close(); }
 });
 
+for (const discovery of [true, false]) {
+  test(`body interruption after HTTP headers ${discovery ? 'recovers discovery' : 'never replays a downstream call'}`, async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'gateway-body-interruption-'));
+    await writeFile(join(stateDir, 'owner.token'), 'body-interruption-token');
+    const gateway = await startFakeGateway('body-interruption-token');
+    const transport = new StdioClientTransport({ command: process.execPath,
+      args: [join(process.cwd(), 'tools', 'connector.mjs'), '--state-dir', stateDir, '--port', String(gateway.port)],
+      stderr: 'pipe' });
+    transport.stderr?.resume();
+    const client = new Client({ name: 'body-interruption-test', version: '1' });
+    try {
+      await client.connect(transport);
+      const name = discovery ? 'search_tools' : 'call_tool';
+      gateway.disconnectAfterHeaders(name);
+      const operation = client.callTool({ name, arguments: discovery ? { query: 'mail' } :
+        { server: 'fake', tool: 'mutate', arguments: { text: 'once' } } }, undefined, { timeout: 5000 });
+      if (discovery) {
+        assert.notEqual((await operation).isError, true);
+        assert.equal(gateway.initializations(), 2);
+        assert.equal(gateway.mutations(), 0);
+      } else {
+        await assert.rejects(operation, /outcome is unknown.*not retried/);
+        assert.equal(gateway.initializations(), 1);
+        assert.equal(gateway.mutations(), 1);
+      }
+    } finally { await client.close(); await gateway.close(); }
+  });
+}
+
 
 
 
@@ -503,4 +544,52 @@ test('auto-start-only paths are rejected when auto-start is absent', async () =>
   const adaptersResult = await runConnector(['--state-dir', stateDir, '--adapters', join(stateDir, 'adapters.json')]);
   assert.equal(adaptersResult.code, 1);
   assert.match(adaptersResult.stderr, /--adapters requires --auto-start/);
+});
+
+test('retained connectors auto-start one owned replacement after a real daemon restart', async () => {
+  const stateDir = await mkdtemp(join(process.cwd(), '.gateway-connector-restart-'));
+  const configPath = join(stateDir, 'backends.json');
+  const port = await unusedPort();
+  await writeFile(configPath, JSON.stringify({ mcpServers: {
+    fake: { command: process.execPath, args: [join(process.cwd(), 'test', 'fixtures', 'fake-stdio.js')], tools: ['echo'] }
+  } }));
+  const clients = [];
+  let recoveryMessages = 0;
+  const metadata = async () => JSON.parse(await readFile(join(stateDir, 'gateway-instance.json'), 'utf8'));
+  try {
+    for (let index = 0; index < 2; index += 1) {
+      const transport = new StdioClientTransport({ command: process.execPath,
+        args: [join(process.cwd(), 'tools', 'connector.mjs'), '--state-dir', stateDir,
+          '--port', String(port), '--auto-start', '--config', configPath], stderr: 'pipe' });
+      transport.stderr?.on('data', value => {
+        if (String(value).includes('rebuilt an expired or interrupted')) recoveryMessages += 1;
+      });
+      const client = new Client({ name: `retained-restart-${index}`, version: '1' });
+      clients.push(client);
+      await client.connect(transport, { timeout: 90000 });
+      assert.equal((await client.listTools(undefined, { timeout: 5000 })).tools.length, 6);
+    }
+    const before = await metadata();
+    assert.equal(await stopOwnedGateway({ stateDir, port, timeoutMs: 5000 }), true);
+    const discoveries = await Promise.all(clients.map(client => client.callTool({
+      name: 'search_tools', arguments: { server: 'fake', query: 'echo' }
+    }, undefined, { timeout: 90000, maxTotalTimeout: 90000 })));
+    for (const result of discoveries) {
+      assert.notEqual(result.isError, true);
+      assert.equal(result.structuredContent.tools[0].name, 'echo');
+    }
+    const after = await metadata();
+    assert.notEqual(after.pid, before.pid);
+    assert.notEqual(after.nonce, before.nonce);
+    assert.equal(recoveryMessages, 2);
+    const result = await clients[0].callTool({ name: 'call_tool',
+      arguments: { server: 'fake', tool: 'echo', arguments: { text: 'after restart' } }
+    }, undefined, { timeout: 5000 });
+    assert.equal(result.structuredContent.text, 'after restart');
+    assert.equal((await metadata()).pid, after.pid);
+  } finally {
+    await Promise.allSettled(clients.map(client => client.close()));
+    await stopOwnedGateway({ stateDir, port, timeoutMs: 5000 });
+    await rm(stateDir, { recursive: true, force: true });
+  }
 });

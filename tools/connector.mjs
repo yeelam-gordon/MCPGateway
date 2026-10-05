@@ -192,13 +192,14 @@ async function run() {
     try { await operation; }
     finally { if (recovery === operation) recovery = undefined; }
   };
-  const invokeRemote = async (operation, retryDiscovery) => {
+  const invokeRemote = async (operation, retryDiscovery, signal) => {
     if (recovery) await recovery;
     const client = remote;
     try { return await invokeClient(client, operation); }
     catch (error) {
+      if (closing || signal?.aborted || isRequestTimeout(error)) throw error;
       if (!isExpiredSession(error)) {
-        if (isConnectionInterrupted(error)) {
+        if (isConnectionInterrupted(error) || isConnectionFailure(error)) {
           if (retryDiscovery) {
             await recoverSession(client);
             return invokeClient(remote, operation);
@@ -281,14 +282,14 @@ async function run() {
     const server = new Server({ name: 'shared-mcp-gateway', version: VERSION }, { capabilities: { tools: {} } });
     localServer = server;
     server.setRequestHandler(ListToolsRequestSchema, (request, extra) => invokeRemote(
-      client => client.listTools(request.params ?? {}, requestOptions(CONNECTOR_REQUEST_TIMEOUT_MS, extra.signal)), true));
+      client => client.listTools(request.params ?? {}, requestOptions(CONNECTOR_REQUEST_TIMEOUT_MS, extra.signal)), true, extra.signal));
     server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
       const serverName = request.params?.arguments?.server ?? 'gateway';
       const toolName = request.params?.arguments?.tool ?? request.params?.name ?? 'unknown tool';
       try {
         const discovery = ['list_servers', 'search_tools', 'get_tool_schema'].includes(request.params.name);
         return await invokeRemote(client => client.callTool(request.params, CallToolResultSchema,
-          requestOptions(CONNECTOR_REQUEST_TIMEOUT_MS, extra.signal)), discovery);
+          requestOptions(CONNECTOR_REQUEST_TIMEOUT_MS, extra.signal)), discovery, extra.signal);
       } catch (error) {
         const context = `${serverName}.${toolName}`;
         if (isRequestTimeout(error)) throw new Error(`Gateway request timed out after ${CONNECTOR_REQUEST_TIMEOUT_MS}ms while calling ${context}; downstream outcome is unknown and the request was not retried`, { cause: error });
