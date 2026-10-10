@@ -72,7 +72,7 @@ test('localized quickstarts retain truthful benefits, first workflows and canoni
     ]);
     assert.ok(text.includes(ownershipGuards.get(language.code)), `${language.code}: unknown-outcome blocked/release/disconnect/cancellation guard`);
     assert.ok(text.includes('../REFERENCE.md#planned-exit'), `${language.code}: planned exit route`);
-    const measuredMetricLabels = new Map([["ar", ["قياس تجهيز خفيف: زاد مجموع working set للعمليات", "المقاس هو مجموع working set للعمليات؛ لم تُقَس الذاكرة الفعلية دون العد المكرر ولا البايتات الخاصة (private bytes)."]], ["de", ["Leichte Fixture gemessen: summiertes Prozess-Working-Set erhöht", "Gemessen wurde das summierte Prozess-Working-Set; physischer Speicher ohne Mehrfachzählung und private Bytes wurden nicht gemessen."]], ["es", ["Fixture ligero medido: aumentó el working set sumado de procesos", "Se midió el working set sumado de procesos; no se midieron la memoria física sin duplicación ni los bytes privados (private bytes)."]], ["fr", ["Fixture léger mesuré : hausse du working set cumulé des processus", "La mesure porte sur le working set cumulé des processus ; ni la mémoire physique sans double comptage ni les octets privés (private bytes) n’ont été mesurés."]], ["hi", ["हल्के फ़िक्चर का मापा परिणाम: प्रक्रियाओं के working set का योग बढ़ा", "प्रक्रियाओं के working set का योग मापा गया; दोहराव हटाकर भौतिक मेमोरी और निजी बाइट्स (private bytes) नहीं मापे गए।"]], ["id", ["Fixture ringan terukur: jumlah working set proses meningkat", "Yang diukur adalah jumlah working set proses; memori fisik tanpa penghitungan ganda dan private bytes (memori privat proses) tidak diukur."]], ["it", ["Fixture leggero misurato: aumento del working set sommato dei processi", "Si è misurato il working set sommato dei processi; memoria fisica senza duplicazioni e byte privati (private bytes) non sono stati misurati."]], ["ja", ["軽量フィクスチャの実測：プロセスのワーキングセット合計が増加", "測定値は各プロセスのワーキングセットの合計です。重複を除いた物理メモリとプライベートバイト（private bytes）は未測定です。"]], ["ko", ["경량 테스트 실측: 프로세스 작업 집합 합계 증가", "측정값은 프로세스 작업 집합의 합계입니다. 중복을 제외한 물리 메모리와 전용 바이트(private bytes)는 측정하지 않았습니다."]], ["pt-BR", ["Fixture leve medido: aumentou o working set somado dos processos", "Mediu-se o working set somado dos processos; memória física sem duplicação e bytes privados (private bytes) não foram medidos."]], ["ru", ["Измерение лёгкой фикстуры: сумма рабочих наборов процессов выросла", "Измерена сумма рабочих наборов процессов; физическая память без повторного учёта и частные байты (private bytes) не измерялись."]], ["tr", ["Hafif düzenek ölçümü: süreçlerin toplam working set değeri arttı", "Ölçüm süreçlerin working set toplamıdır; tekrar sayımı çıkarılmış fiziksel bellek ve özel baytlar (private bytes) ölçülmedi."]], ["vi", ["Fixture nhẹ đã đo: tổng working set của các tiến trình tăng", "Đã đo tổng working set của các tiến trình; chưa đo bộ nhớ vật lý loại trừ phần tính trùng hay private bytes (bộ nhớ riêng của tiến trình)."]], ["zh-CN", ["轻量后端实测：进程工作集总和增加", "测量的是进程工作集总和；去重后的物理内存与私有字节（private bytes）均未测量。"]], ["zh-TW", ["輕量後端實測：程序工作集總和增加", "測量的是程序工作集總和；去除重複計算的實體記憶體與私有位元組（private bytes）均未測量。"]]]);
+    const measuredMetricLabels = new Map([["ar", ["قياس تجهيز خفيف: زاد مجموع working set للعمليات", "المقاس هو مجموع working set للعمليات؛ لم تُقَس الذاكرة الفعلية دون العد المكرر ولا البايتات الخاصة (private bytes)."]], ["de", ["Leichtgewichtiges Testszenario: summiertes Prozess-Working-Set erhöht", "Gemessen wurde das summierte Prozess-Working-Set; physischer Speicher ohne Mehrfachzählung und private Bytes wurden nicht gemessen."]], ["es", ["Escenario de prueba ligero medido: aumentó el working set sumado de procesos (memoria residente sumada)", "Se midió el working set sumado de procesos; no se midieron la memoria física sin duplicación ni los bytes privados (private bytes)."]], ["fr", ["Scénario de test léger mesuré : hausse du working set cumulé des processus (somme de la mémoire résidente)", "La mesure porte sur le working set cumulé des processus ; ni la mémoire physique sans double comptage ni les octets privés (private bytes) n’ont été mesurés."]], ["hi", ["हल्के फ़िक्चर का मापा परिणाम: प्रक्रियाओं के working set का योग बढ़ा", "प्रक्रियाओं के working set का योग मापा गया; दोहराव हटाकर भौतिक मेमोरी और निजी बाइट्स (private bytes) नहीं मापे गए।"]], ["id", ["Skenario pengujian ringan: jumlah working set proses meningkat", "Yang diukur adalah jumlah working set proses; memori fisik tanpa penghitungan ganda dan private bytes (memori privat proses) tidak diukur."]], ["it", ["Scenario di test leggero misurato: aumento del working set sommato dei processi (somma della memoria residente)", "Si è misurato il working set sommato dei processi; memoria fisica senza duplicazioni e byte privati (private bytes) non sono stati misurati."]], ["ja", ["軽量なテストシナリオの実測：プロセスのワーキングセット合計が増加", "測定値は各プロセスのワーキングセットの合計です。重複を除いた物理メモリとプライベートバイト（private bytes）は未測定です。"]], ["ko", ["경량 테스트 실측: 프로세스 작업 집합 합계 증가", "측정값은 프로세스 작업 집합의 합계입니다. 중복을 제외한 물리 메모리와 전용 바이트(private bytes)는 측정하지 않았습니다."]], ["pt-BR", ["Cenário de teste leve medido: aumentou o working set somado dos processos (soma da memória residente)", "Mediu-se o working set somado dos processos; memória física sem duplicação e bytes privados (private bytes) não foram medidos."]], ["ru", ["Измерение лёгкого тестового сценария: сумма рабочих наборов процессов выросла", "Измерена сумма рабочих наборов процессов; физическая память без повторного учёта и частные байты (private bytes) не измерялись."]], ["tr", ["Hafif düzenek ölçümü: süreçlerin toplam working set değeri arttı", "Ölçüm süreçlerin working set toplamıdır; tekrar sayımı çıkarılmış fiziksel bellek ve özel baytlar (private bytes) ölçülmedi."]], ["vi", ["Fixture nhẹ đã đo: tổng working set của các tiến trình tăng", "Đã đo tổng working set của các tiến trình; chưa đo bộ nhớ vật lý loại trừ phần tính trùng hay private bytes (bộ nhớ riêng của tiến trình)."]], ["zh-CN", ["轻量后端实测：进程工作集总和增加", "测量的是进程工作集总和；去重后的物理内存与私有字节（private bytes）均未测量。"]], ["zh-TW", ["輕量後端實測：程序工作集總和增加", "測量的是程序工作集總和；去除重複計算的實體記憶體與私有位元組（private bytes）均未測量。"]]]);
     for (const metricLabel of measuredMetricLabels.get(language.code)) assert.ok(text.includes(metricLabel), `${language.code}: measured summed-working-set scope`);
     assert.equal((text.match(/\[Copilot CLI\]\(\.\.\/CLIENTS\.md#shared-gateway-prerequisite\)/g) ?? []).length, 8, `${language.code}: bootstrap explicit for all client routes`);
     const approvedRequest = text.match(/^> .+$/gm)?.filter(line => !line.includes('README'));
@@ -178,21 +178,21 @@ test('all sixteen openings separate memory, startup work and configuration-only 
   const { languages } = JSON.parse(await readFile(new URL('docs/i18n/languages.json', root), 'utf8'));
   const meanings = new Map([
     ['en', ['duplicate backend memory', 'repeated startup work', 'without restarting the current agent-side MCP connection']],
-    ['zh-CN', ['重复占用内存', '重复启动工作', '无需重启该连接']],
-    ['zh-TW', ['重複占用記憶體', '重複啟動工作', '不必重啟該連線']],
+    ['zh-CN', ['重复占用内存', '后端启动过程', '无需重启该连接']],
+    ['zh-TW', ['記憶體重複占用', '重用已啟動的後端', '不必重啟該連線']],
     ['ja', ['メモリの重複', '起動処理を再利用', '既存 MCP 接続を再起動せず']],
-    ['ko', ['메모리 중복', '시작 작업을 재사용', 'MCP 연결을 재시작 없이']],
-    ['es', ['RAM duplicada', 'trabajo de arranque', 'sin reiniciar la conexión MCP actual']],
-    ['pt-BR', ['RAM duplicada', 'trabalho de inicialização', 'sem reiniciar a conexão MCP atual']],
-    ['fr', ['RAM dupliquée', 'travail de démarrage', 'sans redémarrer la connexion MCP actuelle']],
-    ['de', ['doppelten RAM', 'Startarbeit wiederverwenden', 'bestehende MCP-Verbindung des Agenten neu zu starten']],
+    ['ko', ['메모리 중복', '이미 실행 중인 백엔드를 재사용', 'MCP 연결을 재시작 없이']],
+    ['es', ['RAM duplicada', 'backends ya activos', 'sin reiniciar la conexión MCP actual']],
+    ['pt-BR', ['RAM duplicada', 'backends já iniciados', 'sem reiniciar a conexão MCP atual']],
+    ['fr', ['copies en mémoire', 'les backends actifs', 'sans redémarrer la connexion MCP actuelle']],
+    ['de', ['doppelten RAM', 'bereits gestartete Backends wiederverwenden', 'bestehende MCP-Verbindung des Agenten neu zu starten']],
     ['it', ['RAM duplicata', 'lavoro di avvio', 'senza riavviare la connessione MCP attuale']],
-    ['ru', ['дублирования RAM', 'работу запуска', 'без перезапуска текущего MCP-соединения']],
-    ['tr', ['yinelenen RAM', 'başlatma işini', 'MCP bağlantısını yeniden başlatmadan']],
-    ['vi', ['RAM trùng lặp', 'công việc khởi động', 'không khởi động lại kết nối MCP hiện tại']],
-    ['id', ['RAM duplikat', 'pekerjaan memulai backend', 'tanpa memulai ulang koneksi MCP agen']],
-    ['hi', ['RAM का दोहराव', 'शुरू करने का काम', 'MCP कनेक्शन बिना रीस्टार्ट']],
-    ['ar', ['تكرار الذاكرة', 'عمل بدء التشغيل', 'دون إعادة تشغيل اتصال MCP الحالي']]
+    ['ru', ['не дублируйте RAM', 'уже работающие процессы', 'сохраняя текущее MCP-соединение']],
+    ['tr', ['yinelenen RAM', 'çalışan arka uçları', 'MCP bağlantısını yeniden başlatmadan']],
+    ['vi', ['RAM trùng lặp', 'backend đang chạy', 'không cần khởi động lại kết nối']],
+    ['id', ['RAM duplikat', 'backend yang sudah berjalan', 'tanpa memulai ulang koneksi MCP agen']],
+    ['hi', ['RAM का दोहराव', 'पहले से चल रहे बैकएंड', 'MCP कनेक्शन बिना रीस्टार्ट']],
+    ['ar', ['تكرار الذاكرة', 'الخدمات التي تعمل بالفعل', 'دون إعادة تشغيله']]
   ]);
   for (const language of languages) {
     const text = await readFile(new URL(language.path, root), 'utf8');
@@ -241,4 +241,77 @@ test('six repaired locales offer ordinary local recovery before the full English
   const korean = await readFile(new URL('docs/i18n/README.ko.md', root), 'utf8');
   assert.ok(korean.includes('재시작 후 배타적 이용을 다시 예약해야 합니다.'));
   assert.ok(!korean.includes('예약어야'));
+});
+
+
+test('first-use exposes command-array invocation and native rollback meaning before execution', async () => {
+  const { languages } = JSON.parse(await readFile(new URL('docs/i18n/languages.json', root), 'utf8'));
+  for (const language of languages) {
+    const text = await readFile(new URL(language.path, root), 'utf8');
+    const firstUse = text.slice(text.indexOf('<a id="first-use">'));
+    assert.ok(firstUse.includes('`.command`'), `${language.code}: executable field`);
+    assert.ok(firstUse.includes('`.args`'), `${language.code}: ordered argument array`);
+    assert.ok(firstUse.includes("$command = $readinessCommand.command"), `${language.code}: executable as single quoted value`);
+    assert.ok(firstUse.includes("$commandArgs = @($readinessCommand.args)"), `${language.code}: one quoted value per argument`);
+    assert.ok(firstUse.includes('& $command @commandArgs'), `${language.code}: invocation operator and argument splatting`);
+    if (language.code !== 'en') {
+      const beforeInstall = firstUse.slice(0, firstUse.indexOf('```powershell'));
+      assert.match(beforeInstall, /\[[^\]\n]{15,}[（(]rollback ≠ daemon shutdown[）)]\]\(\.\.\/REFERENCE.md#setup-recovery\)/, `${language.code}: native explanation before install`);
+      assert.ok(!beforeInstall.includes('[rollback ≠ daemon shutdown]'), `${language.code}: not English-only warning`);
+    }
+  }
+  const russian = await readFile(new URL('docs/i18n/README.ru.md', root), 'utf8');
+  assert.ok(russian.includes('Совместно используйте локальные MCP-бэкенды'));
+  assert.ok(!russian.includes('Делите локальные'));
+  assert.ok(!russian.includes('фикстуры'));
+});
+
+
+test('client tables separate install, upgrade, bootstrap and verification navigation', async () => {
+  const { languages } = JSON.parse(await readFile(new URL('docs/i18n/languages.json', root), 'utf8'));
+  for (const language of languages) {
+    const text = await readFile(new URL(language.path, root), 'utf8');
+    const rows = text.split('\n').filter(line => line.startsWith('|') && line.includes('CLIENTS.md#'));
+    const clientRows = rows.filter(line => line.includes('shared-gateway-prerequisite'));
+    assert.equal(clientRows.length, 8, `${language.code}: eight client routes`);
+    for (const row of clientRows) {
+      const cells = row.split('|').slice(1, -1);
+      assert.equal(cells.length, 5, `${language.code}: distinct five-column client row`);
+      assert.ok(cells[2].includes('-upgrade)'));
+      assert.ok(cells[3].includes('#shared-gateway-prerequisite)'));
+      assert.ok(cells[4].includes('#compatibility-summary)'));
+    }
+    assert.doesNotMatch(text, /^##[^ ]/m, `${language.code}: spaced headings`);
+  }
+});
+
+
+test('focused native corrections retain shell, median and renewed-ownership meanings', async () => {
+  const arabic = await readFile(new URL('docs/i18n/README.ar.md', root), 'utf8');
+  assert.ok(arabic.includes('مفسّر الأوامر (shell)'));
+  assert.ok(arabic.includes('القيمة الوسيطة لثلاث تجارب'));
+  assert.ok(!arabic.includes('للصدفة'));
+  assert.ok(!arabic.includes('وسائط 3 تجارب'));
+  const turkish = await readFile(new URL('docs/i18n/README.tr.md', root), 'utf8');
+  assert.ok(turkish.includes('istemcilerin kendi sohbet arayüzleriyle yapılan uçtan uca bir test de değildir'));
+  assert.ok(!turkish.includes('yerel konuşma arayüzü doğrulaması'));
+  const vietnamese = await readFile(new URL('docs/i18n/README.vi.md', root), 'utf8');
+  assert.ok(vietnamese.includes('Không phát lại lời gọi gián đoạn. Sau khi khởi động lại, hãy yêu cầu lại quyền truy cập độc quyền.'));
+  const hindi = await readFile(new URL('docs/i18n/README.hi.md', root), 'utf8');
+  assert.equal(hindi.split('पहली बार पंजीकरण करने या रनटाइम अपग्रेड करने पर क्लाइंट को रीस्टार्ट करना पड़ सकता है।').length - 1, 2);
+  assert.ok(hindi.includes('बैकएंड शुरू करने की संख्या 60 → 12 हो जाती है; इसका मतलब 80% तेज़ शुरुआत नहीं है।'));
+  assert.ok(!hindi.includes('पहली पंजीकरण प्रक्रिया'));
+});
+
+
+test('readiness instructions acquire only the approved JSON object before invocation', async () => {
+  const { languages } = JSON.parse(await readFile(new URL('docs/i18n/languages.json', root), 'utf8'));
+  for (const language of languages) {
+    const text = await readFile(new URL(language.path, root), 'utf8');
+    const parse = text.indexOf("$readinessCommand = Get-Content -Raw -LiteralPath '.\\readiness-command.json' | ConvertFrom-Json");
+    assert.ok(parse > text.indexOf('<a id="first-use">'), language.code);
+    assert.ok(parse < text.indexOf('$command = $readinessCommand.command'), language.code);
+    assert.ok(text.includes('UTF-8'), language.code);
+    assert.ok(!text.includes('Invoke-Expression'), language.code);
+  }
 });

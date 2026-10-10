@@ -8,7 +8,7 @@
 
 </details>
 
-सत्रों के बीच स्थानीय MCP बैकएंड साझा करें: RAM का दोहराव रोकें, शुरू करने का काम दोबारा उपयोग करें और केवल कॉन्फ़िगरेशन जोड़ते समय एजेंट का मौजूदा MCP कनेक्शन बिना रीस्टार्ट बनाए रखें (SDK/stdio मार्ग; कुल लाभ अतिरिक्त लागत पर निर्भर)।
+स्थानीय MCP बैकएंड साझा करें: RAM का दोहराव रोकें, पहले से चल रहे बैकएंड उपयोग करें और कॉन्फ़िगरेशन में बैकएंड जोड़ते समय एजेंट का मौजूदा MCP कनेक्शन बिना रीस्टार्ट बनाए रखें (SDK/stdio मार्ग; कुल लाभ अतिरिक्त लागत पर निर्भर)।
 
 [Copilot CLI से शुरू करें](#first-use) · [क्लाइंट सत्यापन](../CLIENTS.md#compatibility-summary) · [प्रमाण](#resource-examples)
 
@@ -17,8 +17,8 @@
 अंग्रेज़ी लेबल वाला अवधारणा चित्र, वास्तविक स्क्रीन या बेंचमार्क नहीं। प्रति बैकएंड सेट 1.5 GB मानने पर 6 GB का दोहराव अतिरिक्त लागत से पहले बचता है।
 
 - **डुप्लिकेट बैकएंड मेमोरी से बचें:** अनुमान का उदाहरण: 5 × 1.5 GB → एक सेट; गेटवे/कनेक्टर की अतिरिक्त लागत से **पहले** 6 GB दोहराव बचता है, मापी गई बचत नहीं।
-- **बार-बार शुरू करने का काम साझा करें:** यदि सभी 5 सत्र सभी 12 stdio सेवाएँ उपयोग करें: 60 → 12 बैकएंड शुरुआत, 80% तेज़ शुरुआत नहीं।
-- **केवल कॉन्फ़िगरेशन जोड़ें; एजेंट कनेक्शन बनाए रखें:** SDK/stdio में 1 इनिशियलाइज़ेशन काम पूरा होने के बाद अपने गेटवे के रीस्टार्ट के पार बना रहता है; कनेक्टर चलता रहता है। यह hot reload या नेटिव बातचीत UI का सत्यापन नहीं है। पहली पंजीकरण प्रक्रिया/रनटाइम अपग्रेड में क्लाइंट रीस्टार्ट ज़रूरी हो सकता है। [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
+- **बार-बार शुरू करने का काम साझा करें:** यदि सभी 5 सत्र सभी 12 stdio सेवाएँ उपयोग करें: बैकएंड शुरू करने की संख्या 60 → 12 हो जाती है; इसका मतलब 80% तेज़ शुरुआत नहीं है।
+- **केवल कॉन्फ़िगरेशन जोड़ें; एजेंट कनेक्शन बनाए रखें:** SDK/stdio परीक्षण में कनेक्शन को एक बार (1) इनिशियलाइज़ किया गया। काम पूरा होने के बाद केवल अपने गेटवे को रीस्टार्ट करने पर भी मौजूदा MCP कनेक्शन बना रहा और कनेक्टर चलता रहा। यह hot reload या नेटिव बातचीत UI का सत्यापन नहीं है। पहली बार पंजीकरण करने या रनटाइम अपग्रेड करने पर क्लाइंट को रीस्टार्ट करना पड़ सकता है। [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
 एक ही बैकएंड और कैटलॉग वाले कई सत्रों के लिए उपयोगी; एक सत्र या हल्के बैकएंड में अतिरिक्त लागत लाभ से अधिक हो सकती है।
 
@@ -29,7 +29,7 @@
 
 कॉन्फ़िगरेशन और बैकअप में क्रेडेंशियल हो सकते हैं; इन्हें निजी रखें और केवल इच्छित बदलाव मंज़ूर करें।
 
-[बंद करना और स्थायी रनटाइम](../REFERENCE.md#planned-exit) · [rollback ≠ daemon shutdown](../REFERENCE.md#setup-recovery)
+[बंद करना और स्थायी रनटाइम](../REFERENCE.md#planned-exit) · [कॉन्फ़िगरेशन लौटाने से लगातार चलती गेटवे प्रक्रिया बंद नहीं होती (rollback ≠ daemon shutdown)](../REFERENCE.md#setup-recovery)
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
@@ -37,6 +37,17 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
 1. स्थापना के बाद Copilot CLI खोलकर `/mcp-gateway-setup` चलाएँ। पूर्वावलोकन की समीक्षा करें और केवल इच्छित बदलाव स्वीकार करें। Copilot बंद करके फिर खोलें और लौटाया गया सटीक `readinessCommand` चलाएँ। निजी बैकअप और रोलबैक कमांड सुरक्षित रखें।
+
+`readinessCommand` लौटाया गया ऑब्जेक्ट है, शेल कमांड स्ट्रिंग नहीं। स्वीकृत सेटअप के परिणाम का वही ऑब्जेक्ट `$readinessCommand` में रखें, फिर PowerShell उदाहरण चलाएँ। `.command` निष्पादन योग्य फ़ाइल का पथ और `.args` सभी आर्ग्युमेंट क्रम में रखते हैं, स्पेस या उद्धरण वाले पथ भी। ऐरे न जोड़ें और पथ न गढ़ें। जाँच बंद गेटवे शुरू नहीं करती।
+
+स्वीकृत सेटअप परिणाम का केवल `readinessCommand` JSON ऑब्जेक्ट, पूरा आउटपुट नहीं, निजी वर्तमान फ़ोल्डर में UTF-8 `readiness-command.json` के रूप में सहेजें। ज्ञात और स्वीकृत `.command` तथा सभी `.args` ठीक वैसे ही रखें; आर्ग्युमेंट न जोड़ें और पथ न गढ़ें। केवल इस सेटअप JSON को पढ़ें, मनमाना वेब/सेवा डेटा नहीं; JSON पार्स करना कोड चलाना नहीं है। आर्ग्युमेंट सेटअप पर निर्भर हैं, इसलिए फ़ाइल निजी रखें।
+
+```powershell
+$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
+$command = $readinessCommand.command
+$commandArgs = @($readinessCommand.args)
+& $command @commandArgs
+```
 
 खोज और स्कीमा के लिए पहुँच लेना ज़रूरी नहीं; `requiresExclusiveAccess: true` होने पर `call_tool` से पहले `claim_server` ज़रूरी है।
 
@@ -85,7 +96,7 @@ Claude Code, Codex, Gemini CLI, Kimi या Qwen CLI से यह रिपॉ�
 
 बैकएंड जोड़ते समय एजेंट का मौजूदा MCP कनेक्शन रीस्टार्ट न करें: नए कॉन्फ़िगरेशन सिंक करें, सक्रिय काम पूरा करें, फिर केवल अपने गेटवे को रीस्टार्ट करें; वर्तमान कनेक्टर दोबारा जुड़ता है। [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
-SDK/stdio परीक्षण में वही कनेक्टर और MCP कनेक्शन गेटवे रीस्टार्ट के बाद नया उपनाम खोजकर echo चलाते हैं; अलग उत्पादों की बातचीत UI नहीं जाँची गई। यह अपने-आप hot reload नहीं है; उपनाम टकराव की समीक्षा करें। पहली पंजीकरण प्रक्रिया या रनटाइम अपग्रेड में क्लाइंट रीस्टार्ट ज़रूरी हो सकता है। बाधित कॉल दोहराए नहीं जाते; रीस्टार्ट के बाद अनन्य पहुँच फिर लें।
+SDK/stdio परीक्षण में वही कनेक्टर और MCP कनेक्शन गेटवे रीस्टार्ट के बाद नया उपनाम खोजकर echo चलाते हैं; अलग उत्पादों की बातचीत UI नहीं जाँची गई। यह अपने-आप hot reload नहीं है; उपनाम टकराव की समीक्षा करें। पहली बार पंजीकरण करने या रनटाइम अपग्रेड करने पर क्लाइंट को रीस्टार्ट करना पड़ सकता है। बाधित कॉल दोहराए नहीं जाते; रीस्टार्ट के बाद अनन्य पहुँच फिर लें।
 
 यह उद्यम API गवर्नेंस प्लेटफ़ॉर्म नहीं है।
 
@@ -113,16 +124,16 @@ SDK/stdio परीक्षण में वही कनेक्टर और
 - माइग्रेशन पहले पूर्वावलोकन दिखाता है, बैकअप बनाता है और असमर्थित नेटिव सेटिंग को अस्वीकार करता है।
 - इसका अर्थ हर नेटिव क्लाइंट का शुरू से अंत तक परीक्षण होना नहीं है। [माइग्रेशन गाइड (अंग्रेज़ी)](../CLIENTS.md#cross-client-migration).
 
-| क्लाइंट | इंस्टॉलेशन | अपग्रेड  ज़रूरी शुरुआती स्थापना | सत्यापन का स्तर |
-|---|---|------|---|
-| GitHub Copilot CLI | [इंस्टॉल](../CLIENTS.md#copilot-cli-install) | [अपग्रेड](../CLIENTS.md#copilot-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [मार्केटप्लेस/सेटअप मार्ग; अलग कॉन्फ़िगरेशन पार्सिंग](../CLIENTS.md#compatibility-summary) |
-| VS Code (एडिटर) | [इंस्टॉल](../CLIENTS.md#vs-code-install) | [अपग्रेड](../CLIENTS.md#vs-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [पंजीकरण/फ़ॉर्मैट अडैप्टर जाँचा गया; पूरा नेटिव सत्र नहीं जाँचा गया](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [इंस्टॉल](../CLIENTS.md#claude-code-install) | [अपग्रेड](../CLIENTS.md#claude-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [अलग कॉन्फ़िगरेशन पार्स हुआ; मॉडल/बैकएंड नहीं चला](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [इंस्टॉल](../CLIENTS.md#codex-install) | [अपग्रेड](../CLIENTS.md#codex-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [नीति ने नेटिव सत्यापन रोका](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [इंस्टॉल](../CLIENTS.md#opencode-install) | [अपग्रेड](../CLIENTS.md#opencode-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [पंजीकरण/फ़ॉर्मैट अडैप्टर जाँचा गया; पूरा नेटिव सत्र नहीं जाँचा गया](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [इंस्टॉल](../CLIENTS.md#qwen-code-install) | [अपग्रेड](../CLIENTS.md#qwen-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [पंजीकरण/फ़ॉर्मैट अडैप्टर जाँचा गया; पूरा नेटिव सत्र नहीं जाँचा गया](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [इंस्टॉल](../CLIENTS.md#kimi-cli-install) | [अपग्रेड](../CLIENTS.md#kimi-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [पंजीकरण/फ़ॉर्मैट अडैप्टर जाँचा गया; पूरा नेटिव सत्र नहीं जाँचा गया](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [इंस्टॉल](../CLIENTS.md#antigravity-cli-install) | [अपग्रेड](../CLIENTS.md#antigravity-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [पंजीकरण/फ़ॉर्मैट अडैप्टर जाँचा गया; पूरा नेटिव सत्र नहीं जाँचा गया](../CLIENTS.md#compatibility-summary) |
+| क्लाइंट | इंस्टॉलेशन | अपग्रेड | ज़रूरी शुरुआती स्थापना | सत्यापन का स्तर |
+|---|---|---|---|---|
+| GitHub Copilot CLI | [इंस्टॉल](../CLIENTS.md#copilot-cli-install) | [अपग्रेड](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [मार्केटप्लेस/सेटअप मार्ग; अलग कॉन्फ़िगरेशन पार्सिंग](../CLIENTS.md#compatibility-summary) |
+| VS Code (एडिटर) | [इंस्टॉल](../CLIENTS.md#vs-code-install) | [अपग्रेड](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [पंजीकरण/फ़ॉर्मैट अडैप्टर जाँचा गया; पूरा नेटिव सत्र नहीं जाँचा गया](../CLIENTS.md#compatibility-summary) |
+| Claude Code | [इंस्टॉल](../CLIENTS.md#claude-code-install) | [अपग्रेड](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [अलग कॉन्फ़िगरेशन पार्स हुआ; मॉडल/बैकएंड नहीं चला](../CLIENTS.md#compatibility-summary) |
+| Codex CLI | [इंस्टॉल](../CLIENTS.md#codex-install) | [अपग्रेड](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [नीति ने नेटिव सत्यापन रोका](../CLIENTS.md#compatibility-summary) |
+| OpenCode | [इंस्टॉल](../CLIENTS.md#opencode-install) | [अपग्रेड](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [पंजीकरण/फ़ॉर्मैट अडैप्टर जाँचा गया; पूरा नेटिव सत्र नहीं जाँचा गया](../CLIENTS.md#compatibility-summary) |
+| Qwen Code | [इंस्टॉल](../CLIENTS.md#qwen-code-install) | [अपग्रेड](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [पंजीकरण/फ़ॉर्मैट अडैप्टर जाँचा गया; पूरा नेटिव सत्र नहीं जाँचा गया](../CLIENTS.md#compatibility-summary) |
+| Kimi CLI | [इंस्टॉल](../CLIENTS.md#kimi-cli-install) | [अपग्रेड](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [पंजीकरण/फ़ॉर्मैट अडैप्टर जाँचा गया; पूरा नेटिव सत्र नहीं जाँचा गया](../CLIENTS.md#compatibility-summary) |
+| Antigravity CLI | [इंस्टॉल](../CLIENTS.md#antigravity-cli-install) | [अपग्रेड](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [पंजीकरण/फ़ॉर्मैट अडैप्टर जाँचा गया; पूरा नेटिव सत्र नहीं जाँचा गया](../CLIENTS.md#compatibility-summary) |
 
 </details>
 

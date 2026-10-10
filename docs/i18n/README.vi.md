@@ -8,7 +8,7 @@
 
 </details>
 
-Chia sẻ backend MCP cục bộ giữa các phiên: tránh RAM trùng lặp, tái sử dụng công việc khởi động và chỉ thêm cấu hình mà không khởi động lại kết nối MCP hiện tại của tác nhân (đường SDK/stdio; lợi ích ròng tùy chi phí phụ).
+Chia sẻ backend MCP cục bộ giữa các phiên: tránh RAM trùng lặp, dùng lại backend đang chạy, và thêm backend qua cấu hình mà không cần khởi động lại kết nối MCP hiện tại của tác nhân (SDK/stdio; lợi ích ròng phụ thuộc chi phí phụ).
 
 [Bắt đầu qua Copilot CLI](#first-use) · [Kiểm chứng ứng dụng khách](../CLIENTS.md#compatibility-summary) · [Bằng chứng](#resource-examples)
 
@@ -17,7 +17,7 @@ Chia sẻ backend MCP cục bộ giữa các phiên: tránh RAM trùng lặp, t�
 Hình khái niệm có nhãn tiếng Anh, không phải ảnh chạy thực hay benchmark.
 
 - **Tránh bộ nhớ backend trùng lặp:** Giả định minh họa: 5 × 1.5 GB → một bộ; tránh 6 GB trùng lặp **trước** chi phí gateway/bộ kết nối, không phải tiết kiệm đã đo.
-- **Tái sử dụng công việc khởi động lặp lại:** Nếu cả 5 phiên dùng đủ 12 dịch vụ stdio: 60 → 12 lần khởi động backend, không phải nhanh hơn 80%.
+- **Dùng lại backend đã khởi động, tránh khởi động bản sao:** Nếu cả 5 phiên dùng đủ 12 dịch vụ stdio: 60 → 12 lần khởi động backend, không phải nhanh hơn 80%.
 - **Chỉ thêm cấu hình; giữ kết nối tác nhân:** SDK/stdio: 1 lần khởi tạo được giữ qua lần khởi động lại gateway thuộc quyền quản lý sau khi công việc hoàn tất; bộ kết nối vẫn chạy. Không phải hot reload hay kiểm chứng giao diện hội thoại native. Đăng ký ban đầu/nâng cấp runtime có thể cần khởi động lại ứng dụng khách. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
 Phù hợp nhiều phiên dùng cùng backend và danh mục; một phiên hoặc backend nhẹ có thể không bù được chi phí phụ.
@@ -29,7 +29,7 @@ Phù hợp nhiều phiên dùng cùng backend và danh mục; một phiên hoặ
 
 Cấu hình và bản sao lưu có thể chứa thông tin xác thực: giữ riêng tư và chỉ chấp thuận thay đổi dự định.
 
-[Thoát và runtime thường trực](../REFERENCE.md#planned-exit) · [rollback ≠ daemon shutdown](../REFERENCE.md#setup-recovery)
+[Thoát và runtime thường trực](../REFERENCE.md#planned-exit) · [Khôi phục cấu hình không dừng tiến trình gateway thường trực (rollback ≠ daemon shutdown)](../REFERENCE.md#setup-recovery)
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
@@ -37,6 +37,17 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
 1. Sau khi cài đặt, mở Copilot CLI và gọi `/mcp-gateway-setup`. Xem trước rồi chỉ phê duyệt thay đổi mong muốn. Đóng và mở lại Copilot, chạy đúng `readinessCommand` được trả về. Giữ bản sao lưu riêng tư và lệnh hoàn tác.
+
+`readinessCommand` là đối tượng trả về, không phải chuỗi lệnh shell. Gán đúng đối tượng đó từ kết quả thiết lập đã được phê duyệt cho `$readinessCommand`, rồi chạy ví dụ PowerShell. `.command` giữ nguyên đường dẫn tệp thực thi và `.args` giữ mọi đối số theo thứ tự, kể cả đường dẫn có khoảng trắng hoặc dấu nháy. Không ghép mảng hay đoán đường dẫn. Kiểm tra không khởi động gateway chưa chạy.
+
+Chỉ lưu đối tượng JSON `readinessCommand` từ kết quả thiết lập đã phê duyệt, không phải toàn bộ đầu ra, thành tệp UTF-8 `readiness-command.json` trong thư mục hiện tại riêng tư. Giữ nguyên lệnh đã biết và phê duyệt `.command` cùng mọi `.args`; không ghép đối số hay đoán đường dẫn. Chỉ phân tích JSON thiết lập này, không dùng dữ liệu web/dịch vụ tùy ý; phân tích JSON không thực thi mã. Giữ tệp riêng tư vì nội dung đối số phụ thuộc thiết lập.
+
+```powershell
+$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
+$command = $readinessCommand.command
+$commandArgs = @($readinessCommand.args)
+& $command @commandArgs
+```
 
 Khám phá và lấy schema không cần giữ quyền; nếu `requiresExclusiveAccess: true`, gọi `claim_server` trước `call_tool`.
 
@@ -71,7 +82,7 @@ Giả định minh họa, không phải benchmark: 5 phiên đều cần cùng 1
 
 RAM backend trùng lặp tránh được trước chi phí phụ: 7.5 GB - 1.5 GB = 6 GB. Tổng mức tiết kiệm chưa biết cho đến khi đo. 1.5 GB không cố định giữa tải công việc hay ứng dụng khách; đây không phải RAM của năm mô hình.
 
-**Tái sử dụng cả công việc khởi động.** Nếu cả 5 phiên dùng đủ 12 dịch vụ stdio, các bản riêng cần tối đa `5 × 12 = 60` lần khởi động so với `12` khi chia sẻ: tránh `60 - 12 = 48` lần trùng lặp, giảm `48 / 60 × 100 = 80%` số lần. Kết nối khi cần chỉ kết nối `k` backend được dùng; backend không dùng không khởi động. Đây là số thao tác, không phải nhanh hơn 80%. Độ trễ chưa được đo; chạy đồng thời, xác thực và nền tảng ảnh hưởng thời gian.
+**Dùng lại các tiến trình backend đã khởi động, thay vì khởi động một bản riêng cho mỗi phiên.** Nếu cả 5 phiên dùng đủ 12 dịch vụ stdio, các bản riêng cần tối đa `5 × 12 = 60` lần khởi động so với `12` khi chia sẻ: tránh `60 - 12 = 48` lần trùng lặp, giảm `48 / 60 × 100 = 80%` số lần. Kết nối khi cần chỉ kết nối `k` backend được dùng; backend không dùng không khởi động. Đây là số thao tác, không phải nhanh hơn 80%. Độ trễ chưa được đo; chạy đồng thời, xác thực và nền tảng ảnh hưởng thời gian.
 
 1000 công cụ → 6 định nghĩa ban đầu: (1000 - 6) / 1000 × 100 = 99.4% ít định nghĩa hơn, không phải token. Schema được yêu cầu sau vẫn có chi phí; ứng dụng khách đã tải trì hoãn có thể được lợi ít hơn. Kiểm thử danh mục tổng hợp xác minh sáu công cụ và cache khám phá dùng chung giữa hai ứng dụng khách, không đo hiệu năng RSS. [catalog-scale.test.js](../../test/catalog-scale.test.js)
 
@@ -85,7 +96,7 @@ RAM backend trùng lặp tránh được trước chi phí phụ: 7.5 GB - 1.5 G
 
 Thêm backend mà không khởi động lại kết nối MCP hiện tại của tác nhân: đồng bộ các mục mới, hoàn tất công việc đang chạy rồi chỉ khởi động lại gateway thuộc quyền quản lý; bộ kết nối hiện tại sẽ kết nối lại. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
-Kiểm thử SDK/stdio giữ nguyên bộ kết nối và kết nối MCP để tìm bí danh mới và gọi echo sau khởi động lại; chưa kiểm thử giao diện hội thoại của từng sản phẩm. Không tự động hot reload; xung đột cần xem xét. Đăng ký ban đầu hoặc nâng cấp runtime có thể cần khởi động lại ứng dụng khách. Không phát lại lời gọi gián đoạn; giữ lại quyền độc quyền bằng yêu cầu mới sau khởi động lại.
+Kiểm thử SDK/stdio giữ nguyên bộ kết nối và kết nối MCP để tìm bí danh mới và gọi echo sau khởi động lại; chưa kiểm thử giao diện hội thoại của từng sản phẩm. Không tự động hot reload; xung đột cần xem xét. Đăng ký ban đầu hoặc nâng cấp runtime có thể cần khởi động lại ứng dụng khách. Không phát lại lời gọi gián đoạn. Sau khi khởi động lại, hãy yêu cầu lại quyền truy cập độc quyền.
 
 Đây không phải nền tảng quản trị API doanh nghiệp.
 
@@ -113,16 +124,16 @@ Ví dụ, Copilot có **10** kết nối; chủ động di chuyển **2** kết 
 - Di chuyển hiển thị bản xem trước, tạo bản sao lưu và từ chối thiết lập native không được hỗ trợ.
 - Điều này không có nghĩa mọi ứng dụng khách native đều được kiểm thử đầu cuối. [Hướng dẫn di chuyển (tiếng Anh)](../CLIENTS.md#cross-client-migration).
 
-| Ứng dụng khách | Cài đặt | Nâng cấp  Thiết lập ban đầu bắt buộc | Mức kiểm chứng |
-|---|---|------|---|
-| GitHub Copilot CLI | [Cài đặt](../CLIENTS.md#copilot-cli-install) | [Nâng cấp](../CLIENTS.md#copilot-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Quy trình marketplace/thiết lập; phân tích cô lập](../CLIENTS.md#compatibility-summary) |
-| VS Code (trình soạn thảo) | [Cài đặt](../CLIENTS.md#vs-code-install) | [Nâng cấp](../CLIENTS.md#vs-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [Cài đặt](../CLIENTS.md#claude-code-install) | [Nâng cấp](../CLIENTS.md#claude-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã phân tích cấu hình cô lập; không chạy mô hình/backend](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [Cài đặt](../CLIENTS.md#codex-install) | [Nâng cấp](../CLIENTS.md#codex-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kiểm chứng ứng dụng gốc bị chính sách chặn](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [Cài đặt](../CLIENTS.md#opencode-install) | [Nâng cấp](../CLIENTS.md#opencode-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [Cài đặt](../CLIENTS.md#qwen-code-install) | [Nâng cấp](../CLIENTS.md#qwen-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [Cài đặt](../CLIENTS.md#kimi-cli-install) | [Nâng cấp](../CLIENTS.md#kimi-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [Cài đặt](../CLIENTS.md#antigravity-cli-install) | [Nâng cấp](../CLIENTS.md#antigravity-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
+| Ứng dụng khách | Cài đặt | Nâng cấp | Thiết lập ban đầu bắt buộc | Mức kiểm chứng |
+|---|---|---|---|---|
+| GitHub Copilot CLI | [Cài đặt](../CLIENTS.md#copilot-cli-install) | [Nâng cấp](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Quy trình marketplace/thiết lập; phân tích cô lập](../CLIENTS.md#compatibility-summary) |
+| VS Code (trình soạn thảo) | [Cài đặt](../CLIENTS.md#vs-code-install) | [Nâng cấp](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
+| Claude Code | [Cài đặt](../CLIENTS.md#claude-code-install) | [Nâng cấp](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã phân tích cấu hình cô lập; không chạy mô hình/backend](../CLIENTS.md#compatibility-summary) |
+| Codex CLI | [Cài đặt](../CLIENTS.md#codex-install) | [Nâng cấp](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kiểm chứng ứng dụng gốc bị chính sách chặn](../CLIENTS.md#compatibility-summary) |
+| OpenCode | [Cài đặt](../CLIENTS.md#opencode-install) | [Nâng cấp](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
+| Qwen Code | [Cài đặt](../CLIENTS.md#qwen-code-install) | [Nâng cấp](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
+| Kimi CLI | [Cài đặt](../CLIENTS.md#kimi-cli-install) | [Nâng cấp](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
+| Antigravity CLI | [Cài đặt](../CLIENTS.md#antigravity-cli-install) | [Nâng cấp](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
 
 </details>
 

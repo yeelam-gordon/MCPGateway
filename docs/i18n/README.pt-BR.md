@@ -8,7 +8,7 @@
 
 </details>
 
-Compartilhe backends MCP locais entre sessões: evite RAM duplicada, reutilize o trabalho de inicialização e adicione apenas configuração sem reiniciar a conexão MCP atual do agente (rota SDK/stdio; o ganho líquido depende da sobrecarga).
+Compartilhe backends MCP locais entre sessões: evite RAM duplicada, use backends já iniciados e adicione backends por configuração sem reiniciar a conexão MCP atual do agente (rota SDK/stdio; o ganho líquido depende da sobrecarga).
 
 [Comece via Copilot CLI](#first-use) · [Verificação dos clientes](../CLIENTS.md#compatibility-summary) · [Evidência](#resource-examples)
 
@@ -17,7 +17,7 @@ Compartilhe backends MCP locais entre sessões: evite RAM duplicada, reutilize o
 Conceito com rótulos em inglês, não captura nem benchmark.
 
 - **Evite memória de backends duplicados:** Ilustração: 5 × 1.5 GB → um conjunto; 6 GB de duplicação evitada **antes** da sobrecarga do gateway e conectores, não economia medida.
-- **Reutilize o trabalho de inicialização repetido:** Se as 5 sessões usarem os 12 serviços stdio: 60 → 12 inicializações de backend, não inicialização 80% mais rápida.
+- **Evite iniciar os mesmos backends novamente:** Se as 5 sessões usarem os 12 serviços stdio: 60 → 12 inicializações de backend, não inicialização 80% mais rápida.
 - **Adicione apenas configuração; mantenha a conexão do agente:** SDK/stdio: 1 inicialização sobrevive ao reinício do gateway próprio após concluir o trabalho; o conector permanece, sem recarga automática nem UI nativa de conversa verificada. Registro inicial ou atualização do runtime podem exigir reiniciar o cliente. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
 Indicado para várias sessões com o mesmo backend e catálogo; uma sessão ou backends leves podem não compensar a sobrecarga.
@@ -29,7 +29,7 @@ Indicado para várias sessões com o mesmo backend e catálogo; uma sessão ou b
 
 Configurações e backups podem conter credenciais: mantenha-os privados e aprove apenas as mudanças pretendidas.
 
-[Saída e runtime persistente](../REFERENCE.md#planned-exit) · [rollback ≠ daemon shutdown](../REFERENCE.md#setup-recovery)
+[Saída e runtime persistente](../REFERENCE.md#planned-exit) · [Restaurar a configuração não encerra o processo persistente do gateway (rollback ≠ daemon shutdown)](../REFERENCE.md#setup-recovery)
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
@@ -37,6 +37,17 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
 1. Após instalar o plugin, abra o Copilot CLI e execute `/mcp-gateway-setup`. Revise a prévia antes de aprovar as alterações desejadas. Feche e reabra o Copilot; execute o `readinessCommand` exato recebido. Guarde os comandos de backup e reversão. Instalar apenas o plugin não mescla configurações.
+
+`readinessCommand` é o objeto retornado, não uma string de shell. Atribua a `$readinessCommand` esse objeto exato do resultado da configuração aprovada e execute o exemplo PowerShell. `.command` preserva o caminho do executável e `.args` todos os argumentos em ordem, incluindo caminhos com espaços ou aspas. Não junte o array nem invente caminhos. A verificação não inicia um gateway ausente.
+
+Salve apenas o objeto JSON `readinessCommand` do resultado de configuração aprovado, não toda a saída, como UTF-8 `readiness-command.json` na pasta atual privada. Preserve exatamente o executável conhecido e aprovado `.command` e todos os `.args`; não junte argumentos nem invente caminhos. Analise apenas esse JSON de configuração, não dados arbitrários da web ou de serviços; analisar JSON não avalia código. Mantenha o arquivo privado: os argumentos dependem da configuração.
+
+```powershell
+$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
+$command = $readinessCommand.command
+$commandArgs = @($readinessCommand.args)
+& $command @commandArgs
+```
 
 Descoberta e esquema não exigem reserva; se `requiresExclusiveAccess: true`, use `claim_server` antes de `call_tool`.
 
@@ -77,7 +88,7 @@ RAM duplicada evitada antes da sobrecarga: 7.5 GB - 1.5 GB = 6 GB. A economia to
 
 1000 ferramentas → 6 definições iniciais: (1000 - 6) / 1000 × 100 = 99.4% menos definições, não tokens. Os esquemas solicitados depois têm custo; clientes que já adiam o carregamento podem ganhar menos. O teste de catálogo sintético verifica seis ferramentas e cache compartilhado entre dois clientes, não desempenho RSS. [catalog-scale.test.js](../../test/catalog-scale.test.js)
 
-**Fixture leve medido: aumentou o working set somado dos processos** Medianas de 3 testes, Windows x64 / Node 24.13.1: esquema + echo compartilhado 426.2 ms com backend frio, 21.1 ms no segundo cliente, 19.0 ms no quinto. Total do primeiro cliente: 503.5 ms direto, 894.3 ms compartilhado com gateway pronto; partida compartilhada totalmente fria 1886.7 ms. Processos backend 5 → 1, mas processos totais 5 → 7 e working set somado 357.0 MiB → 564.0 MiB: working set somado dos processos maior; memória física única não medida. Um único echo não representa serviços reais pesados; 1.5 GB acima é outra hipótese, não medição. [BENCHMARK.md](../BENCHMARK.md)
+**Cenário de teste leve medido: aumentou o working set somado dos processos (soma da memória residente)** Medianas de 3 testes, Windows x64 / Node 24.13.1: esquema + echo compartilhado 426.2 ms com backend frio, 21.1 ms no segundo cliente, 19.0 ms no quinto. Total do primeiro cliente: 503.5 ms direto, 894.3 ms compartilhado com gateway pronto; inicialização compartilhada com todos os processos ainda não iniciados 1886.7 ms. Processos backend 5 → 1, mas processos totais 5 → 7 e working set somado 357.0 MiB → 564.0 MiB: working set somado dos processos maior; memória física única não medida. Um único echo não representa serviços reais pesados; 1.5 GB acima é outra hipótese, não medição. [BENCHMARK.md](../BENCHMARK.md)
 
 Mediu-se o working set somado dos processos; memória física sem duplicação e bytes privados (private bytes) não foram medidos.
 
@@ -116,16 +127,16 @@ Um catálogo MCP compartilhado pode atender vários agentes. Por exemplo, comece
 - A migração mostra primeiro uma prévia, cria backup e rejeita configurações nativas incompatíveis.
 - Isso não significa que todos os clientes nativos foram testados de ponta a ponta. Consulte o [guia de migração (inglês)](../CLIENTS.md#cross-client-migration).
 
-| Cliente | Instalação | Atualização  Instalação inicial obrigatória | Nível de verificação |
-|---|---|------|---|
-| GitHub Copilot CLI | [Instalar](../CLIENTS.md#copilot-cli-install) | [Atualizar](../CLIENTS.md#copilot-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Rota de marketplace/configuração; análise isolada](../CLIENTS.md#compatibility-summary) |
-| VS Code (editor) | [Instalar](../CLIENTS.md#vs-code-install) | [Atualizar](../CLIENTS.md#vs-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [Instalar](../CLIENTS.md#claude-code-install) | [Atualizar](../CLIENTS.md#claude-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Configuração isolada analisada; sem modelo/backend](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [Instalar](../CLIENTS.md#codex-install) | [Atualizar](../CLIENTS.md#codex-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Validação nativa bloqueada por política](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [Instalar](../CLIENTS.md#opencode-install) | [Atualizar](../CLIENTS.md#opencode-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [Instalar](../CLIENTS.md#qwen-code-install) | [Atualizar](../CLIENTS.md#qwen-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [Instalar](../CLIENTS.md#kimi-cli-install) | [Atualizar](../CLIENTS.md#kimi-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [Instalar](../CLIENTS.md#antigravity-cli-install) | [Atualizar](../CLIENTS.md#antigravity-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
+| Cliente | Instalação | Atualização | Instalação inicial obrigatória | Nível de verificação |
+|---|---|---|---|---|
+| GitHub Copilot CLI | [Instalar](../CLIENTS.md#copilot-cli-install) | [Atualizar](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Rota de marketplace/configuração; análise isolada](../CLIENTS.md#compatibility-summary) |
+| VS Code (editor) | [Instalar](../CLIENTS.md#vs-code-install) | [Atualizar](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
+| Claude Code | [Instalar](../CLIENTS.md#claude-code-install) | [Atualizar](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Configuração isolada analisada; sem modelo/backend](../CLIENTS.md#compatibility-summary) |
+| Codex CLI | [Instalar](../CLIENTS.md#codex-install) | [Atualizar](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Validação nativa bloqueada por política](../CLIENTS.md#compatibility-summary) |
+| OpenCode | [Instalar](../CLIENTS.md#opencode-install) | [Atualizar](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
+| Qwen Code | [Instalar](../CLIENTS.md#qwen-code-install) | [Atualizar](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
+| Kimi CLI | [Instalar](../CLIENTS.md#kimi-cli-install) | [Atualizar](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
+| Antigravity CLI | [Instalar](../CLIENTS.md#antigravity-cli-install) | [Atualizar](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
 
 </details>
 

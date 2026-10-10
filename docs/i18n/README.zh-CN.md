@@ -8,7 +8,7 @@
 
 </details>
 
-跨编程会话共享本地 MCP 后端：避免重复占用内存，复用重复启动工作，仅新增配置时保留智能体侧现有 MCP 连接，无需重启该连接（SDK/stdio 路线；净收益取决于开销）。
+跨编程会话共享本地 MCP 后端：避免重复占用内存，复用后端启动过程，仅新增配置时保留智能体侧现有 MCP 连接，无需重启该连接（SDK/stdio 路线；净收益取决于开销）。
 
 [通过 Copilot CLI 开始](#first-use) · [客户端验证](../CLIENTS.md#compatibility-summary) · [证据](#resource-examples)
 
@@ -17,7 +17,7 @@
 英文标注的概念图：多会话共用后端，并非运行截图或基准测试。
 
 - **避免重复后端内存:** 假设 5 × 1.5 GB 后端共享一套，计入网关与连接器开销**之前**避免 6 GB 重复占用，不是实测节省。
-- **复用重复启动工作:** 假设 5 个会话都使用 12 个 stdio 服务：60 → 12 次后端启动，不是启动耗时缩短 80%。
+- **复用后端启动过程:** 假设 5 个会话都使用 12 个 stdio 服务：60 → 12 次后端启动，不是启动耗时缩短 80%。
 - **仅新增后端配置，保留智能体连接:** SDK/stdio 的 1 次初始化跨越工作结束后的自有网关重启；连接器保持运行，并非热加载，也未验证各品牌对话界面。首次注册或运行时升级仍可能需要重启客户端。 [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
 适合多个会话共用同一后端和目录；单会话或轻量后端可能不划算，网关开销并非免费。
@@ -29,7 +29,7 @@
 
 配置和备份可能含凭据；保持私密，只批准预期变更。
 
-[退出与持久运行时](../REFERENCE.md#planned-exit) · [rollback ≠ daemon shutdown](../REFERENCE.md#setup-recovery)
+[退出与持久运行时](../REFERENCE.md#planned-exit) · [恢复客户端配置不会关闭常驻网关进程（rollback ≠ daemon shutdown）](../REFERENCE.md#setup-recovery)
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
@@ -38,13 +38,24 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 
 1. 安装插件后启动 Copilot CLI，运行 `/mcp-gateway-setup`，审查预览后再批准。关闭并重新打开 Copilot，再运行设置返回的精确 `readinessCommand`；保留备份和回滚命令。仅安装插件不会合并配置。
 
-发现和获取模式不要求认领；如 `requiresExclusiveAccess: true`，必须在 `call_tool` 前先 `claim_server`。
+`readinessCommand` 是返回的对象，不是命令字符串。将 `$readinessCommand` 设为已批准设置结果中原样返回的对象，再执行下方 PowerShell 示例。`.command` 保留完整可执行文件路径，`.args` 按顺序保留全部参数，包括含空格或引号的路径。不要将数组拼成一个参数，也不要猜测路径；检查不会启动不存在的网关。
 
-> 请用共享网关完成[我获授权的只读任务]：列出已配置后端、搜索合适工具、检查输入模式，使用获授权且不敏感的测试值准备参数。按正常流程取得批准；仅在独占执行前认领，调用结束后释放。展示实际结果；结果不明时不要重试，交给安装所有者按操作员交接流程处理。
+只将已批准设置结果中的 `readinessCommand` JSON 对象（不是整个输出）以 UTF-8 保存为私有当前文件夹中的 `readiness-command.json`。保持已知且已批准的 `.command` 和全部 `.args` 原值，不拼接参数或猜测路径。只解析这份设置 JSON，不使用任意网页或服务数据；解析不是执行代码。参数内容取决于设置，请保持文件私密。
+
+```powershell
+$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
+$command = $readinessCommand.command
+$commandArgs = @($readinessCommand.args)
+& $command @commandArgs
+```
+
+发现工具和获取输入结构不要求认领；如 `requiresExclusiveAccess: true`，必须在 `call_tool` 前先 `claim_server`。
+
+> 请用共享网关完成[我获授权的只读任务]：列出已配置后端、搜索合适工具、检查输入结构，使用获授权且不敏感的测试值准备参数。按正常流程取得批准；仅在独占执行前认领，调用结束后释放。展示实际结果；结果不明时不要重试，交给安装所有者按操作员交接流程处理。
 
 [SDK tool flow: `list_servers` → `search_tools` → `get_tool_schema` → `claim_server` (exclusive) → `call_tool` → `release_server`](../../README.md#first-use) · [REFERENCE](../REFERENCE.md#unknown-exclusive-result)
 
-2. 调用 `list_servers`（输入 `{}`），应看到现有服务的别名、状态和独占标志。从中选一个已授权的后端，用 `search_tools` 按任务关键词搜索，再用 `get_tool_schema` 取得返回工具的输入模式（schema），最后按输入模式构造参数，通过 `call_tool` 执行已批准的只读任务。预期看到该后端返回的记录或有说明的空结果，而不是仅以网关响应作为成功证明。
+2. 调用 `list_servers`（输入 `{}`），应看到现有服务的别名、状态和独占标志。从中选一个已授权的后端，用 `search_tools` 按任务关键词搜索，再用 `get_tool_schema` 取得返回工具的输入结构（schema），最后按输入结构构造参数，通过 `call_tool` 执行已批准的只读任务。预期看到该后端返回的记录或有说明的空结果，而不是仅以网关响应作为成功证明。
 3. 如 `requiresExclusiveAccess: true`，调用前先 `claim_server`，所有调用结束后 `release_server`。非独占后端无需认领。未知结果的超时不能重试，应先审查活动任务再协调重启。 结果不明时，独占后端会保持阻塞，直到网关重启；释放认领或断开客户端连接不能安全解除阻塞，断开连接也不等于取消操作。
 4. 在第二个会话使用同一连接器与目录，重复 `list_servers` / `search_tools` 查询同一别名。已初始化后端应显示 `ready`，搜索应返回相同目录中的能力。别名相同不证明进程身份或 RAM 节省；进程复用见公共测试。 [进程复用方法](../BENCHMARK.md#method) · [目录缓存测试](../../test/catalog-scale.test.js)
 
@@ -75,9 +86,9 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 
 **也复用启动工作。** 假设 12 个 stdio 后端都被 5 个会话各自使用：独立运行最多启动 `5 × 12 = 60` 次，共享只需 `12` 次；避免 `60 - 12 = 48` 次重复启动，即 `48 / 60 × 100 = 80%` 的启动次数。惰性连接只连接实际使用的 `k` 个后端，而非全部 12 个；未使用的后端不会启动。这是工作次数，不是启动耗时缩短 80%；这里未测启动延迟，并发、服务认证和平台都会影响实际耗时。
 
-1000 个后端工具 → 6 个初始网关定义：(1000 - 6) / 1000 × 100 = 99.4%，仅为定义数量减少，不是 token 减少 99.4%。随后请求的模式仍有成本；已延迟加载定义的客户端收益可能更小。合成目录测试验证六个工具和两个客户端共享发现缓存，不测 RSS 内存性能。 [catalog-scale.test.js](../../test/catalog-scale.test.js)
+1000 个后端工具 → 6 个初始网关定义：(1000 - 6) / 1000 × 100 = 99.4%，仅为定义数量减少，不是 token 减少 99.4%。随后请求的输入结构仍有成本；已延迟加载定义的客户端收益可能更小。合成目录测试验证六个工具和两个客户端共享发现缓存，不测 RSS 内存性能。 [catalog-scale.test.js](../../test/catalog-scale.test.js)
 
-**轻量后端实测：进程工作集总和增加** Windows x64 / Node 24.13.1，3 次试验中位数：共享模式下模式获取加 echo 调用为冷后端 426.2 ms、第二客户端 21.1 ms、第五客户端 19.0 ms。首客户端总耗时为独立 503.5 ms、网关已就绪时共享 894.3 ms；完全冷启动共享为 1886.7 ms。后端进程 5 → 1，但总进程 5 → 7，工作集总和 357.0 MiB → 564.0 MiB，进程工作集总和更高，未测独占物理内存。单工具 echo 测试不能代表重型真实服务；上方 1.5 GB 是独立假设，并非实测。 [BENCHMARK.md](../BENCHMARK.md)
+**轻量后端实测：进程工作集总和增加** Windows x64 / Node 24.13.1，3 次试验中位数：共享模式下输入结构获取加 echo 调用为冷后端 426.2 ms、第二客户端 21.1 ms、第五客户端 19.0 ms。首客户端总耗时为独立 503.5 ms、网关已就绪时共享 894.3 ms；完全冷启动共享为 1886.7 ms。后端进程 5 → 1，但总进程 5 → 7，工作集总和 357.0 MiB → 564.0 MiB，进程工作集总和更高，未测独占物理内存。单工具 echo 测试不能代表重型真实服务；上方 1.5 GB 是独立假设，并非实测。 [BENCHMARK.md](../BENCHMARK.md)
 
 测量的是进程工作集总和；去重后的物理内存与私有字节（private bytes）均未测量。
 
@@ -92,7 +103,7 @@ SDK/stdio 测试验证同一连接器和 MCP 连接跨网关重启发现新别�
 
 它不是企业 API 治理平台。
 
-网关始终向智能体提供 6 个工具：4 个用于发现和调用能力，2 个用于需要独占工作流的集成。新增连接不会扩大这套初始接口；只有选中的工具才会加载完整的输入模式（schema）。网关复用你已经配置并完成身份验证的连接，不会替你安装服务或提供凭据。
+网关始终向智能体提供 6 个工具：4 个用于发现和调用能力，2 个用于需要独占工作流的集成。新增连接不会扩大这套初始接口；只有选中的工具才会加载完整的输入结构（schema）。网关复用你已经配置并完成身份验证的连接，不会替你安装服务或提供凭据。
 
 ```text
 智能体 A ─┐                       ┌─ 集成服务 A: 多个工具
@@ -116,16 +127,16 @@ SDK/stdio 测试验证同一连接器和 MCP 连接跨网关重启发现新别�
 - 迁移先显示预览并创建备份，不支持的原生设置会被拒绝。
 - 这不表示每个原生客户端都已完成端到端测试。请参阅[迁移指南（英文）](../CLIENTS.md#cross-client-migration)。
 
-| 客户端 | 安装 | 升级  必须先引导安装 | 验证程度 |
-|---|---|------|---|
-| GitHub Copilot CLI | [安装](../CLIENTS.md#copilot-cli-install) | [升级](../CLIENTS.md#copilot-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [市场/安装流程；隔离配置解析](../CLIENTS.md#compatibility-summary) |
-| VS Code（编辑器） | [安装](../CLIENTS.md#vs-code-install) | [升级](../CLIENTS.md#vs-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [注册/格式适配器已测；未完成原生端到端会话](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [安装](../CLIENTS.md#claude-code-install) | [升级](../CLIENTS.md#claude-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [隔离配置解析通过；未启动模型或后端](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [安装](../CLIENTS.md#codex-install) | [升级](../CLIENTS.md#codex-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [原生验证被管理策略阻止](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [安装](../CLIENTS.md#opencode-install) | [升级](../CLIENTS.md#opencode-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [注册/格式适配器已测；未完成原生端到端会话](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [安装](../CLIENTS.md#qwen-code-install) | [升级](../CLIENTS.md#qwen-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [注册/格式适配器已测；未完成原生端到端会话](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [安装](../CLIENTS.md#kimi-cli-install) | [升级](../CLIENTS.md#kimi-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [注册/格式适配器已测；未完成原生端到端会话](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [安装](../CLIENTS.md#antigravity-cli-install) | [升级](../CLIENTS.md#antigravity-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [注册/格式适配器已测；未完成原生端到端会话](../CLIENTS.md#compatibility-summary) |
+| 客户端 | 安装 | 升级 | 必须先引导安装 | 验证程度 |
+|---|---|---|---|---|
+| GitHub Copilot CLI | [安装](../CLIENTS.md#copilot-cli-install) | [升级](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [市场/安装流程；隔离配置解析](../CLIENTS.md#compatibility-summary) |
+| VS Code（编辑器） | [安装](../CLIENTS.md#vs-code-install) | [升级](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [注册/格式适配器已测；未完成原生端到端会话](../CLIENTS.md#compatibility-summary) |
+| Claude Code | [安装](../CLIENTS.md#claude-code-install) | [升级](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [隔离配置解析通过；未启动模型或后端](../CLIENTS.md#compatibility-summary) |
+| Codex CLI | [安装](../CLIENTS.md#codex-install) | [升级](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [原生验证被管理策略阻止](../CLIENTS.md#compatibility-summary) |
+| OpenCode | [安装](../CLIENTS.md#opencode-install) | [升级](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [注册/格式适配器已测；未完成原生端到端会话](../CLIENTS.md#compatibility-summary) |
+| Qwen Code | [安装](../CLIENTS.md#qwen-code-install) | [升级](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [注册/格式适配器已测；未完成原生端到端会话](../CLIENTS.md#compatibility-summary) |
+| Kimi CLI | [安装](../CLIENTS.md#kimi-cli-install) | [升级](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [注册/格式适配器已测；未完成原生端到端会话](../CLIENTS.md#compatibility-summary) |
+| Antigravity CLI | [安装](../CLIENTS.md#antigravity-cli-install) | [升级](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [注册/格式适配器已测；未完成原生端到端会话](../CLIENTS.md#compatibility-summary) |
 
 </details>
 

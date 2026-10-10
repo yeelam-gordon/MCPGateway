@@ -8,7 +8,7 @@
 
 </details>
 
-코딩 세션 간 로컬 MCP 백엔드를 공유해 메모리 중복을 피하고 시작 작업을 재사용하며, 구성만 추가할 때 기존 에이전트 측 MCP 연결을 재시작 없이 유지합니다(SDK/stdio 경로; 실제 이점은 추가 부담에 따라 달라집니다).
+세션 간 로컬 MCP 백엔드를 공유해 메모리 중복을 피하고 이미 실행 중인 백엔드를 재사용합니다. 백엔드 구성 추가 시 기존 에이전트 측 MCP 연결을 재시작 없이 유지합니다(SDK/stdio 경로; 실제 이점은 추가 부담에 따라 달라집니다).
 
 [Copilot CLI로 시작](#first-use) · [클라이언트 검증](../CLIENTS.md#compatibility-summary) · [근거](#resource-examples)
 
@@ -29,7 +29,7 @@
 
 구성과 백업에는 자격 증명이 포함될 수 있습니다. 비공개로 보관하고 의도한 변경만 승인하세요.
 
-[종료와 지속 런타임](../REFERENCE.md#planned-exit) · [rollback ≠ daemon shutdown](../REFERENCE.md#setup-recovery)
+[종료와 상주 런타임](../REFERENCE.md#planned-exit) · [클라이언트 구성 복원은 상주 게이트웨이를 종료하지 않습니다 (rollback ≠ daemon shutdown)](../REFERENCE.md#setup-recovery)
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
@@ -37,6 +37,17 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
 1. 설치 후 Copilot CLI에서 `/mcp-gateway-setup`을 실행하세요. 미리 보기를 검토하고 의도한 변경만 승인하세요. Copilot을 닫았다가 다시 열고 반환된 정확한 `readinessCommand`를 실행하세요. 비공개 백업과 롤백 명령을 보관하세요.
+
+`readinessCommand`는 반환된 객체이며 명령 문자열이 아닙니다. `$readinessCommand`를 승인된 설정 결과의 해당 객체 그대로 설정한 뒤 아래 PowerShell 예제를 실행하세요. `.command`는 실행 파일 경로를, `.args`는 공백이나 따옴표가 있는 경로를 포함한 모든 인수를 순서대로 유지합니다. 배열을 한 인수로 합치거나 경로를 추측하지 마세요. 이 검사는 없는 게이트웨이를 시작하지 않습니다.
+
+승인된 설정 결과의 `readinessCommand` JSON 객체만(전체 출력 아님) 비공개 현재 폴더의 UTF-8 `readiness-command.json`으로 저장하세요. 확인하고 승인한 `.command`와 모든 `.args` 값을 그대로 유지하고 합치거나 경로를 추측하지 마세요. 이 설정 JSON만 파싱하고 임의 웹·서비스 데이터는 사용하지 마세요. JSON 파싱은 코드 실행이 아닙니다. 인수 내용은 설정에 따라 달라지므로 파일을 비공개로 유지하세요.
+
+```powershell
+$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
+$command = $readinessCommand.command
+$commandArgs = @($readinessCommand.args)
+& $command @commandArgs
+```
 
 탐색과 스키마 조회에는 배타적 이용 예약이 필요 없습니다. `requiresExclusiveAccess: true`이면 `call_tool` 전에 `claim_server`가 필요합니다.
 
@@ -46,7 +57,7 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 
 2. `list_servers`에 `{}`를 전달하면 구성된 별칭, 상태와 배타적 접근 여부가 표시되어야 합니다. 권한이 있는 백엔드를 선택하고 `search_tools`로 작업 관련 용어를 검색한 뒤 `get_tool_schema`로 선택한 도구의 입력 스키마를 가져오세요. 스키마에 맞는 인수를 만들어 `call_tool`로 승인된 읽기 전용 작업을 수행하세요. 예상 결과는 실제 레코드 또는 설명된 빈 결과입니다. 오류도 확인해야 하며 응답만 받았다고 성공한 것은 아닙니다.
 3. `requiresExclusiveAccess: true`이면 호출 전에 `claim_server`를 호출하고 모든 호출이 끝난 뒤 `release_server`를 사용하세요. 배타적 접근이 필요 없는 백엔드는 예약할 필요가 없습니다. 결과를 알 수 없는 시간 초과는 재시도하지 말고 진행 중인 작업을 검토한 뒤 재시작을 조정하세요. 결과가 불명확하면 배타적 접근이 필요한 백엔드는 게이트웨이를 재시작할 때까지 차단된 상태로 유지됩니다. 예약 해제나 클라이언트 연결 종료로 안전하게 차단을 해제할 수 없으며, 연결 종료는 작업 취소가 아닙니다.
-4. 두 번째 세션에서 같은 커넥터와 카탈로그를 사용해 같은 별명으로 `list_servers` / `search_tools`를 반복하세요. 초기화된 백엔드는 `ready`이며 같은 카탈로그의 기능이 검색되어야 합니다. 별명 일치만으로 프로세스 동일성이나 RAM 절감을 증명할 수 없습니다. 프로세스 재사용은 공개 테스트를 참고하세요. [프로세스 재사용 방법](../BENCHMARK.md#method) · [카탈로그 캐시 테스트](../../test/catalog-scale.test.js)
+4. 두 번째 세션에서 같은 커넥터와 카탈로그를 사용해 같은 별칭으로 `list_servers` / `search_tools`를 반복하세요. 초기화된 백엔드는 `ready`이며 같은 카탈로그의 기능이 검색되어야 합니다. 별칭 일치만으로 프로세스 동일성이나 RAM 절감을 증명할 수 없습니다. 프로세스 재사용은 공개 테스트를 참고하세요. [프로세스 재사용 방법](../BENCHMARK.md#method) · [카탈로그 캐시 테스트](../../test/catalog-scale.test.js)
 
 [전체 영어 예제](../../README.md#first-use) · [호환성](../CLIENTS.md#compatibility-summary)
 
@@ -85,7 +96,7 @@ Claude Code, Codex, Gemini CLI, Kimi 또는 Qwen CLI로 이 저장소를 찾는�
 
 백엔드를 추가할 때 에이전트의 기존 MCP 연결을 재시작할 필요가 없습니다. 추가 구성을 동기화하고 작업을 마친 뒤 소유한 게이트웨이만 재시작하면 현재 커넥터가 다시 연결됩니다. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
-SDK/stdio 테스트는 같은 커넥터와 MCP 연결로 게이트웨이 재시작 후 새 별명을 찾고 echo를 실행했지만 제품별 대화 UI는 테스트하지 않았습니다. 자동 핫 리로드가 아니며 별명 충돌은 검토해야 합니다. 최초 등록이나 런타임 업그레이드는 클라이언트 재시작이 필요할 수 있습니다. 중단된 호출은 재실행하지 않으며 재시작 후 배타적 이용을 다시 예약해야 합니다.
+SDK/stdio 테스트는 같은 커넥터와 MCP 연결로 게이트웨이 재시작 후 새 별칭을 찾고 echo를 실행했지만 제품별 대화 UI는 테스트하지 않았습니다. 자동 핫 리로드가 아니며 별칭 충돌은 검토해야 합니다. 최초 등록이나 런타임 업그레이드는 클라이언트 재시작이 필요할 수 있습니다. 중단된 호출은 재실행하지 않으며 재시작 후 배타적 이용을 다시 예약해야 합니다.
 
 기업용 API 거버넌스 플랫폼은 아닙니다.
 
@@ -113,16 +124,16 @@ SDK/stdio 테스트는 같은 커넥터와 MCP 연결로 게이트웨이 재시�
 - 먼저 미리 보기를 제공하고 백업을 만들며 지원하지 않는 네이티브 설정을 거부합니다.
 - 모든 네이티브 클라이언트가 엔드투엔드 테스트를 마쳤다는 뜻은 아닙니다. [마이그레이션 가이드(영문)](../CLIENTS.md#cross-client-migration).
 
-| 클라이언트 | 설치 | 업그레이드  필수 초기 설치 | 검증 범위 |
-|---|---|------|---|
-| GitHub Copilot CLI | [설치](../CLIENTS.md#copilot-cli-install) | [업그레이드](../CLIENTS.md#copilot-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [마켓플레이스/설치 경로; 격리 구성 파싱](../CLIENTS.md#compatibility-summary) |
-| VS Code(편집기) | [설치](../CLIENTS.md#vs-code-install) | [업그레이드](../CLIENTS.md#vs-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [등록/형식 어댑터 테스트; 네이티브 전체 세션 미검증](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [설치](../CLIENTS.md#claude-code-install) | [업그레이드](../CLIENTS.md#claude-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [격리 구성 파싱 확인; 모델/백엔드 미실행](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [설치](../CLIENTS.md#codex-install) | [업그레이드](../CLIENTS.md#codex-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [관리 정책으로 네이티브 검증 차단](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [설치](../CLIENTS.md#opencode-install) | [업그레이드](../CLIENTS.md#opencode-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [등록/형식 어댑터 테스트; 네이티브 전체 세션 미검증](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [설치](../CLIENTS.md#qwen-code-install) | [업그레이드](../CLIENTS.md#qwen-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [등록/형식 어댑터 테스트; 네이티브 전체 세션 미검증](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [설치](../CLIENTS.md#kimi-cli-install) | [업그레이드](../CLIENTS.md#kimi-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [등록/형식 어댑터 테스트; 네이티브 전체 세션 미검증](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [설치](../CLIENTS.md#antigravity-cli-install) | [업그레이드](../CLIENTS.md#antigravity-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [등록/형식 어댑터 테스트; 네이티브 전체 세션 미검증](../CLIENTS.md#compatibility-summary) |
+| 클라이언트 | 설치 | 업그레이드 | 필수 초기 설치 | 검증 범위 |
+|---|---|---|---|---|
+| GitHub Copilot CLI | [설치](../CLIENTS.md#copilot-cli-install) | [업그레이드](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [마켓플레이스/설치 경로; 격리 구성 파싱](../CLIENTS.md#compatibility-summary) |
+| VS Code(편집기) | [설치](../CLIENTS.md#vs-code-install) | [업그레이드](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [등록/형식 어댑터 테스트; 네이티브 전체 세션 미검증](../CLIENTS.md#compatibility-summary) |
+| Claude Code | [설치](../CLIENTS.md#claude-code-install) | [업그레이드](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [격리 구성 파싱 확인; 모델/백엔드 미실행](../CLIENTS.md#compatibility-summary) |
+| Codex CLI | [설치](../CLIENTS.md#codex-install) | [업그레이드](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [관리 정책으로 네이티브 검증 차단](../CLIENTS.md#compatibility-summary) |
+| OpenCode | [설치](../CLIENTS.md#opencode-install) | [업그레이드](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [등록/형식 어댑터 테스트; 네이티브 전체 세션 미검증](../CLIENTS.md#compatibility-summary) |
+| Qwen Code | [설치](../CLIENTS.md#qwen-code-install) | [업그레이드](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [등록/형식 어댑터 테스트; 네이티브 전체 세션 미검증](../CLIENTS.md#compatibility-summary) |
+| Kimi CLI | [설치](../CLIENTS.md#kimi-cli-install) | [업그레이드](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [등록/형식 어댑터 테스트; 네이티브 전체 세션 미검증](../CLIENTS.md#compatibility-summary) |
+| Antigravity CLI | [설치](../CLIENTS.md#antigravity-cli-install) | [업그레이드](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [등록/형식 어댑터 테스트; 네이티브 전체 세션 미검증](../CLIENTS.md#compatibility-summary) |
 
 </details>
 

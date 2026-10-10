@@ -8,16 +8,16 @@
 
 </details>
 
-Lokale MCP-Backends zwischen Sitzungen teilen: doppelten RAM vermeiden, Startarbeit wiederverwenden und nur Konfiguration ergänzen, ohne die bestehende MCP-Verbindung des Agenten neu zu starten (SDK/stdio-Pfad; Nettovorteil abhängig vom Overhead).
+Lokale MCP-Backends zwischen Sitzungen teilen: doppelten RAM vermeiden, bereits gestartete Backends wiederverwenden und nur Konfiguration ergänzen, ohne die bestehende MCP-Verbindung des Agenten neu zu starten (SDK/stdio-Pfad; Nettovorteil abhängig vom Overhead).
 
 [Start über Copilot CLI](#first-use) · [Client-Prüfung](../CLIENTS.md#compatibility-summary) · [Nachweise](#resource-examples)
 
-<img src="../../assets/mcp-gateway-benefits.png" alt="RAM und Startarbeit schwerer Backends wiederverwenden, statt Kopien pro Sitzung zu starten." width="780">
+<img src="../../assets/mcp-gateway-benefits.png" alt="Speicherintensive Backends gemeinsam nutzen, statt für jede Sitzung eine Kopie zu starten." width="780">
 
 Konzeptbild mit englischen Beschriftungen, kein Screenshot oder Benchmark.
 
 - **Doppelten Backend-Speicher vermeiden:** Illustration: 5 × 1.5 GB → ein Satz; 6 GB Doppelbelegung **vor** Gateway-/Konnektor-Overhead vermieden, keine gemessene Ersparnis.
-- **Wiederholte Startarbeit wiederverwenden:** Wenn alle 5 Sitzungen die 12 stdio-Dienste nutzen: 60 → 12 Backendstarts, nicht 80% schnelleres Starten.
+- **Doppelte Backendstarts vermeiden:** Wenn alle 5 Sitzungen die 12 stdio-Dienste nutzen: 60 → 12 Backendstarts, nicht 80% schnelleres Starten.
 - **Nur Konfiguration ergänzen; Agentenverbindung behalten:** SDK/stdio: 1 Initialisierung übersteht den Neustart des eigenen Gateways nach Arbeitsabschluss; der Konnektor bleibt aktiv. Kein Hot Reload oder Nachweis nativer Gesprächsoberflächen. Erstregistrierung oder Runtime-Upgrades können Client-Neustart erfordern. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
 Für mehrere Sitzungen mit denselben Backends und demselben Katalog; eine Sitzung oder leichte Backends können den Overhead möglicherweise nicht ausgleichen.
@@ -29,7 +29,7 @@ Für mehrere Sitzungen mit denselben Backends und demselben Katalog; eine Sitzun
 
 Konfigurationen und Sicherungen können Zugangsdaten enthalten: privat aufbewahren und nur beabsichtigte Änderungen genehmigen.
 
-[Ausstieg und persistente Runtime](../REFERENCE.md#planned-exit) · [rollback ≠ daemon shutdown](../REFERENCE.md#setup-recovery)
+[Ausstieg und persistente Runtime](../REFERENCE.md#planned-exit) · [Konfiguration zurücksetzen beendet den dauerhaft laufenden Gateway-Prozess nicht (rollback ≠ daemon shutdown)](../REFERENCE.md#setup-recovery)
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
@@ -37,6 +37,17 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
 1. Starten Sie nach der Plugin-Installation Copilot CLI und rufen Sie `/mcp-gateway-setup` auf. Prüfen Sie die Vorschau und genehmigen Sie nur die gewünschten Änderungen. Schließen und öffnen Sie Copilot erneut und führen Sie den exakt zurückgegebenen `readinessCommand` aus. Bewahren Sie Sicherungs- und Rollback-Befehle auf. Die Plugin-Installation allein führt keine Konfigurationen zusammen.
+
+`readinessCommand` ist das zurückgegebene Objekt, keine Shell-Befehlszeile. `$readinessCommand` auf genau dieses Objekt aus dem genehmigten Einrichtungsergebnis setzen und das PowerShell-Beispiel ausführen. `.command` erhält den Dateipfad, `.args` alle Argumente in Reihenfolge, auch Pfade mit Leerzeichen oder Anführungszeichen. Array nicht zusammenfügen und keine Pfade erfinden. Die Prüfung startet kein fehlendes Gateway.
+
+Nur das JSON-Objekt `readinessCommand` aus dem genehmigten Einrichtungsergebnis, nicht die gesamte Ausgabe, als UTF-8 `readiness-command.json` im privaten aktuellen Ordner speichern. Die bekannte genehmigte Datei `.command` und alle `.args` unverändert lassen; keine Argumente verbinden oder Pfade erfinden. Nur dieses Einrichtungs-JSON parsen, keine beliebigen Web-/Dienstdaten; JSON-Parsing wertet keinen Code aus. Datei privat halten, da Argumentinhalte von der Einrichtung abhängen.
+
+```powershell
+$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
+$command = $readinessCommand.command
+$commandArgs = @($readinessCommand.args)
+& $command @commandArgs
+```
 
 Discovery und Schema benötigen keine Reservierung; bei `requiresExclusiveAccess: true` ist `claim_server` vor `call_tool` erforderlich.
 
@@ -73,11 +84,11 @@ Illustrative Annahme, kein Benchmark: 5 Sitzungen benötigen jeweils dieselben 1
 
 Vermiedener doppelter Backend-RAM vor Overhead: 7.5 GB - 1.5 GB = 6 GB. Die Gesamtersparnis ist bis zur Messung unbekannt. 1.5 GB ist kein konstanter Wert über Workloads oder Clients; nicht der RAM von fünf Modellen wird eingespart.
 
-**Auch Startarbeit wiederverwenden.** Nutzen alle 5 Sitzungen sämtliche 12 stdio-Dienste, brauchen unabhängige Kopien bis zu `5 × 12 = 60` Starts statt `12` gemeinsam: `60 - 12 = 48` doppelte Starts vermieden, also `48 / 60 × 100 = 80%` weniger Starts. Bei verzögerter Verbindung werden nur `k` genutzte Backends verbunden; ungenutzte starten nicht. Das zählt Vorgänge, bedeutet nicht 80% schnelleres Starten. Latenz ist hier ungemessen; Parallelität, Authentifizierung und Plattform beeinflussen die Dauer.
+**Auch doppelte Backendstarts vermeiden.** Nutzen alle 5 Sitzungen sämtliche 12 stdio-Dienste, brauchen unabhängige Kopien bis zu `5 × 12 = 60` Starts statt `12` gemeinsam: `60 - 12 = 48` doppelte Starts vermieden, also `48 / 60 × 100 = 80%` weniger Starts. Bei verzögerter Verbindung werden nur `k` genutzte Backends verbunden; ungenutzte starten nicht. Das zählt Vorgänge, bedeutet nicht 80% schnelleres Starten. Latenz ist hier ungemessen; Parallelität, Authentifizierung und Plattform beeinflussen die Dauer.
 
 1000 Tools → 6 anfängliche Definitionen: (1000 - 6) / 1000 × 100 = 99.4% weniger Definitionen, nicht Tokens. Später angeforderte Schemas verursachen weitere Kosten; bereits verzögert ladende Clients profitieren möglicherweise weniger. Der synthetische Katalogtest prüft sechs Tools und einen gemeinsamen Discovery-Cache für zwei Clients, keine RSS-Leistung. [catalog-scale.test.js](../../test/catalog-scale.test.js)
 
-**Leichte Fixture gemessen: summiertes Prozess-Working-Set erhöht** Mediane aus 3 Versuchen, Windows x64 / Node 24.13.1: Schema + Echo gemeinsam 426.2 ms bei kaltem Backend, 21.1 ms beim zweiten Client, 19.0 ms beim fünften. Erster Client insgesamt: 503.5 ms direkt, 894.3 ms gemeinsam bei bereitem Gateway; vollständig kalter gemeinsamer Start 1886.7 ms. Backendprozesse 5 → 1, aber Gesamtprozesse 5 → 7 und summiertes Working Set 357.0 MiB → 564.0 MiB: höheres summiertes Prozess-Working-Set; eindeutiger physischer Speicher nicht gemessen. Ein einzelnes Echo repräsentiert keine schweren realen Dienste; 1.5 GB oben ist eine separate Annahme, keine Messung. [BENCHMARK.md](../BENCHMARK.md)
+**Leichtgewichtiges Testszenario: summiertes Prozess-Working-Set erhöht** Mediane aus 3 Versuchen, Windows x64 / Node 24.13.1: Schema + Echo gemeinsam 426.2 ms bei kaltem Backend, 21.1 ms beim zweiten Client, 19.0 ms beim fünften. Erster Client insgesamt: 503.5 ms direkt, 894.3 ms gemeinsam bei bereitem Gateway; vollständig kalter gemeinsamer Start 1886.7 ms. Backendprozesse 5 → 1, aber Gesamtprozesse 5 → 7 und summiertes Working Set 357.0 MiB → 564.0 MiB: höheres summiertes Prozess-Working-Set; physischer Speicher ohne Mehrfachzählung nicht gemessen. Ein einzelnes Echo repräsentiert keine schweren realen Dienste; 1.5 GB oben ist eine separate Annahme, keine Messung. [BENCHMARK.md](../BENCHMARK.md)
 
 Gemessen wurde das summierte Prozess-Working-Set; physischer Speicher ohne Mehrfachzählung und private Bytes wurden nicht gemessen.
 
@@ -116,16 +127,16 @@ Ein gemeinsamer MCP-Katalog kann mehreren Agenten dienen. Beginnen Sie beispiels
 - Die Migration zeigt zuerst eine Vorschau, erstellt eine Sicherung und weist nicht unterstützte native Einstellungen zurück.
 - Dies bedeutet nicht, dass jeder native Client durchgängig getestet wurde. Siehe [Migrationsleitfaden (Englisch)](../CLIENTS.md#cross-client-migration).
 
-| Client | Installation | Upgrade  Erforderliche Ersteinrichtung | Prüfumfang |
-|---|---|------|---|
-| GitHub Copilot CLI | [Installieren](../CLIENTS.md#copilot-cli-install) | [Aktualisieren](../CLIENTS.md#copilot-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Marketplace-/Einrichtungsweg; isoliertes Parsing](../CLIENTS.md#compatibility-summary) |
-| VS Code (Editor) | [Installieren](../CLIENTS.md#vs-code-install) | [Aktualisieren](../CLIENTS.md#vs-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Registrierungs-/Formatadapter getestet; keine native Ende-zu-Ende-Sitzung](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [Installieren](../CLIENTS.md#claude-code-install) | [Aktualisieren](../CLIENTS.md#claude-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Isolierte Konfiguration geparst; kein Modell/Backend](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [Installieren](../CLIENTS.md#codex-install) | [Aktualisieren](../CLIENTS.md#codex-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Native Prüfung durch Richtlinie blockiert](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [Installieren](../CLIENTS.md#opencode-install) | [Aktualisieren](../CLIENTS.md#opencode-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Registrierungs-/Formatadapter getestet; keine native Ende-zu-Ende-Sitzung](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [Installieren](../CLIENTS.md#qwen-code-install) | [Aktualisieren](../CLIENTS.md#qwen-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Registrierungs-/Formatadapter getestet; keine native Ende-zu-Ende-Sitzung](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [Installieren](../CLIENTS.md#kimi-cli-install) | [Aktualisieren](../CLIENTS.md#kimi-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Registrierungs-/Formatadapter getestet; keine native Ende-zu-Ende-Sitzung](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [Installieren](../CLIENTS.md#antigravity-cli-install) | [Aktualisieren](../CLIENTS.md#antigravity-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Registrierungs-/Formatadapter getestet; keine native Ende-zu-Ende-Sitzung](../CLIENTS.md#compatibility-summary) |
+| Client | Installation | Upgrade | Erforderliche Ersteinrichtung | Prüfumfang |
+|---|---|---|---|---|
+| GitHub Copilot CLI | [Installieren](../CLIENTS.md#copilot-cli-install) | [Aktualisieren](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Marketplace-/Einrichtungsweg; isoliertes Parsing](../CLIENTS.md#compatibility-summary) |
+| VS Code (Editor) | [Installieren](../CLIENTS.md#vs-code-install) | [Aktualisieren](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Registrierungs-/Formatadapter getestet; keine native Ende-zu-Ende-Sitzung](../CLIENTS.md#compatibility-summary) |
+| Claude Code | [Installieren](../CLIENTS.md#claude-code-install) | [Aktualisieren](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Isolierte Konfiguration geparst; kein Modell/Backend](../CLIENTS.md#compatibility-summary) |
+| Codex CLI | [Installieren](../CLIENTS.md#codex-install) | [Aktualisieren](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Native Prüfung durch Richtlinie blockiert](../CLIENTS.md#compatibility-summary) |
+| OpenCode | [Installieren](../CLIENTS.md#opencode-install) | [Aktualisieren](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Registrierungs-/Formatadapter getestet; keine native Ende-zu-Ende-Sitzung](../CLIENTS.md#compatibility-summary) |
+| Qwen Code | [Installieren](../CLIENTS.md#qwen-code-install) | [Aktualisieren](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Registrierungs-/Formatadapter getestet; keine native Ende-zu-Ende-Sitzung](../CLIENTS.md#compatibility-summary) |
+| Kimi CLI | [Installieren](../CLIENTS.md#kimi-cli-install) | [Aktualisieren](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Registrierungs-/Formatadapter getestet; keine native Ende-zu-Ende-Sitzung](../CLIENTS.md#compatibility-summary) |
+| Antigravity CLI | [Installieren](../CLIENTS.md#antigravity-cli-install) | [Aktualisieren](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Registrierungs-/Formatadapter getestet; keine native Ende-zu-Ende-Sitzung](../CLIENTS.md#compatibility-summary) |
 
 </details>
 

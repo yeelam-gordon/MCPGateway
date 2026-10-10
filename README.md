@@ -8,7 +8,7 @@
 
 </details>
 
-Share local MCP backends across coding sessions: avoid duplicate backend memory, reuse repeated startup work, and make configuration-only backend additions without restarting the current agent-side MCP connection (SDK/stdio route; net gains depend on overhead).
+Share local MCP backends across coding sessions: avoid duplicate backend memory, reuse repeated startup work, and make configuration-only backend additions without restarting the current agent-side MCP connection — verified on the SDK/stdio route. Net resource gains depend on overhead.
 
 [Start via Copilot CLI](#first-use) · [Client verification](docs/CLIENTS.md#compatibility-summary) · [Evidence](#resource-examples)
 
@@ -42,6 +42,17 @@ This installs a persistent runtime: client rollback is not daemon shutdown. Revi
    ```
 
    Start Copilot CLI, invoke `/mcp-gateway-setup`, review the preview, and approve only intended changes. Close and reopen Copilot, then run the exact returned `readinessCommand`. A check-only command does not start an absent gateway. Keep the returned backup and rollback commands.
+
+`readinessCommand` is the returned object, not a shell string. Set `$readinessCommand` to that exact object from the approved setup result; then run the PowerShell example below. `.command` keeps the executable path intact and `.args` keeps every returned argument in order, including paths with spaces or quotes. Do not join the array into one argument or invent paths. This check does not start an absent gateway.
+
+Save only the `readinessCommand` JSON object from your approved setup result—not the whole output—as UTF-8 `readiness-command.json` in your private current folder. Keep the known approved executable `.command` and every `.args` value exact; do not join arguments or guess paths. Parse only this setup JSON, not arbitrary web/service data; JSON parsing is not evaluation. Treat the file as private because argument contents depend on your setup.
+
+```powershell
+$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
+$command = $readinessCommand.command
+$commandArgs = @($readinessCommand.args)
+& $command @commandArgs
+```
 > Use the shared gateway for [my authorized read-only task]: list configured servers, discover a suitable tool, inspect its schema and prepare schema-valid arguments using authorized non-sensitive test values. Obtain normal approvals; claim an exclusive backend before calling it and release after calls settle. Show the actual result. Never retry an unknown outcome; use the operator handoff.
 
 Replace only the bracketed task; actual aliases/tool names come from discovery, not invented defaults.
@@ -122,16 +133,16 @@ The shared runtime is bootstrapped through Copilot CLI today. Other clients can 
 
 **Prerequisites:** Node.js 24 or newer, npm, Git, Copilot CLI with plugin support for the current bootstrap, and integrations already configured with their required authentication. Windows is the primary tested platform. Agency is optional.
 
-| Client | Installation | Upgrade  Required bootstrap | Verification tier |
-|---|---|------|---|
-| GitHub Copilot CLI | [Install](docs/CLIENTS.md#copilot-cli-install) | [Upgrade](docs/CLIENTS.md#copilot-cli-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Marketplace/setup route; isolated config parsing](docs/CLIENTS.md#compatibility-summary) |
-| VS Code (editor) | [Install](docs/CLIENTS.md#vs-code-install) | [Upgrade](docs/CLIENTS.md#vs-code-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
-| Claude Code | [Install](docs/CLIENTS.md#claude-code-install) | [Upgrade](docs/CLIENTS.md#claude-code-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Isolated config parsed; no model/backend](docs/CLIENTS.md#compatibility-summary) |
-| Codex CLI | [Install](docs/CLIENTS.md#codex-install) | [Upgrade](docs/CLIENTS.md#codex-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Native validation blocked by policy](docs/CLIENTS.md#compatibility-summary) |
-| OpenCode | [Install](docs/CLIENTS.md#opencode-install) | [Upgrade](docs/CLIENTS.md#opencode-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
-| Qwen Code | [Install](docs/CLIENTS.md#qwen-code-install) | [Upgrade](docs/CLIENTS.md#qwen-code-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [Install](docs/CLIENTS.md#kimi-cli-install) | [Upgrade](docs/CLIENTS.md#kimi-cli-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [Install](docs/CLIENTS.md#antigravity-cli-install) | [Upgrade](docs/CLIENTS.md#antigravity-cli-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
+| Client | Installation | Upgrade | Required bootstrap | Verification tier |
+|---|---|---|---|---|
+| GitHub Copilot CLI | [Install](docs/CLIENTS.md#copilot-cli-install) | [Upgrade](docs/CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Marketplace/setup route; isolated config parsing](docs/CLIENTS.md#compatibility-summary) |
+| VS Code (editor) | [Install](docs/CLIENTS.md#vs-code-install) | [Upgrade](docs/CLIENTS.md#vs-code-upgrade) | [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
+| Claude Code | [Install](docs/CLIENTS.md#claude-code-install) | [Upgrade](docs/CLIENTS.md#claude-code-upgrade) | [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Isolated config parsed; no model/backend](docs/CLIENTS.md#compatibility-summary) |
+| Codex CLI | [Install](docs/CLIENTS.md#codex-install) | [Upgrade](docs/CLIENTS.md#codex-upgrade) | [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Native validation blocked by policy](docs/CLIENTS.md#compatibility-summary) |
+| OpenCode | [Install](docs/CLIENTS.md#opencode-install) | [Upgrade](docs/CLIENTS.md#opencode-upgrade) | [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
+| Qwen Code | [Install](docs/CLIENTS.md#qwen-code-install) | [Upgrade](docs/CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
+| Kimi CLI | [Install](docs/CLIENTS.md#kimi-cli-install) | [Upgrade](docs/CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
+| Antigravity CLI | [Install](docs/CLIENTS.md#antigravity-cli-install) | [Upgrade](docs/CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
 
 The [client guide](docs/CLIENTS.md) is the canonical installation and upgrade source. It documents native configuration locations, preview/apply behavior, support status, restart/readiness steps, and conflict handling.
 

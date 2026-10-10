@@ -8,7 +8,7 @@
 
 </details>
 
-شارك خدمات MCP الخلفية المحلية بين الجلسات: تجنّب تكرار الذاكرة، وأعِد استخدام عمل بدء التشغيل، وأضف الإعدادات فقط دون إعادة تشغيل اتصال MCP الحالي للوكيل (مسار SDK/stdio؛ صافي الفائدة يعتمد على الاستهلاك الإضافي).
+شارك خدمات MCP الخلفية المحلية بين الجلسات: تجنّب تكرار الذاكرة، واستخدم الخدمات التي تعمل بالفعل، وأضف خدمات عبر الإعدادات مع إبقاء اتصال MCP الحالي للوكيل دون إعادة تشغيله (SDK/stdio؛ صافي الفائدة يعتمد على الاستهلاك الإضافي).
 
 [ابدأ عبر Copilot CLI](#first-use) · [تحقق العملاء](../CLIENTS.md#compatibility-summary) · [الأدلة](#resource-examples)
 
@@ -18,7 +18,7 @@
 
 - **تجنّب تكرار ذاكرة الخدمات الخلفية:** مثال افتراضي: 5 × 1.5 GB → مجموعة واحدة؛ تجنّب تكرار 6 GB **قبل** استهلاك البوابة والموصّلات الإضافي، وليس توفيرًا مقاسًا.
 - **أعِد استخدام عمل بدء التشغيل المتكرر:** إذا استخدمت الجلسات الخمس خدمات stdio الـ12 كلها: 60 → 12 عملية بدء، وليس بدءًا أسرع بنسبة 80%.
-- **أضف الإعدادات فقط؛ احتفظ باتصال الوكيل:** SDK/stdio: تبقى تهيئة واحدة (1) بعد انتهاء العمل وإعادة تشغيل البوابة المملوكة؛ يبقى الموصّل نشطًا. ليس تحميلًا تلقائيًا ولا تحققًا من واجهة محادثة أصلية. قد يتطلب التسجيل الأول أو ترقية بيئة التشغيل إعادة تشغيل العميل. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
+- **أضف الإعدادات فقط؛ احتفظ باتصال الوكيل:** SDK/stdio: تبقى تهيئة واحدة (1) بعد انتهاء العمل وإعادة تشغيل البوابة المملوكة؛ يبقى الموصّل نشطًا. لا يطبّق تغييرات الإعدادات تلقائيًا دون إعادة تشغيل (hot reload)، وليس تحققًا من واجهة محادثة أصلية. قد يتطلب التسجيل الأول أو ترقية بيئة التشغيل إعادة تشغيل العميل. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
 مناسب لعدة جلسات تستخدم الخدمات والكتالوج نفسيهما؛ قد لا تبرر جلسة واحدة أو خدمات خفيفة الاستهلاك الإضافي.
 
@@ -29,7 +29,7 @@
 
 قد تحتوي الإعدادات والنسخ الاحتياطية على بيانات اعتماد؛ أبقها خاصة ووافق على التغييرات المقصودة فقط.
 
-[الخروج وبيئة التشغيل المستمرة](../REFERENCE.md#planned-exit) · [rollback ≠ daemon shutdown](../REFERENCE.md#setup-recovery)
+[الخروج وبيئة التشغيل المستمرة](../REFERENCE.md#planned-exit) · [استعادة الإعدادات لا توقف عملية البوابة المستمرة (rollback ≠ daemon shutdown)](../REFERENCE.md#setup-recovery)
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
@@ -37,6 +37,17 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
 1. بعد التثبيت افتح Copilot CLI واستدعِ `/mcp-gateway-setup`. راجع المعاينة قبل الموافقة على التغييرات المطلوبة فقط. أغلق Copilot ثم أعد فتحه ونفّذ `readinessCommand` الدقيق الذي أعاده الإعداد. احتفظ بالنسخ الاحتياطية الخاصة وأوامر التراجع.
+
+`readinessCommand` هو الكائن الذي أعاده الإعداد، وليس سلسلة نصية لأمر يُنفَّذ في مفسّر الأوامر (shell). عيّن `$readinessCommand` إلى ذلك الكائن نفسه من نتيجة الإعداد الموافق عليه، ثم نفّذ مثال PowerShell. يحفظ `.command` مسار الملف التنفيذي ويحفظ `.args` جميع الوسائط بالترتيب، بما فيها المسارات ذات المسافات أو علامات الاقتباس. لا تدمج المصفوفة ولا تخمّن المسارات. الفحص لا يبدأ بوابة غير مشغلة.
+
+احفظ فقط كائن JSON باسم `readinessCommand` من نتيجة الإعداد الموافق عليه، لا المخرجات كلها، في ملف UTF-8 باسم `readiness-command.json` داخل المجلد الحالي الخاص. أبقِ `.command` المعروف والموافق عليه وجميع `.args` كما هي؛ لا تدمج الوسائط ولا تخمّن المسارات. حلّل JSON الإعداد هذا فقط، لا بيانات ويب أو خدمات عشوائية؛ تحليل JSON ليس تقييمًا للشيفرة. أبقِ الملف خاصًا لأن محتوى الوسائط يعتمد على الإعداد.
+
+```powershell
+$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
+$command = $readinessCommand.command
+$commandArgs = @($readinessCommand.args)
+& $command @commandArgs
+```
 
 لا يتطلب الاكتشاف والمخطط حجزًا؛ إذا كان `requiresExclusiveAccess: true`، يجب استخدام `claim_server` قبل `call_tool`.
 
@@ -75,7 +86,7 @@ RAM المكررة التي يمكن تجنبها قبل الاستهلاك ال
 
 1000 أداة → 6 تعريفات أولية: (1000 - 6) / 1000 × 100 = 99.4% أقل في عدد التعريفات، لا في الرموز النصية (tokens). للمخططات المطلوبة لاحقًا تكلفة أيضًا؛ وقد تكون الفائدة أقل للعملاء الذين يؤجلون التحميل أصلًا. يتحقق اختبار الكتالوج الاصطناعي من ست أدوات وذاكرة اكتشاف مشتركة بين عميلين، وليس من أداء RSS. [catalog-scale.test.js](../../test/catalog-scale.test.js)
 
-**قياس تجهيز خفيف: زاد مجموع working set للعمليات** وسائط 3 تجارب، Windows x64 / Node 24.13.1: المخطط + echo المشترك 426.2 ms لخدمة خلفية باردة، 21.1 ms للعميل الثاني، 19.0 ms للخامس. إجمالي العميل الأول: مباشر 503.5 ms، مشترك مع بوابة جاهزة 894.3 ms؛ البدء المشترك البارد بالكامل 1886.7 ms. عمليات الخدمات الخلفية 5 → 1، لكن جميع العمليات 5 → 7 ومجموع working set من 357.0 MiB → 564.0 MiB: مجموع working set للعمليات أعلى؛ لم تُقَس الذاكرة الفعلية الفريدة. أداة echo واحدة لا تمثل الخدمات الفعلية الثقيلة؛ و1.5 GB أعلاه افتراض منفصل، لا قياس. [BENCHMARK.md](../BENCHMARK.md)
+**قياس تجهيز خفيف: زاد مجموع working set للعمليات** القيمة الوسيطة لثلاث تجارب، Windows x64 / Node 24.13.1: المخطط + echo المشترك 426.2 ms لخدمة خلفية باردة، 21.1 ms للعميل الثاني، 19.0 ms للخامس. إجمالي العميل الأول: مباشر 503.5 ms، مشترك مع بوابة جاهزة 894.3 ms؛ البدء المشترك البارد بالكامل 1886.7 ms. عمليات الخدمات الخلفية 5 → 1، لكن جميع العمليات 5 → 7 ومجموع working set من 357.0 MiB → 564.0 MiB: مجموع working set للعمليات أعلى؛ لم تُقَس الذاكرة الفعلية الفريدة. أداة echo واحدة لا تمثل الخدمات الفعلية الثقيلة؛ و1.5 GB أعلاه افتراض منفصل، لا قياس. [BENCHMARK.md](../BENCHMARK.md)
 
 المقاس هو مجموع working set للعمليات؛ لم تُقَس الذاكرة الفعلية دون العد المكرر ولا البايتات الخاصة (private bytes).
 
@@ -85,7 +96,7 @@ RAM المكررة التي يمكن تجنبها قبل الاستهلاك ال
 
 أضف خدمات خلفية دون إعادة تشغيل اتصال MCP الحالي للوكيل: زامن الإضافات، وأنهِ العمل الجاري، ثم أعد تشغيل البوابة المملوكة فقط؛ يعيد الموصّل الحالي الاتصال. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
-يحافظ اختبار SDK/stdio على الموصّل واتصال MCP نفسيهما لاكتشاف اسم مستعار جديد وتنفيذ echo بعد إعادة التشغيل؛ لم تُختبر واجهات المحادثة الخاصة بالمنتجات. ليس تحميلًا تلقائيًا؛ التعارضات تحتاج مراجعة. قد يتطلب التسجيل الأول أو ترقية بيئة التشغيل إعادة تشغيل العميل. لا تُعاد الاستدعاءات المنقطعة؛ أعد حجز الوصول الحصري بعد إعادة التشغيل.
+يحافظ اختبار SDK/stdio على الموصّل واتصال MCP نفسيهما لاكتشاف اسم مستعار جديد وتنفيذ echo بعد إعادة التشغيل؛ لم تُختبر واجهات المحادثة الخاصة بالمنتجات. لا يطبّق تغييرات الإعدادات تلقائيًا دون إعادة تشغيل (hot reload)؛ التعارضات تحتاج مراجعة. قد يتطلب التسجيل الأول أو ترقية بيئة التشغيل إعادة تشغيل العميل. لا تُعاد الاستدعاءات المنقطعة؛ أعد حجز الوصول الحصري بعد إعادة التشغيل.
 
 هذه ليست منصة حوكمة API للمؤسسات.
 
@@ -113,16 +124,16 @@ RAM المكررة التي يمكن تجنبها قبل الاستهلاك ال
 - يعرض الترحيل معاينة أولًا، وينشئ نسخة احتياطية ويرفض الإعدادات الخاصة بالعميل التي لا يدعمها الترحيل.
 - لا يعني ذلك اختبار التكامل المباشر مع جميع العملاء من البداية إلى النهاية. [دليل الترحيل (بالإنجليزية)](../CLIENTS.md#cross-client-migration).
 
-| العميل | التثبيت | الترقية  الإعداد الأول المطلوب | مستوى التحقق |
-|---|---|------|---|
-| GitHub Copilot CLI | [تثبيت](../CLIENTS.md#copilot-cli-install) | [ترقية](../CLIENTS.md#copilot-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [مسار المتجر/الإعداد؛ تحليل إعداد معزول](../CLIENTS.md#compatibility-summary) |
-| VS Code (المحرر) | [تثبيت](../CLIENTS.md#vs-code-install) | [ترقية](../CLIENTS.md#vs-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [اختبار مهايئ التسجيل/التنسيق؛ دون جلسة أصلية كاملة](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [تثبيت](../CLIENTS.md#claude-code-install) | [ترقية](../CLIENTS.md#claude-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [تحليل إعداد معزول؛ دون تشغيل نموذج أو خدمة خلفية](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [تثبيت](../CLIENTS.md#codex-install) | [ترقية](../CLIENTS.md#codex-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [التحقق الأصلي محظور بسياسة الإدارة](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [تثبيت](../CLIENTS.md#opencode-install) | [ترقية](../CLIENTS.md#opencode-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [اختبار مهايئ التسجيل/التنسيق؛ دون جلسة أصلية كاملة](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [تثبيت](../CLIENTS.md#qwen-code-install) | [ترقية](../CLIENTS.md#qwen-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [اختبار مهايئ التسجيل/التنسيق؛ دون جلسة أصلية كاملة](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [تثبيت](../CLIENTS.md#kimi-cli-install) | [ترقية](../CLIENTS.md#kimi-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [اختبار مهايئ التسجيل/التنسيق؛ دون جلسة أصلية كاملة](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [تثبيت](../CLIENTS.md#antigravity-cli-install) | [ترقية](../CLIENTS.md#antigravity-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [اختبار مهايئ التسجيل/التنسيق؛ دون جلسة أصلية كاملة](../CLIENTS.md#compatibility-summary) |
+| العميل | التثبيت | الترقية | الإعداد الأول المطلوب | مستوى التحقق |
+|---|---|---|---|---|
+| GitHub Copilot CLI | [تثبيت](../CLIENTS.md#copilot-cli-install) | [ترقية](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [مسار المتجر/الإعداد؛ تحليل إعداد معزول](../CLIENTS.md#compatibility-summary) |
+| VS Code (المحرر) | [تثبيت](../CLIENTS.md#vs-code-install) | [ترقية](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [اختبار مهايئ التسجيل/التنسيق؛ دون جلسة أصلية كاملة](../CLIENTS.md#compatibility-summary) |
+| Claude Code | [تثبيت](../CLIENTS.md#claude-code-install) | [ترقية](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [تحليل إعداد معزول؛ دون تشغيل نموذج أو خدمة خلفية](../CLIENTS.md#compatibility-summary) |
+| Codex CLI | [تثبيت](../CLIENTS.md#codex-install) | [ترقية](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [التحقق الأصلي محظور بسياسة الإدارة](../CLIENTS.md#compatibility-summary) |
+| OpenCode | [تثبيت](../CLIENTS.md#opencode-install) | [ترقية](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [اختبار مهايئ التسجيل/التنسيق؛ دون جلسة أصلية كاملة](../CLIENTS.md#compatibility-summary) |
+| Qwen Code | [تثبيت](../CLIENTS.md#qwen-code-install) | [ترقية](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [اختبار مهايئ التسجيل/التنسيق؛ دون جلسة أصلية كاملة](../CLIENTS.md#compatibility-summary) |
+| Kimi CLI | [تثبيت](../CLIENTS.md#kimi-cli-install) | [ترقية](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [اختبار مهايئ التسجيل/التنسيق؛ دون جلسة أصلية كاملة](../CLIENTS.md#compatibility-summary) |
+| Antigravity CLI | [تثبيت](../CLIENTS.md#antigravity-cli-install) | [ترقية](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [اختبار مهايئ التسجيل/التنسيق؛ دون جلسة أصلية كاملة](../CLIENTS.md#compatibility-summary) |
 
 </details>
 

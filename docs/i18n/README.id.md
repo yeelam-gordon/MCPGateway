@@ -8,7 +8,7 @@
 
 </details>
 
-Bagikan backend MCP lokal antarsesi: hindari RAM duplikat, gunakan ulang pekerjaan memulai backend, dan tambahkan konfigurasi saja tanpa memulai ulang koneksi MCP agen yang ada (jalur SDK/stdio; manfaat bersih bergantung pada overhead).
+Bagikan backend MCP lokal antarsesi: hindari RAM duplikat, gunakan backend yang sudah berjalan, dan tambahkan backend lewat konfigurasi tanpa memulai ulang koneksi MCP agen yang ada (SDK/stdio; manfaat bersih bergantung pada overhead).
 
 [Mulai lewat Copilot CLI](#first-use) · [Verifikasi klien](../CLIENTS.md#compatibility-summary) · [Bukti](#resource-examples)
 
@@ -17,7 +17,7 @@ Bagikan backend MCP lokal antarsesi: hindari RAM duplikat, gunakan ulang pekerja
 Konsep berlabel Inggris, bukan tangkapan layar atau benchmark.
 
 - **Hindari memori backend duplikat:** Ilustrasi: 5 × 1.5 GB → satu set; duplikasi 6 GB dihindari **sebelum** overhead gateway/konektor, bukan penghematan terukur.
-- **Gunakan ulang pekerjaan memulai backend:** Jika kelima sesi memakai semua 12 layanan stdio: 60 → 12 kali mulai backend, bukan waktu mulai 80% lebih cepat.
+- **Gunakan backend yang sudah berjalan; hindari menjalankan salinan backend terpisah untuk setiap sesi:** Jika kelima sesi memakai semua 12 layanan stdio: 60 → 12 kali mulai backend, bukan waktu mulai 80% lebih cepat.
 - **Tambahkan konfigurasi saja; pertahankan koneksi agen:** SDK/stdio: 1 inisialisasi bertahan saat gateway milik Anda dimulai ulang setelah pekerjaan selesai; konektor tetap berjalan. Bukan hot reload atau verifikasi UI percakapan native. Registrasi awal/upgrade runtime mungkin perlu mulai ulang klien. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
 Cocok untuk beberapa sesi dengan backend dan katalog yang sama; satu sesi atau backend ringan mungkin tidak sepadan dengan overhead.
@@ -29,7 +29,7 @@ Cocok untuk beberapa sesi dengan backend dan katalog yang sama; satu sesi atau b
 
 Konfigurasi dan cadangan dapat berisi kredensial: simpan secara privat dan setujui hanya perubahan yang dimaksud.
 
-[Keluar dan runtime persisten](../REFERENCE.md#planned-exit) · [rollback ≠ daemon shutdown](../REFERENCE.md#setup-recovery)
+[Keluar dan runtime persisten](../REFERENCE.md#planned-exit) · [Memulihkan konfigurasi tidak menghentikan proses gateway persisten (rollback ≠ daemon shutdown)](../REFERENCE.md#setup-recovery)
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
@@ -37,6 +37,17 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
 1. Setelah instalasi, buka Copilot CLI dan jalankan `/mcp-gateway-setup`. Tinjau pratinjau sebelum menyetujui perubahan yang dimaksud. Tutup dan buka kembali Copilot, lalu jalankan `readinessCommand` persis seperti yang diberikan. Simpan cadangan privat dan perintah pengembalian.
+
+`readinessCommand` adalah objek yang dikembalikan, bukan string shell. Isi `$readinessCommand` dengan objek persis dari hasil penyiapan yang disetujui, lalu jalankan contoh PowerShell. `.command` mempertahankan jalur executable dan `.args` semua argumen berurutan, termasuk jalur berspasi atau bertanda kutip. Jangan gabungkan array atau mengarang jalur. Pemeriksaan tidak memulai gateway yang belum berjalan.
+
+Simpan hanya objek JSON `readinessCommand` dari hasil penyiapan yang disetujui, bukan seluruh keluaran, sebagai UTF-8 `readiness-command.json` di folder saat ini yang privat. Pertahankan `.command` yang dikenal dan disetujui serta semua `.args` persis; jangan gabungkan argumen atau mengarang jalur. Parse hanya JSON penyiapan ini, bukan data web/layanan sembarang; parsing JSON bukan evaluasi kode. Simpan berkas secara privat karena isi argumen bergantung pada penyiapan.
+
+```powershell
+$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
+$command = $readinessCommand.command
+$commandArgs = @($readinessCommand.args)
+& $command @commandArgs
+```
 
 Penemuan dan skema tidak memerlukan klaim; jika `requiresExclusiveAccess: true`, gunakan `claim_server` sebelum `call_tool`.
 
@@ -71,11 +82,11 @@ Asumsi ilustratif, bukan benchmark: 5 sesi masing-masing membutuhkan 12 koneksi 
 
 RAM backend berulang yang dihindari sebelum overhead: 7.5 GB - 1.5 GB = 6 GB. Penghematan total belum diketahui hingga diukur. 1.5 GB bukan nilai tetap lintas beban atau klien; ini bukan RAM lima model.
 
-**Gunakan ulang pekerjaan memulai backend juga.** Jika kelima sesi memakai semua 12 layanan stdio, salinan terpisah memerlukan hingga `5 × 12 = 60` kali mulai, dibanding `12` bersama: `60 - 12 = 48` pengulangan dihindari, `48 / 60 × 100 = 80%` lebih sedikit. Koneksi sesuai kebutuhan hanya menghubungkan `k` backend terpakai; yang tidak dipakai tidak dimulai. Ini jumlah operasi, bukan waktu mulai 80% lebih cepat. Latensi belum diukur; konkurensi, autentikasi, dan platform memengaruhi waktu.
+**Gunakan backend yang sudah berjalan untuk sesi berikutnya.** Jika kelima sesi memakai semua 12 layanan stdio, salinan terpisah memerlukan hingga `5 × 12 = 60` kali mulai, dibanding `12` bersama: `60 - 12 = 48` pengulangan dihindari, `48 / 60 × 100 = 80%` lebih sedikit. Koneksi sesuai kebutuhan hanya menghubungkan `k` backend terpakai; yang tidak dipakai tidak dimulai. Ini jumlah operasi, bukan waktu mulai 80% lebih cepat. Latensi belum diukur; konkurensi, autentikasi, dan platform memengaruhi waktu.
 
 1000 alat → 6 definisi awal: (1000 - 6) / 1000 × 100 = 99.4% lebih sedikit definisi, bukan token. Skema yang diminta kemudian tetap memiliki biaya; klien yang sudah menunda pemuatan bisa mendapat manfaat lebih kecil. Uji katalog sintetis memverifikasi enam alat dan cache penemuan bersama untuk dua klien, bukan kinerja RSS. [catalog-scale.test.js](../../test/catalog-scale.test.js)
 
-**Fixture ringan terukur: jumlah working set proses meningkat** Median 3 percobaan, Windows x64 / Node 24.13.1: skema + echo bersama 426.2 ms untuk backend dingin, 21.1 ms klien kedua, 19.0 ms kelima. Total klien pertama: langsung 503.5 ms, bersama dengan gateway siap 894.3 ms; mulai bersama sepenuhnya dingin 1886.7 ms. Proses backend 5 → 1, tetapi total proses 5 → 7 dan jumlah working set 357.0 MiB → 564.0 MiB: jumlah working set proses lebih tinggi; memori fisik unik tidak diukur. Satu echo tidak mewakili layanan nyata berat; 1.5 GB di atas adalah asumsi terpisah, bukan pengukuran. [BENCHMARK.md](../BENCHMARK.md)
+**Skenario pengujian ringan: jumlah working set proses meningkat** Median 3 percobaan, Windows x64 / Node 24.13.1: skema + echo bersama 426.2 ms untuk backend dingin, 21.1 ms klien kedua, 19.0 ms kelima. Total klien pertama: langsung 503.5 ms, bersama dengan gateway siap 894.3 ms; waktu mulai bersama sebelum proses apa pun berjalan 1886.7 ms. Proses backend 5 → 1, tetapi total proses 5 → 7 dan jumlah working set 357.0 MiB → 564.0 MiB: jumlah working set proses lebih tinggi; memori fisik unik tidak diukur. Satu echo tidak mewakili layanan nyata berat; 1.5 GB di atas adalah asumsi terpisah, bukan pengukuran. [BENCHMARK.md](../BENCHMARK.md)
 
 Yang diukur adalah jumlah working set proses; memori fisik tanpa penghitungan ganda dan private bytes (memori privat proses) tidak diukur.
 
@@ -113,16 +124,16 @@ Misalnya, **10** koneksi Copilot ditambah **2** koneksi baru yang dimigrasikan s
 - Migrasi menampilkan pratinjau, membuat cadangan, dan menolak pengaturan native yang tidak didukung.
 - Ini bukan bukti bahwa semua klien native telah diuji dari awal hingga akhir. [Panduan migrasi (bahasa Inggris)](../CLIENTS.md#cross-client-migration).
 
-| Klien | Instalasi | Peningkatan  Bootstrap wajib | Tingkat verifikasi |
-|---|---|------|---|
-| GitHub Copilot CLI | [Instal](../CLIENTS.md#copilot-cli-install) | [Tingkatkan](../CLIENTS.md#copilot-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Jalur marketplace/penyiapan; parsing terisolasi](../CLIENTS.md#compatibility-summary) |
-| VS Code (editor) | [Instal](../CLIENTS.md#vs-code-install) | [Tingkatkan](../CLIENTS.md#vs-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adapter registrasi/format diuji; tanpa sesi native menyeluruh](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [Instal](../CLIENTS.md#claude-code-install) | [Tingkatkan](../CLIENTS.md#claude-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Konfigurasi terisolasi diparsing; tanpa model/backend](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [Instal](../CLIENTS.md#codex-install) | [Tingkatkan](../CLIENTS.md#codex-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Validasi native diblokir kebijakan](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [Instal](../CLIENTS.md#opencode-install) | [Tingkatkan](../CLIENTS.md#opencode-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adapter registrasi/format diuji; tanpa sesi native menyeluruh](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [Instal](../CLIENTS.md#qwen-code-install) | [Tingkatkan](../CLIENTS.md#qwen-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adapter registrasi/format diuji; tanpa sesi native menyeluruh](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [Instal](../CLIENTS.md#kimi-cli-install) | [Tingkatkan](../CLIENTS.md#kimi-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adapter registrasi/format diuji; tanpa sesi native menyeluruh](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [Instal](../CLIENTS.md#antigravity-cli-install) | [Tingkatkan](../CLIENTS.md#antigravity-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adapter registrasi/format diuji; tanpa sesi native menyeluruh](../CLIENTS.md#compatibility-summary) |
+| Klien | Instalasi | Peningkatan | Bootstrap wajib | Tingkat verifikasi |
+|---|---|---|---|---|
+| GitHub Copilot CLI | [Instal](../CLIENTS.md#copilot-cli-install) | [Tingkatkan](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Jalur marketplace/penyiapan; parsing terisolasi](../CLIENTS.md#compatibility-summary) |
+| VS Code (editor) | [Instal](../CLIENTS.md#vs-code-install) | [Tingkatkan](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adapter registrasi/format diuji; tanpa sesi native menyeluruh](../CLIENTS.md#compatibility-summary) |
+| Claude Code | [Instal](../CLIENTS.md#claude-code-install) | [Tingkatkan](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Konfigurasi terisolasi diparsing; tanpa model/backend](../CLIENTS.md#compatibility-summary) |
+| Codex CLI | [Instal](../CLIENTS.md#codex-install) | [Tingkatkan](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Validasi native diblokir kebijakan](../CLIENTS.md#compatibility-summary) |
+| OpenCode | [Instal](../CLIENTS.md#opencode-install) | [Tingkatkan](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adapter registrasi/format diuji; tanpa sesi native menyeluruh](../CLIENTS.md#compatibility-summary) |
+| Qwen Code | [Instal](../CLIENTS.md#qwen-code-install) | [Tingkatkan](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adapter registrasi/format diuji; tanpa sesi native menyeluruh](../CLIENTS.md#compatibility-summary) |
+| Kimi CLI | [Instal](../CLIENTS.md#kimi-cli-install) | [Tingkatkan](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adapter registrasi/format diuji; tanpa sesi native menyeluruh](../CLIENTS.md#compatibility-summary) |
+| Antigravity CLI | [Instal](../CLIENTS.md#antigravity-cli-install) | [Tingkatkan](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adapter registrasi/format diuji; tanpa sesi native menyeluruh](../CLIENTS.md#compatibility-summary) |
 
 </details>
 

@@ -8,7 +8,7 @@
 
 </details>
 
-Condividi backend MCP locali tra sessioni: evita RAM duplicata, riutilizza il lavoro di avvio e aggiungi solo configurazione senza riavviare la connessione MCP attuale dell’agente (percorso SDK/stdio; beneficio netto secondo l’overhead).
+Condividi backend MCP locali tra sessioni: evita RAM duplicata, riutilizza il lavoro di avvio e aggiungi solo configurazione senza riavviare la connessione MCP attuale dell’agente (percorso SDK/stdio; beneficio netto dipendente dall’overhead).
 
 [Inizia tramite Copilot CLI](#first-use) · [Verifica dei client](../CLIENTS.md#compatibility-summary) · [Evidenze](#resource-examples)
 
@@ -18,7 +18,7 @@ Concetto con etichette inglesi, non schermata o benchmark.
 
 - **Evita memoria di backend duplicati:** Illustrazione: 5 × 1.5 GB → un insieme; 6 GB di duplicazione evitata **prima** dell’overhead di gateway e connettori, non risparmio misurato.
 - **Riutilizza il lavoro di avvio ripetuto:** Se tutte le 5 sessioni usano i 12 servizi stdio: 60 → 12 avvii dei backend, non avvio più rapido dell’80%.
-- **Aggiungi solo configurazione; conserva la connessione dell’agente:** SDK/stdio: 1 inizializzazione sopravvive al riavvio del gateway di proprietà dopo la fine del lavoro; il connettore resta attivo. Non è hot reload né verifica della UI nativa di conversazione. Registrazione iniziale o aggiornamento del runtime possono richiedere riavvio del client. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
+- **Aggiungi solo configurazione; conserva la connessione dell’agente:** SDK/stdio: 1 inizializzazione sopravvive al riavvio del gateway che gestisci dopo la fine del lavoro; il connettore resta attivo. Non è hot reload né verifica della UI nativa di conversazione. Registrazione iniziale o aggiornamento del runtime possono richiedere riavvio del client. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
 Adatto a più sessioni con gli stessi backend e catalogo; una sessione o backend leggeri possono non compensare l’overhead.
 
@@ -29,7 +29,7 @@ Adatto a più sessioni con gli stessi backend e catalogo; una sessione o backend
 
 Configurazioni e backup possono contenere credenziali: mantienili privati e approva solo le modifiche previste.
 
-[Uscita e runtime persistente](../REFERENCE.md#planned-exit) · [rollback ≠ daemon shutdown](../REFERENCE.md#setup-recovery)
+[Uscita e runtime persistente](../REFERENCE.md#planned-exit) · [Ripristinare la configurazione non arresta il processo persistente del gateway (rollback ≠ daemon shutdown)](../REFERENCE.md#setup-recovery)
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
@@ -37,6 +37,17 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
 1. Dopo l’installazione avvia Copilot CLI e invoca `/mcp-gateway-setup`. Esamina l’anteprima prima di approvare le modifiche desiderate. Chiudi e riapri Copilot, poi esegui il `readinessCommand` esatto ricevuto. Conserva i backup privati e i comandi di ripristino.
+
+`readinessCommand` è l’oggetto restituito, non una stringa di shell. Assegna a `$readinessCommand` quell’oggetto esatto dal risultato della configurazione approvata, poi esegui l’esempio PowerShell. `.command` conserva il percorso dell’eseguibile e `.args` tutti gli argomenti in ordine, inclusi percorsi con spazi o apici. Non unire l’array né inventare percorsi. Il controllo non avvia un gateway assente.
+
+Salva solo l’oggetto JSON `readinessCommand` del risultato della configurazione approvata, non tutto l’output, come UTF-8 `readiness-command.json` nella cartella corrente privata. Conserva esattamente l’eseguibile noto e approvato `.command` e tutti gli `.args`; non unire argomenti né inventare percorsi. Analizza solo questo JSON di configurazione, non dati web o di servizi arbitrari; analizzare JSON non valuta codice. Mantieni privato il file: gli argomenti dipendono dalla configurazione.
+
+```powershell
+$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
+$command = $readinessCommand.command
+$commandArgs = @($readinessCommand.args)
+& $command @commandArgs
+```
 
 Scoperta e schema non richiedono prenotazione; se `requiresExclusiveAccess: true`, usa `claim_server` prima di `call_tool`.
 
@@ -75,7 +86,7 @@ RAM duplicata evitata prima dell’overhead: 7.5 GB - 1.5 GB = 6 GB. Il risparmi
 
 1000 strumenti → 6 definizioni iniziali: (1000 - 6) / 1000 × 100 = 99.4% di definizioni in meno, non di token. Gli schemi richiesti dopo hanno un costo; i client che già ne rinviano il caricamento possono beneficiare meno. Il test del catalogo sintetico verifica sei strumenti e una cache condivisa fra due client, non prestazioni RSS. [catalog-scale.test.js](../../test/catalog-scale.test.js)
 
-**Fixture leggero misurato: aumento del working set sommato dei processi** Mediane di 3 prove, Windows x64 / Node 24.13.1: schema + echo condiviso 426.2 ms con backend freddo, 21.1 ms secondo client, 19.0 ms quinto. Totale primo client: 503.5 ms diretto, 894.3 ms condiviso con gateway pronto; condiviso completamente a freddo 1886.7 ms. Processi backend 5 → 1, ma processi totali 5 → 7 e working set sommato 357.0 MiB → 564.0 MiB: working set sommato dei processi più alto; memoria fisica unica non misurata. Un solo echo non rappresenta servizi reali pesanti; 1.5 GB sopra è un’altra ipotesi, non una misura. [BENCHMARK.md](../BENCHMARK.md)
+**Scenario di test leggero misurato: aumento del working set sommato dei processi (somma della memoria residente)** Mediane di 3 prove, Windows x64 / Node 24.13.1: schema + echo condiviso 426.2 ms con backend freddo, 21.1 ms secondo client, 19.0 ms quinto. Totale primo client: 503.5 ms diretto, 894.3 ms condiviso con gateway pronto; condiviso completamente a freddo 1886.7 ms. Processi backend 5 → 1, ma processi totali 5 → 7 e working set sommato 357.0 MiB → 564.0 MiB: working set sommato dei processi più alto; memoria fisica unica non misurata. Un solo echo non rappresenta servizi reali pesanti; 1.5 GB sopra è un’altra ipotesi, non una misura. [BENCHMARK.md](../BENCHMARK.md)
 
 Si è misurato il working set sommato dei processi; memoria fisica senza duplicazioni e byte privati (private bytes) non sono stati misurati.
 
@@ -83,7 +94,7 @@ Si è misurato il working set sommato dei processi; memoria fisica senza duplica
 
 ## Come funziona
 
-Aggiungi backend senza riavviare la connessione MCP attuale dell’agente: sincronizza le aggiunte, termina il lavoro attivo e riavvia solo il gateway di proprietà; il connettore attuale si riconnette. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
+Aggiungi backend senza riavviare la connessione MCP attuale dell’agente: sincronizza le aggiunte, termina il lavoro attivo e riavvia solo il gateway che gestisci; il connettore attuale si riconnette. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
 Il test SDK/stdio mantiene connettore e connessione MCP per scoprire un nuovo alias ed eseguire echo dopo il riavvio; non testa le interfacce di conversazione dei prodotti. Nessun hot reload automatico; conflitti da esaminare. Registrazione iniziale o aggiornamento del runtime possono richiedere riavvio del client. Le chiamate interrotte non vengono ripetute; prenota nuovamente l’accesso esclusivo dopo il riavvio.
 
@@ -113,16 +124,16 @@ Per esempio, con **10** connessioni in Copilot e **2** nuove connessioni migrate
 - La migrazione mostra prima un’anteprima, crea un backup e rifiuta impostazioni native non supportate.
 - Non significa che tutti i client nativi siano stati testati end-to-end. [Guida alla migrazione (inglese)](../CLIENTS.md#cross-client-migration).
 
-| Client | Installazione | Aggiornamento  Avvio iniziale richiesto | Livello di verifica |
-|---|---|------|---|
-| GitHub Copilot CLI | [Installa](../CLIENTS.md#copilot-cli-install) | [Aggiorna](../CLIENTS.md#copilot-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Percorso marketplace/configurazione; analisi isolata](../CLIENTS.md#compatibility-summary) |
-| VS Code (editor) | [Installa](../CLIENTS.md#vs-code-install) | [Aggiorna](../CLIENTS.md#vs-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adattatore di registrazione/formato testato; nessuna sessione nativa completa](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [Installa](../CLIENTS.md#claude-code-install) | [Aggiorna](../CLIENTS.md#claude-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Configurazione isolata analizzata; nessun modello/backend](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [Installa](../CLIENTS.md#codex-install) | [Aggiorna](../CLIENTS.md#codex-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Validazione nativa bloccata da policy](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [Installa](../CLIENTS.md#opencode-install) | [Aggiorna](../CLIENTS.md#opencode-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adattatore di registrazione/formato testato; nessuna sessione nativa completa](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [Installa](../CLIENTS.md#qwen-code-install) | [Aggiorna](../CLIENTS.md#qwen-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adattatore di registrazione/formato testato; nessuna sessione nativa completa](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [Installa](../CLIENTS.md#kimi-cli-install) | [Aggiorna](../CLIENTS.md#kimi-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adattatore di registrazione/formato testato; nessuna sessione nativa completa](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [Installa](../CLIENTS.md#antigravity-cli-install) | [Aggiorna](../CLIENTS.md#antigravity-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adattatore di registrazione/formato testato; nessuna sessione nativa completa](../CLIENTS.md#compatibility-summary) |
+| Client | Installazione | Aggiornamento | Avvio iniziale richiesto | Livello di verifica |
+|---|---|---|---|---|
+| GitHub Copilot CLI | [Installa](../CLIENTS.md#copilot-cli-install) | [Aggiorna](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Percorso marketplace/configurazione; analisi isolata](../CLIENTS.md#compatibility-summary) |
+| VS Code (editor) | [Installa](../CLIENTS.md#vs-code-install) | [Aggiorna](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adattatore di registrazione/formato testato; nessuna sessione nativa completa](../CLIENTS.md#compatibility-summary) |
+| Claude Code | [Installa](../CLIENTS.md#claude-code-install) | [Aggiorna](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Configurazione isolata analizzata; nessun modello/backend](../CLIENTS.md#compatibility-summary) |
+| Codex CLI | [Installa](../CLIENTS.md#codex-install) | [Aggiorna](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Validazione nativa bloccata da policy](../CLIENTS.md#compatibility-summary) |
+| OpenCode | [Installa](../CLIENTS.md#opencode-install) | [Aggiorna](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adattatore di registrazione/formato testato; nessuna sessione nativa completa](../CLIENTS.md#compatibility-summary) |
+| Qwen Code | [Installa](../CLIENTS.md#qwen-code-install) | [Aggiorna](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adattatore di registrazione/formato testato; nessuna sessione nativa completa](../CLIENTS.md#compatibility-summary) |
+| Kimi CLI | [Installa](../CLIENTS.md#kimi-cli-install) | [Aggiorna](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adattatore di registrazione/formato testato; nessuna sessione nativa completa](../CLIENTS.md#compatibility-summary) |
+| Antigravity CLI | [Installa](../CLIENTS.md#antigravity-cli-install) | [Aggiorna](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adattatore di registrazione/formato testato; nessuna sessione nativa completa](../CLIENTS.md#compatibility-summary) |
 
 </details>
 

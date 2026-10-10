@@ -17,8 +17,8 @@
 英語ラベルの概念図であり、実行画面やベンチマークではありません。
 
 - **バックエンドのメモリ重複を避ける:** 仮定の例：5 × 1.5 GB の一式を共有し、ゲートウェイ・コネクターの追加負荷を含める**前**に 6 GB の重複を回避。実測の削減ではありません。
-- **繰り返す起動処理を再利用する:** 5 セッションすべてが 12 個の stdio サービスを使う仮定：バックエンド起動は 60 → 12 回。所要時間が 80% 短くなる意味ではありません。
-- **設定だけの追加でも既存のエージェント接続を維持:** SDK/stdio の初期化 1 回を維持し、作業完了後に所有するゲートウェイだけを再起動。コネクターは継続し、ホットリロードでも製品の会話 UI の検証でもありません。初期登録やランタイム更新ではクライアント再起動が必要な場合があります。 [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
+- **起動済みバックエンドを再利用し、重複起動を避ける:** 5 セッションすべてが 12 個の stdio サービスを使う仮定：バックエンド起動は 60 → 12 回。所要時間が 80% 短くなる意味ではありません。
+- **バックエンド設定の追加時も既存のエージェント接続を維持:** SDK/stdio の初期化 1 回を維持し、作業完了後に所有するゲートウェイだけを再起動。コネクターは継続し、ホットリロードでも製品の会話 UI の検証でもありません。初期登録やランタイム更新ではクライアント再起動が必要な場合があります。 [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
 同じバックエンドとカタログを使う複数セッション向けです。単一セッションや軽いバックエンドでは追加コストが利点を上回る場合があります。
 
@@ -29,7 +29,7 @@
 
 設定とバックアップには資格情報が含まれ得ます。非公開で保管し、意図した変更だけ承認してください。
 
-[終了と常駐ランタイム](../REFERENCE.md#planned-exit) · [rollback ≠ daemon shutdown](../REFERENCE.md#setup-recovery)
+[終了と常駐ランタイム](../REFERENCE.md#planned-exit) · [設定の復元では常駐ゲートウェイは停止しません（rollback ≠ daemon shutdown）](../REFERENCE.md#setup-recovery)
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
@@ -37,6 +37,17 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
 1. プラグインのインストール後、Copilot CLI で `/mcp-gateway-setup` を実行し、プレビューを確認してから承認します。Copilot を閉じて開き直し、返された正確な `readinessCommand` を実行してください。バックアップとロールバックのコマンドを保存します。プラグインだけでは設定は統合されません。
+
+`readinessCommand` は返されたオブジェクトで、コマンド文字列ではありません。`$readinessCommand` に承認済み設定結果のそのオブジェクトをそのまま設定し、以下の PowerShell 例を実行します。`.command` は実行ファイルのパスを、`.args` は空白や引用符を含むパスも含め全引数を順番どおり保持します。配列を一つの引数に結合せず、パスを推測しないでください。この確認では未起動のゲートウェイは起動しません。
+
+承認済み設定結果の `readinessCommand` JSON オブジェクトだけを（出力全体ではなく）、非公開の現在のフォルダーに UTF-8 の `readiness-command.json` として保存します。既知の承認済み `.command` と全 `.args` をそのまま保持し、結合やパスの推測はしません。この設定 JSON のみを解析し、任意の Web・サービスデータは使わないでください。JSON 解析はコード評価ではありません。引数の内容は設定によるためファイルは非公開にしてください。
+
+```powershell
+$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
+$command = $readinessCommand.command
+$commandArgs = @($readinessCommand.args)
+& $command @commandArgs
+```
 
 探索とスキーマ取得に排他利用の予約は不要です。`requiresExclusiveAccess: true` なら `call_tool` の前に `claim_server` が必要です。
 
@@ -77,7 +88,7 @@ Claude Code、Codex、Gemini CLI、Kimi、Qwen CLI からこの公開文書を�
 
 1000 個のバックエンドツール → 初期ゲートウェイ定義 6 個：(1000 - 6) / 1000 × 100 = 99.4% は定義数の削減率であり、トークンの削減率ではありません。後で取得するスキーマにはコストがあり、既に遅延読み込みするクライアントでは効果が小さい場合があります。合成カタログのテストは 6 ツールと 2 クライアントの探索キャッシュ共有を検証しますが、RSS 性能は測りません。 [catalog-scale.test.js](../../test/catalog-scale.test.js)
 
-**軽量フィクスチャの実測：プロセスのワーキングセット合計が増加** Windows x64 / Node 24.13.1、3 回の中央値：共有のスキーマ取得＋echo は未初期化バックエンド 426.2 ms、2 番目のクライアント 21.1 ms、5 番目 19.0 ms。最初のクライアント全体は直接 503.5 ms、ゲートウェイ起動済みの共有 894.3 ms、完全なコールド共有起動 1886.7 ms。バックエンドプロセスは 5 → 1 ですが、全プロセスは 5 → 7、ワーキングセット合計は 357.0 MiB → 564.0 MiB と悪化しました。echo 1 ツールの試験は重い実サービスを代表しません。上の 1.5 GB は別の仮定で、実測値ではありません。 [BENCHMARK.md](../BENCHMARK.md)
+**軽量なテストシナリオの実測：プロセスのワーキングセット合計が増加** Windows x64 / Node 24.13.1、3 回の中央値：共有のスキーマ取得＋echo は未初期化バックエンド 426.2 ms、2 番目のクライアント 21.1 ms、5 番目 19.0 ms。最初のクライアント全体は直接 503.5 ms、ゲートウェイ起動済みの共有 894.3 ms、完全なコールド共有起動 1886.7 ms。バックエンドプロセスは 5 → 1 ですが、全プロセスは 5 → 7、ワーキングセット合計は 357.0 MiB → 564.0 MiB と悪化しました。echo 1 ツールの試験は重い実サービスを代表しません。上の 1.5 GB は別の仮定で、実測値ではありません。 [BENCHMARK.md](../BENCHMARK.md)
 
 測定値は各プロセスのワーキングセットの合計です。重複を除いた物理メモリとプライベートバイト（private bytes）は未測定です。
 
@@ -116,16 +127,16 @@ SDK/stdio 試験では同じコネクターと MCP 接続でゲートウェイ�
 - 移行はプレビューとバックアップを先に行い、未対応のネイティブ設定を拒否します。
 - すべてのネイティブクライアントでエンドツーエンドテスト済みという意味ではありません。[移行ガイド（英語）](../CLIENTS.md#cross-client-migration)を参照してください。
 
-| クライアント | インストール | アップグレード  必要な初期導入 | 検証範囲 |
-|---|---|------|---|
-| GitHub Copilot CLI | [手順](../CLIENTS.md#copilot-cli-install) | [手順](../CLIENTS.md#copilot-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [マーケットプレース・導入経路；隔離設定解析](../CLIENTS.md#compatibility-summary) |
-| VS Code（エディター） | [手順](../CLIENTS.md#vs-code-install) | [手順](../CLIENTS.md#vs-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [登録・形式アダプター検証済み；ネイティブ一連のセッション未検証](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [手順](../CLIENTS.md#claude-code-install) | [手順](../CLIENTS.md#claude-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [隔離設定の解析済み；モデル・バックエンド未起動](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [手順](../CLIENTS.md#codex-install) | [手順](../CLIENTS.md#codex-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [ネイティブ検証は管理ポリシーで阻止](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [手順](../CLIENTS.md#opencode-install) | [手順](../CLIENTS.md#opencode-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [登録・形式アダプター検証済み；ネイティブ一連のセッション未検証](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [手順](../CLIENTS.md#qwen-code-install) | [手順](../CLIENTS.md#qwen-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [登録・形式アダプター検証済み；ネイティブ一連のセッション未検証](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [手順](../CLIENTS.md#kimi-cli-install) | [手順](../CLIENTS.md#kimi-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [登録・形式アダプター検証済み；ネイティブ一連のセッション未検証](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [手順](../CLIENTS.md#antigravity-cli-install) | [手順](../CLIENTS.md#antigravity-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [登録・形式アダプター検証済み；ネイティブ一連のセッション未検証](../CLIENTS.md#compatibility-summary) |
+| クライアント | インストール | アップグレード | 必要な初期導入 | 検証範囲 |
+|---|---|---|---|---|
+| GitHub Copilot CLI | [手順](../CLIENTS.md#copilot-cli-install) | [手順](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [マーケットプレース・導入経路；隔離設定解析](../CLIENTS.md#compatibility-summary) |
+| VS Code（エディター） | [手順](../CLIENTS.md#vs-code-install) | [手順](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [登録・形式アダプター検証済み；ネイティブ一連のセッション未検証](../CLIENTS.md#compatibility-summary) |
+| Claude Code | [手順](../CLIENTS.md#claude-code-install) | [手順](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [隔離設定の解析済み；モデル・バックエンド未起動](../CLIENTS.md#compatibility-summary) |
+| Codex CLI | [手順](../CLIENTS.md#codex-install) | [手順](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [ネイティブ検証は管理ポリシーで阻止](../CLIENTS.md#compatibility-summary) |
+| OpenCode | [手順](../CLIENTS.md#opencode-install) | [手順](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [登録・形式アダプター検証済み；ネイティブ一連のセッション未検証](../CLIENTS.md#compatibility-summary) |
+| Qwen Code | [手順](../CLIENTS.md#qwen-code-install) | [手順](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [登録・形式アダプター検証済み；ネイティブ一連のセッション未検証](../CLIENTS.md#compatibility-summary) |
+| Kimi CLI | [手順](../CLIENTS.md#kimi-cli-install) | [手順](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [登録・形式アダプター検証済み；ネイティブ一連のセッション未検証](../CLIENTS.md#compatibility-summary) |
+| Antigravity CLI | [手順](../CLIENTS.md#antigravity-cli-install) | [手順](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [登録・形式アダプター検証済み；ネイティブ一連のセッション未検証](../CLIENTS.md#compatibility-summary) |
 
 </details>
 

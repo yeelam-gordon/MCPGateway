@@ -8,7 +8,7 @@
 
 </details>
 
-Yerel MCP arka uçlarını oturumlar arasında paylaşın: yinelenen RAM kullanımını önleyin, başlatma işini yeniden kullanın ve yalnız yapılandırma eklerken ajanın mevcut MCP bağlantısını yeniden başlatmadan koruyun (SDK/stdio yolu; net fayda ek yüke bağlı).
+Yerel MCP arka uçlarını paylaşın: yinelenen RAM kullanımını önleyin, çalışan arka uçları yeniden kullanın ve yapılandırmaya arka uç eklerken mevcut ajan MCP bağlantısını yeniden başlatmadan koruyun (SDK/stdio yolu; net fayda ek yüke bağlı).
 
 [Copilot CLI ile başlayın](#first-use) · [İstemci doğrulaması](../CLIENTS.md#compatibility-summary) · [Kanıt](#resource-examples)
 
@@ -18,7 +18,7 @@ Yerel MCP arka uçlarını oturumlar arasında paylaşın: yinelenen RAM kullan�
 
 - **Yinelenen arka uç belleğini önleyin:** Varsayımsal örnek: 5 × 1.5 GB → bir küme; ağ geçidi/bağlayıcı ek yükünden **önce** 6 GB tekrar önlenir, ölçülmüş tasarruf değildir.
 - **Tekrarlanan başlatma işini yeniden kullanın:** 5 oturumun tümü 12 stdio hizmetini kullanırsa: 60 → 12 arka uç başlatması, %80 daha hızlı başlangıç değil.
-- **Yalnız yapılandırma ekleyin; ajan bağlantısını koruyun:** SDK/stdio: 1 ilklendirme, iş tamamlandıktan sonra sahip olunan ağ geçidinin yeniden başlatılmasında korunur; bağlayıcı çalışmaya devam eder. Hot reload veya yerel konuşma arayüzü doğrulaması değildir. İlk kayıt/runtime yükseltmesi istemci yeniden başlatması gerektirebilir. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
+- **Yalnız yapılandırma ekleyin; ajan bağlantısını koruyun:** SDK/stdio testinde bağlantı bir kez (1) ilklendirildi; etkin iş tamamlandıktan sonra yalnızca yönetilen ağ geçidi yeniden başlatıldığında mevcut MCP bağlantısı korundu ve bağlayıcı çalışmaya devam etti. Bu, hot reload değildir; istemcilerin kendi sohbet arayüzleriyle yapılan uçtan uca bir test de değildir. İlk kayıt/runtime yükseltmesi istemci yeniden başlatması gerektirebilir. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
 Aynı arka uç ve kataloğu kullanan birden fazla oturum için uygun; tek oturum veya hafif arka uçlar ek yükü karşılamayabilir.
 
@@ -29,7 +29,7 @@ Aynı arka uç ve kataloğu kullanan birden fazla oturum için uygun; tek oturum
 
 Yapılandırma ve yedekler kimlik bilgileri içerebilir: gizli tutun ve yalnız amaçlanan değişiklikleri onaylayın.
 
-[Çıkış ve kalıcı runtime](../REFERENCE.md#planned-exit) · [rollback ≠ daemon shutdown](../REFERENCE.md#setup-recovery)
+[Çıkış ve kalıcı runtime](../REFERENCE.md#planned-exit) · [Yapılandırmayı geri yüklemek sürekli çalışan ağ geçidini durdurmaz (rollback ≠ daemon shutdown)](../REFERENCE.md#setup-recovery)
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
@@ -37,6 +37,17 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
 1. Kurulumdan sonra Copilot CLI’yi açıp `/mcp-gateway-setup` çağırın. Önizlemeyi inceleyin ve yalnızca istediğiniz değişiklikleri onaylayın. Copilot’u kapatıp yeniden açın, döndürülen tam `readinessCommand` komutunu çalıştırın. Özel yedekleri ve geri alma komutlarını saklayın.
+
+`readinessCommand` dönen nesnedir, kabuk komut metni değildir. `$readinessCommand` değişkenine onaylı kurulum sonucundaki nesneyi aynen atayın ve PowerShell örneğini çalıştırın. `.command` dosya yolunu, `.args` boşluk veya tırnak içeren yollar dahil tüm bağımsız değişkenleri sırayla korur. Diziyi birleştirmeyin veya yol uydurmayın. Kontrol, çalışmayan ağ geçidini başlatmaz.
+
+Onaylı kurulum sonucunun yalnız `readinessCommand` JSON nesnesini, tüm çıktıyı değil, özel geçerli klasörde UTF-8 `readiness-command.json` olarak kaydedin. Bilinen onaylı `.command` ve tüm `.args` değerlerini aynen koruyun; birleştirmeyin veya yol uydurmayın. Yalnız bu kurulum JSON verisini ayrıştırın, rastgele web/hizmet verilerini değil; JSON ayrıştırma kod değerlendirme değildir. Bağımsız değişkenler kuruluma bağlı olduğundan dosyayı özel tutun.
+
+```powershell
+$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
+$command = $readinessCommand.command
+$commandArgs = @($readinessCommand.args)
+& $command @commandArgs
+```
 
 Keşif ve şema sahiplik gerektirmez; `requiresExclusiveAccess: true` ise `call_tool` öncesinde `claim_server` gerekir.
 
@@ -113,16 +124,16 @@ Birden fazla ajan aynı bağlayıcı üzerinden MCPGateway’e erişir; yapılan
 - Taşıma önce önizleme gösterir, yedek oluşturur ve desteklenmeyen istemciye özgü ayarları reddeder.
 - Bu, her istemcinin kendi ortamında uçtan uca test edildiği anlamına gelmez. [Taşıma kılavuzu (İngilizce)](../CLIENTS.md#cross-client-migration).
 
-| İstemci | Kurulum | Yükseltme  Gerekli ilk kurulum | Doğrulama düzeyi |
-|---|---|------|---|
-| GitHub Copilot CLI | [Kur](../CLIENTS.md#copilot-cli-install) | [Yükselt](../CLIENTS.md#copilot-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Marketplace/kurulum yolu; yalıtılmış ayrıştırma](../CLIENTS.md#compatibility-summary) |
-| VS Code (düzenleyici) | [Kur](../CLIENTS.md#vs-code-install) | [Yükselt](../CLIENTS.md#vs-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [Kur](../CLIENTS.md#claude-code-install) | [Yükselt](../CLIENTS.md#claude-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Yalıtılmış yapılandırma ayrıştırıldı; model/arka uç çalışmadı](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [Kur](../CLIENTS.md#codex-install) | [Yükselt](../CLIENTS.md#codex-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [İstemcinin kendi doğrulaması politika nedeniyle engellendi](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [Kur](../CLIENTS.md#opencode-install) | [Yükselt](../CLIENTS.md#opencode-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [Kur](../CLIENTS.md#qwen-code-install) | [Yükselt](../CLIENTS.md#qwen-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [Kur](../CLIENTS.md#kimi-cli-install) | [Yükselt](../CLIENTS.md#kimi-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [Kur](../CLIENTS.md#antigravity-cli-install) | [Yükselt](../CLIENTS.md#antigravity-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
+| İstemci | Kurulum | Yükseltme | Gerekli ilk kurulum | Doğrulama düzeyi |
+|---|---|---|---|---|
+| GitHub Copilot CLI | [Kur](../CLIENTS.md#copilot-cli-install) | [Yükselt](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Marketplace/kurulum yolu; yalıtılmış ayrıştırma](../CLIENTS.md#compatibility-summary) |
+| VS Code (düzenleyici) | [Kur](../CLIENTS.md#vs-code-install) | [Yükselt](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
+| Claude Code | [Kur](../CLIENTS.md#claude-code-install) | [Yükselt](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Yalıtılmış yapılandırma ayrıştırıldı; model/arka uç çalışmadı](../CLIENTS.md#compatibility-summary) |
+| Codex CLI | [Kur](../CLIENTS.md#codex-install) | [Yükselt](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [İstemcinin kendi doğrulaması politika nedeniyle engellendi](../CLIENTS.md#compatibility-summary) |
+| OpenCode | [Kur](../CLIENTS.md#opencode-install) | [Yükselt](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
+| Qwen Code | [Kur](../CLIENTS.md#qwen-code-install) | [Yükselt](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
+| Kimi CLI | [Kur](../CLIENTS.md#kimi-cli-install) | [Yükselt](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
+| Antigravity CLI | [Kur](../CLIENTS.md#antigravity-cli-install) | [Yükselt](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
 
 </details>
 

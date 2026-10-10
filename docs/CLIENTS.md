@@ -77,7 +77,7 @@ copilot plugin marketplace add yeelam-gordon/MCPGateway
 copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
-Then start Copilot CLI and invoke `/mcp-gateway-setup`. Review its preview before approving changes. The setup skill installs the runtime outside the plugin cache, backs up the selected Copilot MCP configuration, and writes the `shared-mcp-gateway` connector used as the source for other clients. Close and reopen Copilot so the generated connector starts or reuses the gateway, then run the exact `readinessCommand` returned by setup. A check-only command does not start an absent gateway. Preserve the printed backup and rollback commands. See [setup recovery](REFERENCE.md#setup-recovery) if readiness or restart fails.
+Then start Copilot CLI and invoke `/mcp-gateway-setup`. Review its preview before approving changes. The setup skill installs the runtime outside the plugin cache, backs up the selected Copilot MCP configuration, and writes the `shared-mcp-gateway` connector used as the source for other clients. Close and reopen Copilot so the generated connector starts or reuses the gateway, then run the exact `readinessCommand` returned by setup. A check-only command does not start an absent gateway. The returned value has executable `command` and ordered `args` fields, not a shell string; use the [PowerShell object invocation](REFERENCE.md#readiness-command-object). Preserve the printed backup and rollback commands. See [setup recovery](REFERENCE.md#setup-recovery) if readiness or restart fails.
 
 Installing the plugin alone does not migrate configuration. The gateway does not install backend MCP servers or provide their credentials.
 

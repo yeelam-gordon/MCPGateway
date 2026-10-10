@@ -8,7 +8,7 @@
 
 </details>
 
-跨程式設計工作階段共用本機 MCP 後端：避免重複占用記憶體，重用重複啟動工作，僅新增設定時保留智慧代理端現有 MCP 連線，不必重啟該連線（SDK/stdio 路徑；淨效益取決於額外用量）。
+跨程式設計工作階段共用本機 MCP 後端：避免記憶體重複占用，重用已啟動的後端，新增後端設定時保留智慧代理端現有 MCP 連線，不必重啟該連線（SDK/stdio 路徑；淨效益取決於額外負擔）。
 
 [透過 Copilot CLI 開始](#first-use) · [用戶端驗證](../CLIENTS.md#compatibility-summary) · [證據](#resource-examples)
 
@@ -16,11 +16,11 @@
 
 英文標示的概念圖：多個工作階段共用後端，並非執行畫面或效能測試。
 
-- **避免重複後端記憶體:** 假設 5 × 1.5 GB 後端共用一套，計入閘道與連接器額外用量**之前**避免 6 GB 重複占用，不是實測節省。
-- **重用重複啟動工作:** 假設 5 個工作階段都使用 12 個 stdio 服務：60 → 12 次後端啟動，不代表啟動耗時縮短 80%。
+- **避免重複後端記憶體:** 假設 5 × 1.5 GB 後端共用一套，計入閘道與連接器額外負擔**之前**避免 6 GB 重複占用，不是實測節省。
+- **避免重複啟動後端:** 假設 5 個工作階段都使用 12 個 stdio 服務：60 → 12 次後端啟動，不代表啟動耗時縮短 80%。
 - **僅新增後端設定，保留智慧代理連線:** SDK/stdio 的 1 次初始化跨越工作結束後的自有閘道重啟；連接器持續執行，並非熱載入，也未驗證各品牌對話介面。首次註冊或執行階段升級仍可能須重啟用戶端。 [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
-適合多個工作階段共用同一後端與目錄；單一工作階段或輕量後端可能不划算，閘道也有額外用量。
+適合多個工作階段共用同一後端與目錄；單一工作階段或輕量後端可能不划算，閘道也有額外負擔。
 
 <a id="first-use"></a>
 ## 首次設定與呼叫
@@ -29,7 +29,7 @@
 
 設定與備份可能含認證資訊；請保持私密，只核准預期變更。
 
-[退出與持續執行環境](../REFERENCE.md#planned-exit) · [rollback ≠ daemon shutdown](../REFERENCE.md#setup-recovery)
+[退出與持續執行環境](../REFERENCE.md#planned-exit) · [還原用戶端設定不會停止常駐閘道程序（rollback ≠ daemon shutdown）](../REFERENCE.md#setup-recovery)
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
@@ -37,6 +37,17 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
 1. 安裝後開啟 Copilot CLI，執行 `/mcp-gateway-setup`，先檢閱預覽再核准預期變更。關閉並重新開啟 Copilot，執行傳回的精確 `readinessCommand`；保留私人備份與回復命令。
+
+`readinessCommand` 是傳回的物件，不是命令字串。將 `$readinessCommand` 設為已核准設定結果中原樣傳回的物件，再執行下方 PowerShell 範例。`.command` 保留完整執行檔路徑，`.args` 依序保留所有引數，包括含空格或引號的路徑。不要將陣列串成一個引數，也不要猜測路徑；檢查不會啟動不存在的閘道。
+
+只將已核准設定結果中的 `readinessCommand` JSON 物件（不是全部輸出）以 UTF-8 存為私人目前資料夾中的 `readiness-command.json`。保留已知且已核准的 `.command` 與所有 `.args` 原值，不串接引數或猜測路徑。只解析這份設定 JSON，不使用任意網頁或服務資料；解析不是執行程式碼。引數內容依設定而異，請保持檔案私密。
+
+```powershell
+$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
+$command = $readinessCommand.command
+$commandArgs = @($readinessCommand.args)
+& $command @commandArgs
+```
 
 探索與取得結構描述不要求認領；若 `requiresExclusiveAccess: true`，須在 `call_tool` 前先 `claim_server`。
 
@@ -52,7 +63,7 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 
 ## 限制、隱私與復原
 
-從 Claude Code、Codex、Gemini CLI、Kimi 或 Qwen CLI 找到本儲存庫，不代表保證原生整合。此處沒有 Gemini CLI 安裝流程，Antigravity 是另一個用戶端；Kimi 僅經過配接器測試。設定與備份可能含有認證資訊，請勿公開或提交到版本控制。後端仍可能連線至遠端服務；共用不等於離線，也不保證固定的記憶體或 token 節省。
+從 Claude Code、Codex、Gemini CLI、Kimi 或 Qwen CLI 找到本儲存庫，不代表保證原生整合。此處沒有 Gemini CLI 安裝流程，Antigravity 是另一個用戶端；Kimi 僅經過轉接器測試。設定與備份可能含有認證資訊，請勿公開或提交到版本控制。後端仍可能連線至遠端服務；共用不等於離線，也不保證固定的記憶體或 token 節省。
 
 清單為空時，檢查所選設定與移轉預覽；搜尋無結果時，改用後端工具說明中的詞彙。驗證或就緒檢查失敗時，依操作參考處理，不要另開程序繞過閘道。停止使用時，還原用戶端設定不等於關閉常駐執行階段；請參閱擁有者交接與完成檢查。
 
@@ -67,9 +78,9 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 | 部署方式 | 後端記憶體 |
 |---|---|
 | 各自執行副本 | 5 × 1.5 GB = 7.5 GB |
-| 共用一套後端 | 1.5 GB + 閘道與連接器的額外用量 |
+| 共用一套後端 | 1.5 GB + 閘道與連接器的額外負擔 |
 
-計入額外用量前省下的重複後端記憶體：7.5 GB - 1.5 GB = 6 GB。總節省量須實測才能確定。1.5 GB 並非所有工作負載或用戶端的固定值；這不是省下五個模型的記憶體。
+計入額外負擔前省下的重複後端記憶體：7.5 GB - 1.5 GB = 6 GB。總節省量須實測才能確定。1.5 GB 並非所有工作負載或用戶端的固定值；這不是省下五個模型的記憶體。
 
 **啟動工作也能共用。** 假設 12 個 stdio 後端都由 5 個工作階段各自使用：獨立執行最多啟動 `5 × 12 = 60` 次，共用只需 `12` 次；避免 `60 - 12 = 48` 次重複啟動，即 `48 / 60 × 100 = 80%` 的啟動次數。延遲連線只連接實際使用的 `k` 個後端，不會啟動未使用的後端。這是工作次數，不代表啟動耗時縮短 80%；此處未測延遲，並行啟動、服務驗證和平台都會影響耗時。
 
@@ -89,7 +100,7 @@ SDK/stdio 測試驗證同一連接器與 MCP 連線在閘道重啟後探索新�
 
 它不是企業 API 治理平台。
 
-閘道固定向代理程式提供 6 個工具：4 個用於探索與呼叫功能，2 個用於需要獨佔工作流程的整合。新增連線不會擴大這個初始介面；只有選定工具才會載入完整結構描述。閘道重用你已設定並完成驗證的連線，不會替你安裝服務或提供認證資訊。
+閘道固定向智慧代理提供 6 個工具：4 個用於探索與呼叫功能，2 個用於需要獨佔工作流程的整合。新增連線不會擴大這個初始介面；只有選定工具才會載入完整結構描述。閘道重用你已設定並完成驗證的連線，不會替你安裝服務或提供認證資訊。
 
 ```text
 智慧代理 A ─┐                       ┌─ 整合服務 A: 多個工具
@@ -113,16 +124,16 @@ SDK/stdio 測試驗證同一連接器與 MCP 連線在閘道重啟後探索新�
 - 移轉先顯示預覽並建立備份，拒絕不支援的原生設定。
 - 這不表示所有原生用戶端都已完成端對端測試。請參閱[移轉指南（英文）](../CLIENTS.md#cross-client-migration)。
 
-| 用戶端 | 安裝 | 升級  須先完成引導安裝 | 驗證程度 |
-|---|---|------|---|
-| GitHub Copilot CLI | [安裝](../CLIENTS.md#copilot-cli-install) | [升級](../CLIENTS.md#copilot-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [市集/安裝流程；隔離設定解析](../CLIENTS.md#compatibility-summary) |
-| VS Code（編輯器） | [安裝](../CLIENTS.md#vs-code-install) | [升級](../CLIENTS.md#vs-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [註冊/格式轉接器已測；未完成原生端到端工作階段](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [安裝](../CLIENTS.md#claude-code-install) | [升級](../CLIENTS.md#claude-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [隔離設定解析通過；未啟動模型或後端](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [安裝](../CLIENTS.md#codex-install) | [升級](../CLIENTS.md#codex-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [原生驗證受管理原則阻擋](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [安裝](../CLIENTS.md#opencode-install) | [升級](../CLIENTS.md#opencode-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [註冊/格式轉接器已測；未完成原生端到端工作階段](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [安裝](../CLIENTS.md#qwen-code-install) | [升級](../CLIENTS.md#qwen-code-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [註冊/格式轉接器已測；未完成原生端到端工作階段](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [安裝](../CLIENTS.md#kimi-cli-install) | [升級](../CLIENTS.md#kimi-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [註冊/格式轉接器已測；未完成原生端到端工作階段](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [安裝](../CLIENTS.md#antigravity-cli-install) | [升級](../CLIENTS.md#antigravity-cli-upgrade)  [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [註冊/格式轉接器已測；未完成原生端到端工作階段](../CLIENTS.md#compatibility-summary) |
+| 用戶端 | 安裝 | 升級 | 須先完成引導安裝 | 驗證程度 |
+|---|---|---|---|---|
+| GitHub Copilot CLI | [安裝](../CLIENTS.md#copilot-cli-install) | [升級](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [市集/安裝流程；隔離設定解析](../CLIENTS.md#compatibility-summary) |
+| VS Code（編輯器） | [安裝](../CLIENTS.md#vs-code-install) | [升級](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [註冊/格式轉接器已測；未完成原生端到端工作階段](../CLIENTS.md#compatibility-summary) |
+| Claude Code | [安裝](../CLIENTS.md#claude-code-install) | [升級](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [隔離設定解析通過；未啟動模型或後端](../CLIENTS.md#compatibility-summary) |
+| Codex CLI | [安裝](../CLIENTS.md#codex-install) | [升級](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [原生驗證受管理原則阻擋](../CLIENTS.md#compatibility-summary) |
+| OpenCode | [安裝](../CLIENTS.md#opencode-install) | [升級](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [註冊/格式轉接器已測；未完成原生端到端工作階段](../CLIENTS.md#compatibility-summary) |
+| Qwen Code | [安裝](../CLIENTS.md#qwen-code-install) | [升級](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [註冊/格式轉接器已測；未完成原生端到端工作階段](../CLIENTS.md#compatibility-summary) |
+| Kimi CLI | [安裝](../CLIENTS.md#kimi-cli-install) | [升級](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [註冊/格式轉接器已測；未完成原生端到端工作階段](../CLIENTS.md#compatibility-summary) |
+| Antigravity CLI | [安裝](../CLIENTS.md#antigravity-cli-install) | [升級](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [註冊/格式轉接器已測；未完成原生端到端工作階段](../CLIENTS.md#compatibility-summary) |
 
 </details>
 

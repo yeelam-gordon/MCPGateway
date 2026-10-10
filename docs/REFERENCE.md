@@ -286,6 +286,20 @@ If setup fails after creating a backup, it prints recovery information. If it fa
 
 After a successful setup, reopen Copilot to load the generated connector, then execute the returned `readinessCommand` exactly. During adoption, finish active work, stop only the verified old gateway, and start the new connector using the generated entry before checking readiness and reconnecting other clients. A check-only command does not start an absent gateway. If setup reports `already-configured`, use the reported connector and state directory for the health check rather than inventing paths.
 
+<a id="readiness-command-object"></a>
+
+`readinessCommand` is the returned object, not a shell string. Set `$readinessCommand` to that exact object from the approved setup result; then run the PowerShell example below. `.command` keeps the executable path intact and `.args` keeps every returned argument in order, including paths with spaces or quotes. Do not join the array into one argument or invent paths. This check does not start an absent gateway.
+
+Save only the `readinessCommand` JSON object from your approved setup result—not the whole output—as UTF-8 `readiness-command.json` in your private current folder. Keep the known approved executable `.command` and every `.args` value exact; do not join arguments or guess paths. Parse only this setup JSON, not arbitrary web/service data; JSON parsing is not evaluation. Treat the file as private because argument contents depend on your setup.
+
+```powershell
+$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
+$command = $readinessCommand.command
+$commandArgs = @($readinessCommand.args)
+& $command @commandArgs
+```
+
+
 <a id="cross-client-migration-recovery"></a>
 ## Cross-client migration recovery
 
