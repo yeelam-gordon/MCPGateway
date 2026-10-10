@@ -84,6 +84,14 @@ test('README explains local sharing and a qualified first workflow without losin
   assert.match(workflow, /Discovery is not permission to execute a tool/);
   assert.match(workflow, /local sharing does not make them offline/);
   assert.match(readme, /private backups/);
+  assert.match(readme, /Stop using the gateway/);
+  assert.match(readme, /finish active workflows and let outstanding calls settle/);
+  assert.match(readme, /not runtime shutdown/);
+  assert.match(readme, /Plugin removal does not remove the stable runtime/);
+  assert.match(readme, /Full runtime shutdown\/decommission has no documented general-purpose command here/);
+  assert.match(readme, /Do not delete credentials, private state, conversation history or unrelated backends/);
+  assert.match(readme, /or stop unrelated processes/);
+  assert.ok(readme.includes('](docs/REFERENCE.md#cross-client-migration-recovery)'));
   assert.match(readme, /Keep configuration and backups private.*they may contain credentials/);
   assert.match(readme, /Do not publish them, paste them into public issues, or commit them to version control/);
   assert.match(readme, /237 local checks passed for v0\.6\.0/);
