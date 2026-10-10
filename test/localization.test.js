@@ -41,13 +41,14 @@ test('localized quickstarts retain truthful benefits, first workflows and canoni
       ["it", ["server MCP locali", "Windows è la piattaforma principale di test", "installazione passa attualmente da Copilot CLI", "lettura approvata", "risultato vuoto", "backup possono contenere credenziali", "non significa lavorare offline", "verifica variano tra i client", "esito sconosciuto"]],
       ["ru", ["локальные MCP-серверы", "Windows — основная тестируемая платформа", "установка сейчас выполняется через Copilot CLI", "разрешённое чтение", "пустой результат", "копии могут содержать учётные данные", "не означает автономную работу", "глубина проверки зависят от клиента", "Не повторяйте вызов"]],
       ["tr", ["yerel MCP sunucularını", "ana test platformu Windows", "kurulum şu anda Copilot CLI", "salt okunur", "boş sonuç", "yedekler kimlik bilgileri içerebilir", "çevrimdışı", "doğrulama düzeyi istemciye göre değişir", "yeniden denemeyin"]],
-      ["vi", ["máy chủ MCP cục bộ", "Windows là nền tảng được kiểm thử chính", "đầu hiện phải qua Copilot CLI", "đọc dữ liệu đã được phê duyệt", "kết quả rỗng", "bản sao lưu có thể chứa thông tin xác thực", "không có nghĩa hoạt động offline", "mức kiểm chứng khác nhau", "không thử lại"]],
+      ["vi", ["máy chủ MCP cục bộ", "Windows là nền tảng được kiểm thử chính", "đầu hiện phải qua Copilot CLI", "tác vụ chỉ đọc, vô hại và đã được cho phép", "kết quả rỗng", "bản sao lưu có thể chứa thông tin xác thực", "không có nghĩa hoạt động offline", "mức kiểm chứng khác nhau", "không thử lại"]],
       ["id", ["server MCP lokal", "Windows adalah platform utama yang diuji", "Instalasi awal saat ini melalui Copilot CLI", "pembacaan yang disetujui", "hasil kosong", "cadangan dapat berisi kredensial", "bukan berarti offline", "verifikasi berbeda antarklien", "Jangan ulangi panggilan"]],
       ["hi", ["स्थानीय MCP सर्वर", "Windows मुख्य परीक्षण प्लेटफ़ॉर्म", "पहली स्थापना अभी Copilot CLI", "केवल डेटा पढ़ने वाला स्वीकृत काम", "खाली परिणाम", "बैकअप में क्रेडेंशियल हो सकते हैं", "ऑफलाइन", "सत्यापन का स्तर अलग है", "दोबारा कोशिश न करें"]],
       ["ar", ["خوادم MCP المحلية", "Windows منصة الاختبار الرئيسية", "التثبيت الأول حاليًا عبر Copilot CLI", "قراءة معتمدة", "نتيجة فارغة", "النسخ الاحتياطية على بيانات اعتماد", "لا تعني العمل دون اتصال", "مستويات التوافق والتحقق", "لا تعاود المحاولة"]]
     ]);
     assert.ok(selected.has(language.code), `${language.code}: localized workflow contract required`);
     if (language.code === 'hi') assert.ok(text.includes('केवल अधिकृत, गैर-संवेदनशील परीक्षण मानों का उपयोग करें'), 'hi: authorized non-sensitive test arguments');
+    if (language.code === 'vi') assert.ok(text.includes('các giá trị thử nghiệm được phép và không chứa thông tin nhạy cảm'), 'vi: authorized non-sensitive test arguments');
     if (language.code === 'id') {
       assert.ok(text.includes('antarsesi agen pemrograman'));
       assert.ok(text.includes('berbeda antarklien'));
