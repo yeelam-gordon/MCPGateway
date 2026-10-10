@@ -56,8 +56,8 @@ test('localized quickstarts retain truthful benefits, first workflows and canoni
     const ownershipGuards = new Map([
       ["zh-CN", "结果不明时，独占后端会保持阻塞，直到网关重启；释放认领或断开客户端连接不能安全解除阻塞，断开连接也不等于取消操作。"],
       ["zh-TW", "結果不明時，獨佔後端會維持封鎖，直到閘道重新啟動；釋放認領或中斷用戶端連線都不能安全解除封鎖，中斷連線也不等於取消作業。"],
-      ["ja", "結果が不明な場合、排他バックエンドはゲートウェイを再起動するまでブロックされたままです。所有権の解放やクライアントの切断では安全に解除できず、切断は操作のキャンセルを意味しません。"],
-      ["ko", "결과가 불명확하면 배타적 접근이 필요한 백엔드는 게이트웨이를 재시작할 때까지 차단된 상태로 유지됩니다. 소유권 해제나 클라이언트 연결 종료로 안전하게 차단을 해제할 수 없으며, 연결 종료는 작업 취소가 아닙니다."],
+      ["ja", "結果が不明な場合、排他バックエンドはゲートウェイを再起動するまでブロックされたままです。予約の解除やクライアントの切断では安全に解除できず、切断は操作のキャンセルを意味しません。"],
+      ["ko", "결과가 불명확하면 배타적 접근이 필요한 백엔드는 게이트웨이를 재시작할 때까지 차단된 상태로 유지됩니다. 예약 해제나 클라이언트 연결 종료로 안전하게 차단을 해제할 수 없으며, 연결 종료는 작업 취소가 아닙니다."],
       ["es", "Si el resultado es desconocido, el backend exclusivo permanece bloqueado hasta reiniciar el gateway; liberar la reserva o desconectar el cliente no lo desbloquea de forma segura, y desconectar no cancela la operación."],
       ["pt-BR", "Se o resultado for desconhecido, o backend exclusivo permanece bloqueado até o gateway ser reiniciado; liberar a reserva ou desconectar o cliente não desbloqueia o backend com segurança, e desconectar não cancela a operação."],
       ["fr", "Si le résultat est inconnu, le backend exclusif reste bloqué jusqu’au redémarrage de la passerelle ; libérer la réservation ou déconnecter le client ne permet pas de le débloquer en toute sécurité, et une déconnexion n’annule pas l’opération."],
@@ -72,6 +72,12 @@ test('localized quickstarts retain truthful benefits, first workflows and canoni
     ]);
     assert.ok(text.includes(ownershipGuards.get(language.code)), `${language.code}: unknown-outcome blocked/release/disconnect/cancellation guard`);
     assert.ok(text.includes('../REFERENCE.md#planned-exit'), `${language.code}: planned exit route`);
+    const measuredMetricLabels = new Map([["ar", ["قياس تجهيز خفيف: زاد مجموع working set للعمليات", "المقاس هو مجموع working set للعمليات؛ لم تُقَس الذاكرة الفعلية دون العد المكرر ولا البايتات الخاصة (private bytes)."]], ["de", ["Leichte Fixture gemessen: summiertes Prozess-Working-Set erhöht", "Gemessen wurde das summierte Prozess-Working-Set; physischer Speicher ohne Mehrfachzählung und private Bytes wurden nicht gemessen."]], ["es", ["Fixture ligero medido: aumentó el working set sumado de procesos", "Se midió el working set sumado de procesos; no se midieron la memoria física sin duplicación ni los bytes privados (private bytes)."]], ["fr", ["Fixture léger mesuré : hausse du working set cumulé des processus", "La mesure porte sur le working set cumulé des processus ; ni la mémoire physique sans double comptage ni les octets privés (private bytes) n’ont été mesurés."]], ["hi", ["हल्के फ़िक्चर का मापा परिणाम: प्रक्रियाओं के working set का योग बढ़ा", "प्रक्रियाओं के working set का योग मापा गया; दोहराव हटाकर भौतिक मेमोरी और निजी बाइट्स (private bytes) नहीं मापे गए।"]], ["id", ["Fixture ringan terukur: jumlah working set proses meningkat", "Yang diukur adalah jumlah working set proses; memori fisik tanpa penghitungan ganda dan private bytes (memori privat proses) tidak diukur."]], ["it", ["Fixture leggero misurato: aumento del working set sommato dei processi", "Si è misurato il working set sommato dei processi; memoria fisica senza duplicazioni e byte privati (private bytes) non sono stati misurati."]], ["ja", ["軽量フィクスチャの実測：プロセスのワーキングセット合計が増加", "測定値は各プロセスのワーキングセットの合計です。重複を除いた物理メモリとプライベートバイト（private bytes）は未測定です。"]], ["ko", ["경량 테스트 실측: 프로세스 작업 집합 합계 증가", "측정값은 프로세스 작업 집합의 합계입니다. 중복을 제외한 물리 메모리와 전용 바이트(private bytes)는 측정하지 않았습니다."]], ["pt-BR", ["Fixture leve medido: aumentou o working set somado dos processos", "Mediu-se o working set somado dos processos; memória física sem duplicação e bytes privados (private bytes) não foram medidos."]], ["ru", ["Измерение лёгкой фикстуры: сумма рабочих наборов процессов выросла", "Измерена сумма рабочих наборов процессов; физическая память без повторного учёта и частные байты (private bytes) не измерялись."]], ["tr", ["Hafif düzenek ölçümü: süreçlerin toplam working set değeri arttı", "Ölçüm süreçlerin working set toplamıdır; tekrar sayımı çıkarılmış fiziksel bellek ve özel baytlar (private bytes) ölçülmedi."]], ["vi", ["Fixture nhẹ đã đo: tổng working set của các tiến trình tăng", "Đã đo tổng working set của các tiến trình; chưa đo bộ nhớ vật lý loại trừ phần tính trùng hay private bytes (bộ nhớ riêng của tiến trình)."]], ["zh-CN", ["轻量后端实测：进程工作集总和增加", "测量的是进程工作集总和；去重后的物理内存与私有字节（private bytes）均未测量。"]], ["zh-TW", ["輕量後端實測：程序工作集總和增加", "測量的是程序工作集總和；去除重複計算的實體記憶體與私有位元組（private bytes）均未測量。"]]]);
+    for (const metricLabel of measuredMetricLabels.get(language.code)) assert.ok(text.includes(metricLabel), `${language.code}: measured summed-working-set scope`);
+    assert.equal((text.match(/\[Copilot CLI\]\(\.\.\/CLIENTS\.md#shared-gateway-prerequisite\)/g) ?? []).length, 8, `${language.code}: bootstrap explicit for all client routes`);
+    const approvedRequest = text.match(/^> .+$/gm)?.filter(line => !line.includes('README'));
+    assert.ok(approvedRequest?.length, `${language.code}: native copyable approved-read request`);
+    assert.ok(text.includes('../REFERENCE.md#unknown-exclusive-result'), `${language.code}: no-retry operator handoff`);
     assert.ok(text.includes('../BENCHMARK.md#configuration-only-connection-continuity'), `${language.code}: verified configuration-only continuity scope`);
     assert.match(text, /^# MCPGateway /m, language.code);
     const topologyLabels = new Map([
@@ -102,6 +108,9 @@ test('localized quickstarts retain truthful benefits, first workflows and canoni
     }
     assert.ok(topologyLines[1].includes(`─ ${connectorLabel} ─ MCPGateway ─`), language.code);
     assert.ok(text.indexOf('](#first-use)') < text.indexOf('<img'), `${language.code}: action before artwork`);
+    const heroPreface = text.slice(0, text.indexOf('<img'));
+    assert.equal(heroPreface.replace(/<a id="languages"><\/a>\s*<details>[\s\S]*?<\/details>/, '').trim().split(/\r?\n\r?\n/).filter(Boolean).length, 3, `${language.code}: title, value, compact navigation only before image`);
+    assert.doesNotMatch(heroPreface, /^- |5 × 1\.5|Node\.js/m, `${language.code}: no long preface before image`);
     assert.ok(text.indexOf('](#first-use)') < text.indexOf('| 5 × 1.5 GB'), `${language.code}: action before full arithmetic`);
     assert.match(text, /<img src="\.\.\/\.\.\/assets\/mcp-gateway-benefits\.png"[^>]*width="780"/);
     await access(new URL('../../assets/mcp-gateway-benefits.png', url));
@@ -162,4 +171,74 @@ test('localized quickstarts retain truthful benefits, first workflows and canoni
       await access(new URL(match[1], url));
     }
   }
+});
+
+
+test('all sixteen openings separate memory, startup work and configuration-only connection continuity', async () => {
+  const { languages } = JSON.parse(await readFile(new URL('docs/i18n/languages.json', root), 'utf8'));
+  const meanings = new Map([
+    ['en', ['duplicate backend memory', 'repeated startup work', 'without restarting the current agent-side MCP connection']],
+    ['zh-CN', ['重复占用内存', '重复启动工作', '无需重启该连接']],
+    ['zh-TW', ['重複占用記憶體', '重複啟動工作', '不必重啟該連線']],
+    ['ja', ['メモリの重複', '起動処理を再利用', '既存 MCP 接続を再起動せず']],
+    ['ko', ['메모리 중복', '시작 작업을 재사용', 'MCP 연결을 재시작 없이']],
+    ['es', ['RAM duplicada', 'trabajo de arranque', 'sin reiniciar la conexión MCP actual']],
+    ['pt-BR', ['RAM duplicada', 'trabalho de inicialização', 'sem reiniciar a conexão MCP atual']],
+    ['fr', ['RAM dupliquée', 'travail de démarrage', 'sans redémarrer la connexion MCP actuelle']],
+    ['de', ['doppelten RAM', 'Startarbeit wiederverwenden', 'bestehende MCP-Verbindung des Agenten neu zu starten']],
+    ['it', ['RAM duplicata', 'lavoro di avvio', 'senza riavviare la connessione MCP attuale']],
+    ['ru', ['дублирования RAM', 'работу запуска', 'без перезапуска текущего MCP-соединения']],
+    ['tr', ['yinelenen RAM', 'başlatma işini', 'MCP bağlantısını yeniden başlatmadan']],
+    ['vi', ['RAM trùng lặp', 'công việc khởi động', 'không khởi động lại kết nối MCP hiện tại']],
+    ['id', ['RAM duplikat', 'pekerjaan memulai backend', 'tanpa memulai ulang koneksi MCP agen']],
+    ['hi', ['RAM का दोहराव', 'शुरू करने का काम', 'MCP कनेक्शन बिना रीस्टार्ट']],
+    ['ar', ['تكرار الذاكرة', 'عمل بدء التشغيل', 'دون إعادة تشغيل اتصال MCP الحالي']]
+  ]);
+  for (const language of languages) {
+    const text = await readFile(new URL(language.path, root), 'utf8');
+    const prehero = text.slice(0, text.indexOf('<img'));
+    let previous = -1;
+    for (const meaning of meanings.get(language.code)) {
+      const index = prehero.indexOf(meaning);
+      assert.ok(index > previous, `${language.code}: separate ordered opening payoff: ${meaning}`);
+      previous = index;
+    }
+    assert.ok(prehero.includes('SDK/stdio'), `${language.code}: bounded connection route before hero`);
+    const benefits = text.slice(text.indexOf('<img'), text.indexOf('<a id="first-use">'));
+    const bullets = benefits.match(/^- \*\*.+$/gm);
+    assert.equal(bullets?.length, 3, `${language.code}: exactly three primary proof bullets`);
+    for (const value of ['5 × 1.5 GB', '6 GB']) assert.ok(bullets[0].includes(value), `${language.code}: memory illustration ${value}`);
+    assert.ok(bullets[1].includes('60 → 12'), `${language.code}: starts, not elapsed-time gains`);
+    assert.ok(bullets[1].includes('stdio'), `${language.code}: startup count applies to stdio services`);
+    assert.ok(bullets[2].includes('SDK/stdio'), `${language.code}: bounded continuity evidence`);
+    assert.ok(bullets[2].includes('configuration-only-connection-continuity'), `${language.code}: continuity method link`);
+    assert.ok(text.indexOf('<a id="mechanism">') === -1 || text.indexOf('<a id="mechanism">') > text.indexOf('<a id="resource-examples">'), `${language.code}: mechanism remains secondary`);
+    const licenseLink = language.code === 'en' ? '[LICENSE](LICENSE)' : '[MIT](../../LICENSE)';
+    assert.ok(text.trim().split('\n').at(-1).includes(licenseLink), `${language.code}: license really last`);
+    const ids = [...text.matchAll(/<a id="([^"]+)"><\/a>/g)].map(match => match[1]);
+    assert.equal(new Set(ids).size, ids.length, `${language.code}: unique explicit navigation anchors`);
+    assert.equal((text.match(/<details>/g) ?? []).length, (text.match(/<\/details>/g) ?? []).length, `${language.code}: closed progressive disclosure`);
+  }
+});
+
+test('six repaired locales offer ordinary local recovery before the full English fallback', async () => {
+  const recovery = new Map([
+    ['zh-CN', ['目录为空时', '所选配置与迁移预览', '后端自身工具说明', '身份验证出错或就绪检查失败', '不要反复调用', '绕过网关']],
+    ['ja', ['一覧が空なら', '設定と移行プレビュー', 'バックエンド自身のツール説明', '認証エラーや準備確認の失敗', '呼び出しを繰り返したり', '迂回したりしない']],
+    ['es', ['catálogo está vacío', 'configuración seleccionada', 'propio backend', 'autenticación o disponibilidad', 'sin repetir llamadas', 'eludir el gateway']],
+    ['pt-BR', ['catálogo estiver vazio', 'configuração selecionada', 'próprio backend', 'autenticação ou prontidão', 'sem repetir chamadas', 'contornar o gateway']],
+    ['fr', ['catalogue est vide', 'configuration choisie', 'backend lui-même', 'authentification ou de disponibilité', 'sans répéter les appels', 'contourner la passerelle']],
+    ['de', ['leerem Katalog', 'gewählte Konfiguration und Migrationsvorschau', 'Backends selbst', 'Authentifizierungsfehlern', 'Aufrufe zu wiederholen', 'Umgehungsprozess']]
+  ]);
+  for (const [code, phrases] of recovery) {
+    const text = await readFile(new URL(`docs/i18n/README.${code}.md`, root), 'utf8');
+    const step4 = text.indexOf('4. ');
+    const fallback = text.indexOf('../../README.md#first-use', step4);
+    const localRecovery = text.slice(step4, fallback);
+    for (const phrase of phrases) assert.ok(localRecovery.includes(phrase), `${code}: ordinary recovery: ${phrase}`);
+    for (const anchor of ['native-http-oauth', 'setup-recovery']) assert.ok(localRecovery.includes(`../REFERENCE.md#${anchor}`), `${code}: bounded recovery route`);
+  }
+  const korean = await readFile(new URL('docs/i18n/README.ko.md', root), 'utf8');
+  assert.ok(korean.includes('재시작 후 배타적 이용을 다시 예약해야 합니다.'));
+  assert.ok(!korean.includes('예약어야'));
 });

@@ -220,6 +220,15 @@ After outstanding requests settle, retirement sends a bounded authenticated sess
 
 Clients upgrading from 0.3 must replace `claim_playwright` and `release_playwright` with `claim_server` and `release_server`, each with a `server` argument. A running older runtime retains its old tools until explicitly upgraded.
 
+<a id="unknown-exclusive-result"></a>
+### Unknown exclusive result: operator handoff
+
+Keep the backend blocked. Send a **private** request to the installation owner containing backend alias, tool name, call time or provided request ID, observed unknown/error status, owned setup instance/state directory/port and other active-work status. Do not include arguments, results containing private data, credentials or tokens.
+
+> Please reconcile downstream side effects for this unknown call, agree an idle window, and restart only the verified owned gateway using the approved installed-version lifecycle method. Return outcome-reconciliation status, old/new owned-instance identity and exact setup readiness evidence. Do not replay the call or assume restart cancelled it.
+
+If downstream reconciliation or ownership is unavailable, record **unresolved/blocked**, not successful recovery. Finish other workflows before an approved owned-instance restart; never stop unrelated processes or bypass the gateway. After replacement, verify the intended owned instance and exact readiness result, then obtain a **new claim** before any further exclusive execution. Restart clears coordination state; it does not undo side effects, cancel an operation or authorize replay. Release/disconnect cannot safely clear an unknown-outcome block. No universal restart CLI is documented here; use the installation owner's approved lifecycle route.
+
 <a id="state-and-privacy"></a>
 ## State and privacy
 

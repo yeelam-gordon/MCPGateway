@@ -1,27 +1,38 @@
-# MCPGateway — Share local MCP servers across coding-agent sessions
+# MCPGateway — Share local MCP servers across agents
 
-When multiple Copilot CLI or other coding-agent sessions start separate copies of the same local MCP servers, each repeats backend startup and carries its own tool catalog. **MCPGateway shares configured backends across sessions**, with on-demand tool discovery and ownership coordination for exclusive workflows. It is a local shared MCP gateway, not an enterprise API-governance service.
+<a id="languages"></a>
+<details>
+<summary>Languages / 语言 / 言語 / اللغات (16)</summary>
 
-- Reuse heavy-backend RAM and startup work instead of one backend copy per session.
-- Start with six gateway tools; discover capabilities and fetch selected schemas on demand.
-- Add backends while keeping the current agent-side MCP connection. [Verified route and limits](docs/BENCHMARK.md#configuration-only-connection-continuity).
+[English](README.md) · [简体中文](docs/i18n/README.zh-CN.md) · [繁體中文](docs/i18n/README.zh-TW.md) · [日本語](docs/i18n/README.ja.md) · [한국어](docs/i18n/README.ko.md) · [Español](docs/i18n/README.es.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Português (Brasil)](docs/i18n/README.pt-BR.md) · [Italiano](docs/i18n/README.it.md) · [Русский](docs/i18n/README.ru.md) · [العربية](docs/i18n/README.ar.md) · [हिन्दी](docs/i18n/README.hi.md) · [Bahasa Indonesia](docs/i18n/README.id.md) · [Türkçe](docs/i18n/README.tr.md) · [Tiếng Việt](docs/i18n/README.vi.md)
 
-Change backend configuration without restarting your agent on the current connector route: synchronize additions, settle active workflows, then restart only the owned gateway; current connectors reconnect. [Verified SDK/stdio mechanism](docs/BENCHMARK.md#configuration-only-connection-continuity).
+</details>
 
-**Fit / skip:** best for multiple sessions sharing the same configured backends and connector/catalog. One session or lightweight backends may not repay gateway overhead: our fixture used more total RAM and had slower cold startup.
+Share local MCP backends across coding sessions: avoid duplicate backend memory, reuse repeated startup work, and make configuration-only backend additions without restarting the current agent-side MCP connection (SDK/stdio route; net gains depend on overhead).
 
-**Start here:** [Install and make your first authorized read](#first-use). Requires Node.js 24+, npm, Git, Copilot CLI with plugin support and existing MCP integrations with their required authentication; current bootstrap starts through Copilot CLI. Keep configuration/backups private—they may contain credentials. [Other-client compatibility and verification levels](docs/CLIENTS.md#compatibility-summary) differs.
-
-**Numbers, not a guarantee:** [Assumed resource example](#resource-examples): 5 × 1.5 GB = 7.5 GB versus 1.5 GB + overhead; 6 GB duplication avoided **before overhead**, not net savings. [Three-trial fixture](docs/BENCHMARK.md): 357.0 → 564.0 MiB working set, cold startup worse. [Six-tool / two-client cache test](test/catalog-scale.test.js).
+[Start via Copilot CLI](#first-use) · [Client verification](docs/CLIENTS.md#compatibility-summary) · [Evidence](#resource-examples)
 
 <img src="assets/mcp-gateway-benefits.png" alt="Five agent sessions share configured backends instead of five backend copies" width="780">
 
-Concept artwork with English labels, not a runtime screenshot or benchmark. Its 1.5 GB scenario assumes one complete backend set; 6 GB is duplicated backend memory avoided before gateway/connector overhead. Lightweight backends can use more total RAM; see the full measured comparison below.
+Concept artwork with English labels: five duplicated backend sets become one shared set—not a runtime screenshot or benchmark.
+
+- **Avoid duplicate backend memory:** Illustration: 5 × 1.5 GB sets → one; 6 GB duplication avoided **before** gateway/connector overhead, not measured savings.
+- **Reuse repeated startup work:** If all 5 sessions use 12 stdio services: 60 → 12 backend starts, not 80% faster elapsed startup.
+- **Add backends through configuration only; keep the current agent connection:** SDK/stdio: 1 initialization survives a settled owned-gateway restart; the connector remains, not hot reload or verified native conversation UI. First registration/runtime upgrades may need client restart. [SDK/stdio](docs/BENCHMARK.md#configuration-only-connection-continuity)
+
+<a id="contents"></a>
+[First use](#first-use) · [Resource evidence](#resource-examples) · [Mechanism](#how-it-works) · [Clients](#install-and-upgrade-by-client) · [Safety / recovery](#safety-and-operations) · [Development](#development)
+
+**Fit / skip:** best for multiple sessions sharing the same configured backends and connector/catalog. One session or lightweight backends may not repay gateway overhead: our fixture had higher summed process working set and had slower cold startup.
 
 <a id="benefits"></a>
 <a id="reuse-backends-discover-tools-on-demand"></a>
 <a id="first-use"></a>
 ## First useful workflow: find and call an existing backend tool
+
+Requires Node.js 24+, npm, Git, Copilot CLI with plugin support and existing MCP integrations with their required authentication; current bootstrap starts through Copilot CLI. Keep configuration/backups private—they may contain credentials. Other-client compatibility and verification levels differ.
+
+This installs a persistent runtime: client rollback is not daemon shutdown. Review [trial rollback and owned-runtime exit](docs/REFERENCE.md#planned-exit) before installation.
 
 1. Follow [Install the shared core](docs/CLIENTS.md#shared-core-install):
 
@@ -31,6 +42,10 @@ Concept artwork with English labels, not a runtime screenshot or benchmark. Its 
    ```
 
    Start Copilot CLI, invoke `/mcp-gateway-setup`, review the preview, and approve only intended changes. Close and reopen Copilot, then run the exact returned `readinessCommand`. A check-only command does not start an absent gateway. Keep the returned backup and rollback commands.
+> Use the shared gateway for [my authorized read-only task]: list configured servers, discover a suitable tool, inspect its schema and prepare schema-valid arguments using authorized non-sensitive test values. Obtain normal approvals; claim an exclusive backend before calling it and release after calls settle. Show the actual result. Never retry an unknown outcome; use the operator handoff.
+
+Replace only the bracketed task; actual aliases/tool names come from discovery, not invented defaults.
+
 2. Choose a harmless, authorized read-only task on an integration you already use: for example, look up a record you are allowed to read. In that client, use the gateway tool calls below. These are **tool inputs, not shell commands**. Angle-bracket values are **placeholders**, not shipped aliases, tool names, credentials, or literal arguments. Replace them with values from your own catalog and selected schema; do not submit the templates unchanged.
 
    | Step | Gateway tool and input | Expected observable result |
@@ -41,14 +56,15 @@ Concept artwork with English labels, not a runtime screenshot or benchmark. Its 
    | Required ownership before execution | If `requiresExclusiveAccess: true`, use `claim_server` with `{"server":"<backend-alias>"}` before `call_tool` | Discovery/schema lookup do not require a claim; execution does. Non-exclusive backends need no claim. |
    | Perform the approved read | `call_tool` with `{"server":"<backend-alias>","tool":"<returned-tool-name>","arguments":{}}` **only if the schema permits an empty object**; otherwise replace `{}` with the complete schema-valid object you just prepared | The backend's result is preserved. Check its actual content for the expected record or documented empty result and any error indication; a gateway response alone is not proof the read succeeded. |
 
-3. If discovery says `requiresExclusiveAccess: true`, use `claim_server` with `{"server":"<backend-alias>"}` once **before `call_tool`**, and `release_server` with the same input after all calls settle. Non-exclusive backends need no claim. If an exclusive call times out with an unknown outcome, do not retry: review active work and coordinate a gateway restart; releasing is not a safe unblock.
+3. If discovery says `requiresExclusiveAccess: true`, use `claim_server` with `{"server":"<backend-alias>"}` once **before `call_tool`**, and `release_server` with the same input after all calls settle. Non-exclusive backends need no claim. If an exclusive call times out with an unknown outcome, do not retry: review active work and use the [unknown-exclusive-result operator handoff](docs/REFERENCE.md#unknown-exclusive-result); releasing is not a safe unblock.
 4. In a second session registered to the **same connector and catalog**, repeat list/search for the same alias. It should expose the same configured backend, reusing its initialized catalog rather than requiring a second backend configuration. This checks the first shared workflow, not measured memory savings. Discovery is not permission to execute a tool. After initialization, `list_servers` should show `ready` and search should expose the same cached catalog. Alias equality alone does not prove PID identity or RAM savings; see the [public process-reuse fixture](docs/BENCHMARK.md#method). [Catalog-cache test](test/catalog-scale.test.js).
 
-If the list is empty, check the selected configuration/migration preview. If search returns no matches, use a narrower term from your backend's own tool descriptions; there is no universal backend tool name. For authentication errors or failed readiness, follow the [operational reference](docs/REFERENCE.md) and [setup recovery/rollback](docs/REFERENCE.md#setup-recovery), not repeated calls or a parallel bypass process. Backend requests can still contact remote services; local sharing does not make them offline.
-
+If the list is empty, check the selected configuration/migration preview. If search returns no matches, use a narrower term from your backend's own tool descriptions; there is no universal backend tool name. For authentication errors or failed readiness, follow the [authentication guidance](docs/REFERENCE.md#native-http-oauth) and [setup recovery/rollback](docs/REFERENCE.md#setup-recovery), not repeated calls or a parallel bypass process. Backend requests can still contact remote services; local sharing does not make them offline.
 
 <a id="resource-examples"></a>
 ## Illustrative resource model and measured limits
+
+Use comparable direct/shared measurements for the same workload: duplicated backend cost must exceed added sharing overhead. `(sessions - 1) × backend-set cost > added sharing overhead` is an illustrative decision rule in the same metric, not a measured universal break-even threshold. Measure first-use latency and summed process working set separately; warm catalog reuse does not guarantee faster cold startup.
 
 **Avoid duplicate backend RAM**
 
@@ -65,20 +81,22 @@ Duplicated backend RAM avoided before overhead: 7.5 GB - 1.5 GB = 6 GB. Total sa
 
 For a 1000-tool catalog: 1000 → 6 initial gateway definitions, (1000 - 6) / 1000 × 100 = 99.4% fewer definitions, not 99.4% fewer tokens. Selected schemas cost more when requested; clients already deferring definitions may gain less. The synthetic catalog test verifies six tools and a shared discovery cache across two clients, not RSS performance. [catalog-scale.test.js](test/catalog-scale.test.js)
 
-**Measured lightweight fixture: reuse, but no net RAM or cold-start win.** Three Windows x64 / Node 24.13.1 trials; medians:
+**Measured lightweight fixture: summed process working set increased; cold first use was slower.** Three Windows x64 / Node 24.13.1 trials; medians:
 
 | Comparison | Result |
 |---|---|
 | Shared schema + echo: cold backend / second / fifth client | 426.2 ms / 21.1 ms / 19.0 ms |
 | First useful echo: direct / shared with gateway listening / fully cold shared | 503.5 ms / 894.3 ms / 1886.7 ms |
 | Backend processes / total processes, direct → shared | 5 → 1 / 5 → 7 |
-| Summed working set, direct → shared | 357.0 MiB → 564.0 MiB — **net RAM was worse** |
+| Summed process working set, direct → shared | 357.0 MiB → 564.0 MiB — **summed process working set was higher; unique physical memory and private bytes were not measured** |
 
 Fully cold shared startup was slower. This one-tool echo fixture is not representative of heavier field services. The 1.5 GB scenario above is a separate assumption, not this measurement. [Full method and comparators](docs/BENCHMARK.md)
 
 Resource use depends on backends, clients, and workload. No measured RAM or token savings are promised; sharing neither enlarges the model's context window nor makes memory usage constant. Clients that already defer tool loading may see less context benefit.
 
 ## How it works
+
+MCPGateway shares configured backends across sessions: clients use a connector and the same catalog; selected servers connect on demand. It is a local shared MCP gateway, not an enterprise API-governance service.
 
 ```text
 Agent A ─┐                         ┌─ Integration A: many tools
@@ -88,16 +106,13 @@ Agent C ─┘                         └─ Integration C: many tools
 
 The diagram illustrates shared routing to selected configured backends, not a benchmark or runtime proof; unused backends are not started.
 
-The gateway exposes four discovery/execution tools—`list_servers`, `search_tools`, `get_tool_schema`, and `call_tool`—plus `claim_server` and `release_server` for integrations that require exclusive workflow ownership.
+The six gateway tools comprise four discovery/execution tools—`list_servers`, `search_tools`, `get_tool_schema`, and `call_tool`—plus `claim_server` and `release_server` for integrations that require exclusive workflow ownership.
 
 A request follows **discover → retrieve schema → call**. Discovery does not start every integration. If shared state requires exclusive ownership, the agent claims that integration before its calls and releases it after the workflow.
 
-**Keep the connector for configuration-only changes where supported; this is not automatic hot reload.**
+Change backend configuration without restarting your agent on the current connector route: synchronize additions, settle active workflows, then restart only the owned gateway; current connectors reconnect. This is not automatic hot reload: the running gateway loads its catalog at startup. For later Copilot MCP additions, rerun `/mcp-gateway-setup`, review preview and approve only intended synchronization; preserve backups. Ask the setup skill to perform the owned restart in [configuration synchronization](docs/CLIENTS.md#copilot-cli-upgrade).
 
-The same live connector PID, SDK client and stdio transport survived a settled owned-gateway restart with one initialization, discovered a newly added alias and called its public echo fixture. This verifies agent-side MCP connection continuity, not independently tested branded-agent conversation UIs. Gateway restart loses leases: reclaim exclusive ownership before new execution. [Method and scope](docs/BENCHMARK.md#configuration-only-connection-continuity).
-
-**Backend configuration changes are not automatic hot reload.** For later Copilot MCP additions, rerun `/mcp-gateway-setup`, review preview and approve only intended synchronization; preserve backups. After active workflows settle, ask the setup skill to restart only the owned gateway as described in [configuration synchronization](docs/CLIENTS.md#copilot-cli-upgrade). The running gateway loads its catalog at startup. Configuration-only sync need not replace the fixed six-tool agent connector; the existing connector can reconnect, but interrupted calls are not silently replayed and unknown outcomes require review. This is not a universal “no agent restart” guarantee: initial registration and runtime/connector upgrades retain their client-specific restart/reload instructions. Changed existing aliases can conflict and require review, not automatic replacement.
-
+The same live connector PID, SDK client and stdio transport survived a settled owned-gateway restart with one initialization, discovered a newly added alias and called its public echo fixture. This verifies agent-side MCP connection continuity, not independently tested branded-agent conversation UIs. Configuration-only sync need not replace the fixed six-tool agent connector; the existing connector can reconnect, but interrupted calls are not silently replayed and unknown outcomes require review. Gateway restart loses leases: reclaim exclusive ownership before new execution. This is not a universal “no agent restart” guarantee: initial registration and runtime/connector upgrades retain their client-specific restart/reload instructions. Changed existing aliases can conflict and require review, not automatic replacement. [Method and scope](docs/BENCHMARK.md#configuration-only-connection-continuity).
 
 ## Install and upgrade by client
 
@@ -107,36 +122,20 @@ The shared runtime is bootstrapped through Copilot CLI today. Other clients can 
 
 **Prerequisites:** Node.js 24 or newer, npm, Git, Copilot CLI with plugin support for the current bootstrap, and integrations already configured with their required authentication. Windows is the primary tested platform. Agency is optional.
 
-| Client | Installation | Upgrade |
-|---|---|---|
-| GitHub Copilot CLI | [Install](docs/CLIENTS.md#copilot-cli-install) | [Upgrade](docs/CLIENTS.md#copilot-cli-upgrade) |
-| VS Code (editor) | [Install](docs/CLIENTS.md#vs-code-install) | [Upgrade](docs/CLIENTS.md#vs-code-upgrade) |
-| Claude Code | [Install](docs/CLIENTS.md#claude-code-install) | [Upgrade](docs/CLIENTS.md#claude-code-upgrade) |
-| Codex CLI | [Install](docs/CLIENTS.md#codex-install) | [Upgrade](docs/CLIENTS.md#codex-upgrade) |
-| OpenCode | [Install](docs/CLIENTS.md#opencode-install) | [Upgrade](docs/CLIENTS.md#opencode-upgrade) |
-| Qwen Code | [Install](docs/CLIENTS.md#qwen-code-install) | [Upgrade](docs/CLIENTS.md#qwen-code-upgrade) |
-| Kimi CLI | [Install](docs/CLIENTS.md#kimi-cli-install) | [Upgrade](docs/CLIENTS.md#kimi-cli-upgrade) |
-| Antigravity CLI | [Install](docs/CLIENTS.md#antigravity-cli-install) | [Upgrade](docs/CLIENTS.md#antigravity-cli-upgrade) |
+| Client | Installation | Upgrade  Required bootstrap | Verification tier |
+|---|---|------|---|
+| GitHub Copilot CLI | [Install](docs/CLIENTS.md#copilot-cli-install) | [Upgrade](docs/CLIENTS.md#copilot-cli-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Marketplace/setup route; isolated config parsing](docs/CLIENTS.md#compatibility-summary) |
+| VS Code (editor) | [Install](docs/CLIENTS.md#vs-code-install) | [Upgrade](docs/CLIENTS.md#vs-code-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
+| Claude Code | [Install](docs/CLIENTS.md#claude-code-install) | [Upgrade](docs/CLIENTS.md#claude-code-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Isolated config parsed; no model/backend](docs/CLIENTS.md#compatibility-summary) |
+| Codex CLI | [Install](docs/CLIENTS.md#codex-install) | [Upgrade](docs/CLIENTS.md#codex-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Native validation blocked by policy](docs/CLIENTS.md#compatibility-summary) |
+| OpenCode | [Install](docs/CLIENTS.md#opencode-install) | [Upgrade](docs/CLIENTS.md#opencode-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
+| Qwen Code | [Install](docs/CLIENTS.md#qwen-code-install) | [Upgrade](docs/CLIENTS.md#qwen-code-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
+| Kimi CLI | [Install](docs/CLIENTS.md#kimi-cli-install) | [Upgrade](docs/CLIENTS.md#kimi-cli-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
+| Antigravity CLI | [Install](docs/CLIENTS.md#antigravity-cli-install) | [Upgrade](docs/CLIENTS.md#antigravity-cli-upgrade)  [Copilot CLI](docs/CLIENTS.md#shared-gateway-prerequisite) | [Registration/format adapter tested; no native end-to-end session](docs/CLIENTS.md#compatibility-summary) |
 
 The [client guide](docs/CLIENTS.md) is the canonical installation and upgrade source. It documents native configuration locations, preview/apply behavior, support status, restart/readiness steps, and conflict handling.
 
-
 Searching for this repository from Claude Code, Codex, Gemini CLI, Kimi, or Qwen CLI is different from connecting those clients to the gateway. Public documentation is available to any tool-enabled reader; native integration is not guaranteed. Gemini CLI has no documented setup route here (Antigravity is a separate client), and Kimi is adapter-tested only. See the [client guide](docs/CLIENTS.md) before choosing a runtime integration.
-
-## Contents
-
-- [How it works](#how-it-works)
-- [Install and upgrade by client](#install-and-upgrade-by-client)
-- [First useful workflow](#first-use)
-- [Safety and operations](#safety-and-operations)
-- [Verified scope](#verified-scope)
-- [Development](#development)
-- [More documentation](#more-documentation)
-- [License](#license)
-
-
-<a id="languages"></a>
-**Languages:** English · [简体中文](docs/i18n/README.zh-CN.md) · [繁體中文](docs/i18n/README.zh-TW.md) · [日本語](docs/i18n/README.ja.md) · [한국어](docs/i18n/README.ko.md) · [Español](docs/i18n/README.es.md) · [Français](docs/i18n/README.fr.md) · [Deutsch](docs/i18n/README.de.md) · [Português](docs/i18n/README.pt-BR.md) · [Italiano](docs/i18n/README.it.md) · [Русский](docs/i18n/README.ru.md) · [العربية](docs/i18n/README.ar.md) · [हिन्दी](docs/i18n/README.hi.md) · [Bahasa Indonesia](docs/i18n/README.id.md) · [Türkçe](docs/i18n/README.tr.md) · [Tiếng Việt](docs/i18n/README.vi.md)
 
 ## Safety and operations
 

@@ -32,12 +32,15 @@ test('README explains local sharing and a qualified first workflow without losin
   ]);
   const opening = readme;
   const entry = readme.slice(0, readme.indexOf('<img'));
-  assert.ok(entry.indexOf('](#first-use)') < entry.indexOf('](#resource-examples)'));
+  assert.ok(entry.includes('](#first-use)'));
+  const uncollapsedEntry = entry.replace(/<a id="languages"><\/a>\s*<details>[\s\S]*?<\/details>/, '');
+  assert.equal(uncollapsedEntry.trim().split(/\r?\n\r?\n/).filter(Boolean).length, 3, 'title, value and action row plus collapsed picker');
+  assert.doesNotMatch(entry, /^- |Fit \/ skip|Node\.js|5 × 1\.5/m);
   assert.ok(readme.indexOf('## First useful workflow:') < readme.indexOf('## Install and upgrade by client'));
-  assert.match(entry, /Fit \/ skip/);
-  assert.ok(entry.includes('slower cold startup'));
+  assert.match(readme, /Fit \/ skip/);
+  assert.ok(readme.includes('slower cold startup'));
   assert.match(readme, /<img src="assets\/mcp-gateway-benefits\.png"[^>]*width="780"/);
-  assert.match(opening, /^# MCPGateway .*Share local MCP servers across coding-agent sessions/m);
+  assert.match(opening, /^# MCPGateway .*Share local MCP servers across agents/m);
   assert.match(opening, /shares configured backends across sessions/);
   assert.match(opening, /not an enterprise API-governance service/);
   assert.match(opening, /Node\.js 24\+, npm, Git, Copilot CLI with plugin support/);
@@ -54,11 +57,17 @@ test('README explains local sharing and a qualified first workflow without losin
   assert.match(opening, /neither enlarges the model's context window nor makes memory usage constant/);
   assert.match(opening, /native integration is not guaranteed/);
   for (const continuity of ['Change backend configuration without restarting your agent on the current connector route', 'synchronize additions, settle active workflows', 'restart only the owned gateway', 'current connectors reconnect', 'one initialization', 'not independently tested branded-agent conversation UIs', 'Gateway restart loses leases']) assert.ok(readme.includes(continuity), continuity);
-  for (const evidence of ['Three Windows x64 / Node 24.13.1 trials', '426.2 ms', '21.1 ms', '19.0 ms', '503.5 ms', '894.3 ms', '1886.7 ms', '5 → 1', '5 → 7', '357.0 MiB → 564.0 MiB', 'net RAM was worse', 'separate assumption, not this measurement', 'not representative of heavier field services', 'docs/BENCHMARK.md']) assert.ok(opening.includes(evidence), evidence);
+  for (const evidence of ['Three Windows x64 / Node 24.13.1 trials', '426.2 ms', '21.1 ms', '19.0 ms', '503.5 ms', '894.3 ms', '1886.7 ms', '5 → 1', '5 → 7', '357.0 MiB → 564.0 MiB', 'summed process working set was higher', 'separate assumption, not this measurement', 'not representative of heavier field services', 'docs/BENCHMARK.md']) assert.ok(opening.includes(evidence), evidence);
   for (const startup of ['12 stdio-backed services', '5 × 12 = 60', '60 - 12 = 48', '48 / 60 × 100 = 80%', 'only `k` used backends', 'unused backends do not start', 'not 80% faster elapsed startup', 'startup-count illustration does not measure latency', 'concurrency, service authentication and platform']) assert.ok(opening.includes(startup), startup);
   for (const boundary of ['not automatic hot reload', 'restart only the owned gateway', 'loads its catalog at startup', 'existing connector can reconnect', 'interrupted calls are not silently replayed', 'not a universal “no agent restart” guarantee']) assert.ok(readme.includes(boundary), boundary);
   assert.match(opening, /Gemini CLI has no documented setup route here \(Antigravity is a separate client\)/);
   assert.match(opening, /Kimi is adapter-tested only/);
+  assert.ok(readme.includes('Summed process working set, direct → shared'));
+  assert.ok(readme.includes('unique physical memory and private bytes were not measured'));
+  assert.ok(!readme.includes('net RAM was worse'));
+  assert.equal((readme.match(/\[Copilot CLI\]\(docs\/CLIENTS\.md#shared-gateway-prerequisite\)/g) ?? []).length, 8);
+  assert.ok(readme.includes('Native validation blocked by policy'));
+  assert.ok(readme.includes('Registration/format adapter tested; no native end-to-end session'));
   assert.doesNotMatch(readme, /^## Benefits$|^## How to install$/m);
   for (const command of [
     'copilot plugin marketplace add yeelam-gordon/MCPGateway',
@@ -93,6 +102,8 @@ test('README explains local sharing and a qualified first workflow without losin
   assert.match(workflow, /Non-exclusive backends need no claim/);
   assert.match(workflow, /unknown outcome, do not retry/);
   assert.match(workflow, /releasing is not a safe unblock/);
+  assert.ok(workflow.includes('unknown-exclusive-result'));
+  assert.ok(readme.indexOf('<summary>') < readme.indexOf('<img'));
   assert.match(workflow, /second session.*same connector and catalog/);
   const secondSession = workflow.match(/^4\. (.+)$/m)?.[1];
   assert.ok(secondSession.includes('docs/BENCHMARK.md#method'));
