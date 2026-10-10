@@ -1,33 +1,24 @@
-# Shared MCP Gateway
+# MCPGateway — Comparte servidores MCP locales entre sesiones de agentes de programación
 
 [English](../../README.md)
 
 > Esta es una vista general localizada. El [README](../../README.md) y la guía de clientes enlazada más abajo, ambos en inglés, son las fuentes oficiales para la instalación completa, las actualizaciones y los detalles técnicos.
 
-## Ahorra RAM. Conserva el contexto para tu trabajo. Herramientas bajo demanda.
+## Reutiliza backends y descubre herramientas bajo demanda.
 
-**Más agentes deberían significar más trabajo terminado, no más copias de la misma configuración MCP.**
+Varias sesiones de Copilot CLI no necesitan iniciar copias independientes del mismo backend MCP. Comparte servicios locales ya configurados y coordina los flujos exclusivos; no es una plataforma empresarial de gobernanza de API.
 
-### 5 agentes. 12 conexiones MCP. Una configuración compartida.
-
-*Ejemplo ilustrativo: esas **12** conexiones ofrecen **1,000** herramientas y cada configuración independiente usa **1.5 GB** de RAM de procesos locales.*
-
-| Beneficio | Configuración separada por agente | Con MCPGateway |
-|---|---|---|
-| **Ahorra RAM** | **7.5 GB** entre cinco configuraciones MCP independientes. | **1.5 GB compartidos**, más la sobrecarga del gateway y los conectores. **Se evitan 6 GB de memoria duplicada.** |
-| **Conserva el contexto. Herramientas bajo demanda.** | Cada agente carga por adelantado **1,000 definiciones de herramientas**, y la cifra puede crecer al añadir conexiones MCP. | Solo **6 herramientas de gateway por adelantado: 99.4% menos definiciones**. Las **1,000** herramientas siguen disponibles; cada agente descubre y carga únicamente lo que necesita. Puedes añadir conexiones sin cargar sus catálogos completos en todos los agentes. |
-
-**Conserva tus agentes y conexiones MCP. Evita que cada sesión lleve su propia copia.**
-
-*Las cifras de RAM son ilustrativas, no ahorros medidos; la memoria del agente es adicional. El recuento de definiciones no equivale a ahorro de tokens, y los clientes que ya aplazan la carga pueden obtener un beneficio de contexto menor. Compartir no amplía la ventana de contexto ni mantiene constante el uso total de RAM.*
+**Requisitos:** Node.js 24 o posterior, npm, Git, Copilot CLI con plugins y servicios MCP ya configurados y autenticados. El arranque actual requiere Copilot CLI; Windows es la plataforma principal de pruebas y Agency es opcional. La compatibilidad y la verificación varían según el cliente.
 
 ## Cómo funciona
 
 El gateway presenta siempre 6 herramientas al agente: 4 para descubrir e invocar capacidades y 2 para integraciones que necesitan un flujo exclusivo. Añadir conexiones no aumenta esta interfaz inicial; el esquema completo solo se carga para la herramienta elegida. Se reutilizan las conexiones que ya configuraste y autenticaste, sin instalar servicios ni proporcionar credenciales.
 
-Un catálogo MCP compartido puede servir a varios agentes: empieza con **10** conexiones en Copilot y migra explícitamente una configuración de Claude compatible que contenga **2** conexiones nuevas para que ambos agentes usen las mismas **12**; instalar el plugin por sí solo no las combina automáticamente. Las entradas con el mismo nombre solo se deduplican cuando sus definiciones de alias son idénticas, no simplemente porque apunten al mismo servicio, y los conflictos detienen el proceso para su revisión. La migración muestra primero una vista previa, crea una copia de seguridad y rechaza ajustes nativos no compatibles; esto tampoco afirma que todos los clientes nativos se hayan probado de extremo a extremo, así que consulta la [guía de migración (inglés)](../CLIENTS.md#cross-client-migration).
+Un catálogo MCP compartido puede servir a varios agentes. Por ejemplo, empieza con **10** conexiones en Copilot y migra explícitamente una configuración de Claude compatible con **2** conexiones nuevas: ambos agentes podrán usar las mismas **12**.
 
-**Requisitos:** Node.js 24 o posterior, npm, Git y Copilot CLI con plugins para el proceso de arranque actual. Agency es opcional.
+- Instalar el plugin por sí solo no combina las configuraciones. Las entradas con el mismo nombre solo se deduplican si sus definiciones de alias son idénticas; apuntar al mismo servicio no basta. Los conflictos detienen el proceso para su revisión.
+- La migración muestra primero una vista previa, crea una copia de seguridad y rechaza ajustes nativos no compatibles.
+- Esto no significa que todos los clientes nativos se hayan probado de extremo a extremo. Consulta la [guía de migración (inglés)](../CLIENTS.md#cross-client-migration).
 
 ## Instalación y actualización por cliente
 
@@ -45,6 +36,25 @@ Actualmente el runtime compartido se crea mediante Copilot CLI; los demás clien
 | Antigravity CLI | [Instalar](../CLIENTS.md#antigravity-cli-install) | [Actualizar](../CLIENTS.md#antigravity-cli-upgrade) |
 
 La configuración muestra una vista previa antes de cambiar nada. Tras la aprobación crea copias privadas y devuelve comprobaciones de disponibilidad y comandos exactos de reversión. La configuración y las copias pueden contener credenciales: no las publiques ni las confirmes en el control de versiones.
+
+## Primera configuración y llamada
+
+```powershell
+copilot plugin marketplace add yeelam-gordon/MCPGateway
+copilot plugin install shared-mcp-gateway@mcp-gateway
+```
+
+1. Tras instalar el plugin, inicia Copilot CLI, ejecuta `/mcp-gateway-setup`, revisa la vista previa y aprueba solo los cambios previstos. Cierra y vuelve a abrir Copilot; ejecuta el `readinessCommand` exacto recibido. Conserva los comandos de copia de seguridad y reversión. Instalar el plugin no fusiona configuraciones.
+2. Llama a `list_servers` con `{}`: deben aparecer alias, estados e indicadores de exclusividad de los servicios existentes. Elige un backend autorizado, busca un término de tu tarea con `search_tools` y obtén su esquema con `get_tool_schema`. Construye los argumentos según ese esquema y realiza una lectura aprobada con `call_tool`. Comprueba el registro esperado o un resultado vacío documentado; recibir una respuesta no demuestra por sí solo que la lectura haya tenido éxito.
+3. Si `requiresExclusiveAccess: true`, usa `claim_server` antes de buscar y `release_server` cuando terminen todas las llamadas. No reclames backends no exclusivos. Ante un tiempo de espera con resultado desconocido, no reintentes: revisa el trabajo activo y coordina el reinicio.
+
+[Ejemplo completo en inglés](../../README.md#first-use) · [Compatibilidad y límites](../CLIENTS.md#compatibility-summary)
+
+## Límites, privacidad y recuperación
+
+Descubrir este repositorio desde Claude Code, Codex, Gemini CLI, Kimi o Qwen CLI no garantiza integración nativa. Aquí no hay una ruta de instalación de Gemini CLI; Antigravity es otro cliente. Kimi solo tiene pruebas del adaptador. La configuración y las copias pueden contener credenciales: no las publiques. Los backends pueden contactar servicios remotos; compartir no implica funcionamiento sin conexión ni ahorro fijo de RAM o tokens.
+
+[Privacidad](../REFERENCE.md#state-and-privacy) · [Recuperación y reversión](../REFERENCE.md#setup-recovery)
 
 **Referencia operativa (inglés):** [Consultar la referencia operativa](../REFERENCE.md)
 
