@@ -85,6 +85,14 @@ test('README explains local sharing and a qualified first workflow without losin
   assert.match(workflow, /local sharing does not make them offline/);
   assert.match(readme, /private backups/);
   assert.match(readme, /Stop using the gateway/);
+  assert.ok(readme.includes('](docs/REFERENCE.md#planned-exit)'));
+  assert.match(reference, /clients restored; owned daemon stopped; private data retained/);
+  assert.match(reference, /PID or port alone is not ownership proof/);
+  assert.match(reference, /Missing\/stale metadata.*blocked/);
+  assert.match(reference, /not a supported standalone shutdown CLI/);
+  assert.match(reference, /check-only readiness failure alone does not prove shutdown/);
+  assert.match(reference, /unrelated settings added since that backup need an explicit preservation decision/);
+  assert.match(reference, /no connector has restarted it/);
   assert.match(readme, /finish active workflows and let outstanding calls settle/);
   assert.match(readme, /not runtime shutdown/);
   assert.match(readme, /Plugin removal does not remove the stable runtime/);

@@ -46,13 +46,15 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 
 1. Après l'installation du plugin, lancez Copilot CLI et invoquez `/mcp-gateway-setup`. Examinez l'aperçu avant d'approuver les changements souhaités. Fermez puis rouvrez Copilot et exécutez le `readinessCommand` exact fourni. Conservez les commandes de sauvegarde et de restauration. Installer le plugin seul ne fusionne pas les configurations.
 2. Appelez `list_servers` avec `{}` : les alias, états et indicateurs d'exclusivité des services existants doivent apparaître. Choisissez un backend autorisé, recherchez un terme de votre tâche avec `search_tools`, puis obtenez le schéma de l'outil avec `get_tool_schema`. Construisez les arguments selon ce schéma et effectuez une lecture approuvée avec `call_tool`. Vérifiez l'enregistrement attendu ou un résultat vide documenté ; une réponse de la passerelle ne suffit pas à prouver la réussite de la lecture.
-3. Si `requiresExclusiveAccess: true`, utilisez `claim_server` avant la recherche et `release_server` une fois tous les appels terminés. Les backends non exclusifs n'ont pas besoin de réservation. En cas de délai dépassé avec un résultat inconnu, ne réessayez pas : examinez le travail actif et coordonnez le redémarrage.
+3. Si `requiresExclusiveAccess: true`, utilisez `claim_server` avant la recherche et `release_server` une fois tous les appels terminés. Les backends non exclusifs n'ont pas besoin de réservation. En cas de délai dépassé avec un résultat inconnu, ne réessayez pas : examinez le travail actif et coordonnez le redémarrage. Si le résultat est inconnu, le backend exclusif reste bloqué jusqu’au redémarrage de la passerelle ; libérer la réservation ou déconnecter le client ne permet pas de le débloquer en toute sécurité, et une déconnexion n’annule pas l’opération.
 
 [Exemple complet en anglais](../../README.md#first-use) · [Compatibilité et limites](../CLIENTS.md#compatibility-summary)
 
 ## Limites, confidentialité et restauration
 
 Trouver ce dépôt depuis Claude Code, Codex, Gemini CLI, Kimi ou Qwen CLI ne garantit pas une intégration native. Aucun parcours d'installation de Gemini CLI n'est documenté ici ; Antigravity est un autre client. Kimi n'a été testé qu'au niveau de l'adaptateur. Les configurations et sauvegardes peuvent contenir des identifiants : ne les publiez pas. Les backends peuvent contacter des services distants ; le partage ne signifie pas un fonctionnement hors ligne ni des économies fixes de RAM ou de jetons.
+
+Avant de cesser l’utilisation, terminez les workflows actifs et attendez la fin des appels. Restaurer la configuration du client n’arrête pas le runtime persistant. Suivez la [procédure de sortie et de remise à l’opérateur (anglais)](../REFERENCE.md#planned-exit) et vérifiez l’état final ; conservez les données privées et les identifiants, sans arrêter de processus sans rapport.
 
 [Confidentialité](../REFERENCE.md#state-and-privacy) · [Restauration et retour arrière](../REFERENCE.md#setup-recovery)
 

@@ -46,13 +46,15 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 
 1. Após instalar o plugin, abra o Copilot CLI e execute `/mcp-gateway-setup`. Revise a prévia antes de aprovar as alterações desejadas. Feche e reabra o Copilot; execute o `readinessCommand` exato recebido. Guarde os comandos de backup e reversão. Instalar apenas o plugin não mescla configurações.
 2. Chame `list_servers` com `{}`: devem aparecer os aliases, estados e indicadores de exclusividade dos serviços existentes. Escolha um backend autorizado, pesquise um termo da tarefa com `search_tools` e obtenha o esquema da ferramenta com `get_tool_schema`. Monte os argumentos conforme esse esquema e faça uma leitura aprovada com `call_tool`. Confira o registro esperado ou um resultado vazio documentado; uma resposta do gateway não comprova, por si só, o sucesso da leitura.
-3. Se `requiresExclusiveAccess: true`, use `claim_server` antes da busca e `release_server` após todas as chamadas terminarem. Backends não exclusivos dispensam reserva. Se houver timeout com resultado desconhecido, não repita a chamada: revise o trabalho ativo e coordene a reinicialização.
+3. Se `requiresExclusiveAccess: true`, use `claim_server` antes da busca e `release_server` após todas as chamadas terminarem. Backends não exclusivos dispensam reserva. Se houver timeout com resultado desconhecido, não repita a chamada: revise o trabalho ativo e coordene a reinicialização. Se o resultado for desconhecido, o backend exclusivo permanece bloqueado até o gateway ser reiniciado; liberar a reserva ou desconectar o cliente não desbloqueia o backend com segurança, e desconectar não cancela a operação.
 
 [Exemplo completo em inglês](../../README.md#first-use) · [Compatibilidade e limites](../CLIENTS.md#compatibility-summary)
 
 ## Limites, privacidade e recuperação
 
 Encontrar este repositório pelo Claude Code, Codex, Gemini CLI, Kimi ou Qwen CLI não garante integração nativa. Não há uma rota de instalação documentada para Gemini CLI; Antigravity é outro cliente. Kimi tem apenas testes do adaptador. Configurações e backups podem conter credenciais: não os publique. Os backends podem acessar serviços remotos; compartilhar não significa operar offline nem garante economia fixa de RAM ou tokens.
+
+Antes de parar de usar, conclua os fluxos ativos e aguarde o fim das chamadas. Restaurar a configuração do cliente não encerra o runtime persistente. Siga a [saída e entrega ao operador (inglês)](../REFERENCE.md#planned-exit) e verifique o estado final; preserve os dados privados e as credenciais e não encerre processos não relacionados.
 
 [Privacidade](../REFERENCE.md#state-and-privacy) · [Recuperação e reversão](../REFERENCE.md#setup-recovery)
 

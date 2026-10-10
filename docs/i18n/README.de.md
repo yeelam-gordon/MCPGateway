@@ -46,13 +46,15 @@ copilot plugin install shared-mcp-gateway@mcp-gateway
 
 1. Starten Sie nach der Plugin-Installation Copilot CLI und rufen Sie `/mcp-gateway-setup` auf. Prüfen Sie die Vorschau und genehmigen Sie nur die gewünschten Änderungen. Schließen und öffnen Sie Copilot erneut und führen Sie den exakt zurückgegebenen `readinessCommand` aus. Bewahren Sie Sicherungs- und Rollback-Befehle auf. Die Plugin-Installation allein führt keine Konfigurationen zusammen.
 2. Rufen Sie `list_servers` mit `{}` auf: Es sollten die vorhandenen Aliase, Zustände und Exklusivitätskennzeichen erscheinen. Wählen Sie ein autorisiertes Backend, suchen Sie mit `search_tools` nach einem passenden Aufgabenbegriff und holen Sie mit `get_tool_schema` das Schema des ausgewählten Tools. Erstellen Sie schema-konforme Argumente und führen Sie mit `call_tool` einen genehmigten Lesezugriff aus. Prüfen Sie den erwarteten Datensatz oder ein dokumentiertes leeres Ergebnis; eine Gateway-Antwort allein beweist keinen erfolgreichen Lesezugriff.
-3. Bei `requiresExclusiveAccess: true` verwenden Sie vor der Suche `claim_server` und nach Abschluss aller Aufrufe `release_server`. Nicht exklusive Backends benötigen keine Reservierung. Bei einem Timeout mit unbekanntem Ergebnis nicht erneut aufrufen: aktive Arbeit prüfen und den Neustart koordinieren.
+3. Bei `requiresExclusiveAccess: true` verwenden Sie vor der Suche `claim_server` und nach Abschluss aller Aufrufe `release_server`. Nicht exklusive Backends benötigen keine Reservierung. Bei einem Timeout mit unbekanntem Ergebnis nicht erneut aufrufen: aktive Arbeit prüfen und den Neustart koordinieren. Bei unbekanntem Ergebnis bleibt das exklusive Backend bis zum Neustart des Gateways gesperrt; die Reservierung freizugeben oder den Client zu trennen hebt die Sperre nicht sicher auf. Eine Trennung bricht den Vorgang nicht ab.
 
 [Vollständiges englisches Beispiel](../../README.md#first-use) · [Kompatibilität und Grenzen](../CLIENTS.md#compatibility-summary)
 
 ## Grenzen, Datenschutz und Wiederherstellung
 
 Das Auffinden dieses Repositories über Claude Code, Codex, Gemini CLI, Kimi oder Qwen CLI garantiert keine native Integration. Für Gemini CLI ist hier kein Installationsweg dokumentiert; Antigravity ist ein anderer Client. Kimi ist nur auf Adapterebene getestet. Konfigurationen und Sicherungen können Zugangsdaten enthalten; nicht veröffentlichen. Backends können entfernte Dienste kontaktieren. Gemeinsame Nutzung bedeutet weder Offline-Betrieb noch feste RAM- oder Token-Einsparungen.
+
+Beenden Sie vor dem Ausstieg aktive Workflows und warten Sie auf den Abschluss aller Aufrufe. Die Wiederherstellung der Client-Konfiguration beendet die persistente Runtime nicht. Folgen Sie dem [Ausstieg und der Übergabe an den Betreiber (Englisch)](../REFERENCE.md#planned-exit) und prüfen Sie den Endzustand; behalten Sie private Daten und Zugangsdaten bei und stoppen Sie keine fremden Prozesse.
 
 [Datenschutz](../REFERENCE.md#state-and-privacy) · [Wiederherstellung und Rollback](../REFERENCE.md#setup-recovery)
 

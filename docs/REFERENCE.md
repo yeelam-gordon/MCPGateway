@@ -9,6 +9,7 @@ This document contains detailed operating, recovery, ownership, and transfer gui
 - [Workflow ownership](#workflow-ownership)
 - [State and privacy](#state-and-privacy)
 - [Native HTTP OAuth](#native-http-oauth)
+- [Planned exit and operator handoff](#planned-exit)
 - [Setup recovery](#setup-recovery)
 - [Cross-client migration recovery](#cross-client-migration-recovery)
 - [Windows plugin cache: Access denied](#windows-plugin-cache-access-denied)
@@ -252,6 +253,20 @@ Default locations on Windows-style paths are:
 Setup preserves conversation history and existing approval settings. Agency integration is opt-in with `--agency-adapters`; ordinary Copilot use does not require it. Existing Agency plugins or defaults may still add their own configuration.
 
 The plugin cache contains the setup skill and updateable package files. The stable runtime and private backend data live outside that cache. Uninstalling the plugin removes the setup skill, not the installed runtime.
+
+<a id="planned-exit"></a>
+## Planned exit and operator handoff
+
+Choose the intended end state explicitly: **clients no longer use this gateway**, or **clients restored and the owned daemon stopped, with private data retained**. Neither means credentials have been revoked or stored data erased.
+
+1. Finish active workflows across every client sharing this instance and settle outstanding calls. Resolve unknown outcomes using [workflow ownership](#workflow-ownership); closing a client is not cancellation. Keep all affected clients closed while restoring configurations using their exact reported [setup rollback](#setup-recovery) or [cross-client rollback commands](#cross-client-migration-recovery). Review the backed-up configuration before restoring: unrelated settings added since that backup need an explicit preservation decision. Do not overwrite them blindly.
+2. Verify each affected client's restored MCP configuration no longer references this gateway's connector. Include clients registered separately, not only Copilot. If a registration has no matching backup, the client owner must approve a native configuration edit that removes only this connector while preserving other integrations and settings; there is no universal cross-client uninstall command. Do not reopen a client with this connector still enabled: its auto-start can launch the daemon again. For the **clients-only** end state, reopen the restored clients and confirm their intended direct integrations work; record that the daemon and private state may still remain.
+3. For the **daemon-stopped** end state, send this private request to the operator who owns the installation. Use exact reported values, not guessed default paths; share no tokens or backend credential contents:
+
+   > Stop the owned shared gateway after the agreed idle window; retain all private state and unrelated backends. Affected clients/configuration paths: [list]. Restoration/connector-removal status per client: [verified or blocked]. Installed runtime/connector path, state directory and port from setup: [values]. Active-work confirmation and any unknown outcomes: [status]. Please verify process ownership, stop only this instance using your approved lifecycle method, and return the completion evidence below. Do not restart it or erase data.
+
+   The operator must reconcile the selected state directory's `gateway-instance.json` with the live PID, process birth marker, executable, recorded CLI/config paths and port/listener. PID or port alone is not ownership proof. Missing/stale metadata, mismatched identity or uncertain active work means **blocked**, not permission to kill the listener. The existing [owned lifecycle implementation](../src/ensure-gateway.js) checks process markers (and executable identity on Windows), rechecks before escalation, and bounds its stop operation. Its `stopOwnedGateway` export is an internal lifecycle primitive, **not a supported standalone shutdown CLI**; it does not establish that clients are idle or every registration is removed. The operator must choose and approve a method appropriate to the installed version. A foreground instance launched by that operator can receive Ctrl+C in its own terminal; the [daemon entry point](../src/cli.js) handles SIGINT/SIGTERM. Do not signal a guessed PID or another terminal's process.
+4. Require the operator's result: exact instance identified; affected connectors disabled/restored; old owned process no longer present; no gateway listener remains on the selected port; no connector has restarted it. A check-only readiness failure alone does not prove shutdown—it can also mean authentication or identity failure. Reopen only restored clients, check their intended integrations, then confirm the owned daemon has not returned. Keep backups, catalog, authentication state and histories private and intact. Report the end state as **clients restored; owned daemon stopped; private data retained**, or name the failed check and leave shutdown **blocked**. A missing general-purpose stop command is not a successful shutdown.
 
 <a id="setup-recovery"></a>
 ## Setup recovery
