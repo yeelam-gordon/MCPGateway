@@ -1,14 +1,94 @@
 # MCPGateway — Partagez des serveurs MCP locaux entre sessions d'agents de programmation
 
-[English](../../README.md)
+Plusieurs sessions Copilot CLI n'ont pas besoin de démarrer chacune une copie du même backend MCP. Partagez les services locaux déjà configurés et coordonnez les workflows exclusifs ; ce n'est pas une plateforme de gouvernance des API d'entreprise.
+
+- Réutilisez la RAM et le travail de démarrage des backends lourds, sans copie par session.
+- Découvrez capacités et schémas à la demande avec 6 outils initiaux.
+- Ajoutez des backends en conservant la connexion MCP de l’agent. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
+
+Ajoutez des backends sans redémarrer la connexion MCP actuelle de l’agent : synchronisez les ajouts, terminez les travaux actifs et redémarrez seulement votre passerelle ; le connecteur actuel se reconnecte. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
+
+Adapté à plusieurs sessions utilisant les mêmes backends et catalogue ; une session ou des backends légers peuvent ne pas amortir le surcoût.
+
+[Commencer : installation et première lecture autorisée](#first-use) · [MCP / Copilot CLI](../CLIENTS.md#shared-core-install) · [6 outils / 2 clients](../../test/catalog-scale.test.js)
+
+[Évitez la RAM des backends dupliqués](#resource-examples): 5 × 1.5 GB = 7.5 GB → 1.5 GB + surcoût de la passerelle et des connecteurs.
+
+<img src="../../assets/mcp-gateway-benefits.png" alt="Réutilisez la RAM et le travail de démarrage des backends lourds, sans copie par session." width="780">
+
+Concept avec libellés anglais, ni capture ni benchmark. Hypothèse de 1.5 GB par ensemble : 6 GB de duplication évitée avant surcoût. Le fixture léger mesuré utilisait davantage de RAM totale.
+
+<a id="first-use"></a>
+## Première configuration et premier appel
+
+**Prérequis :** Node.js 24 ou ultérieur, npm, Git, Copilot CLI avec plugins et services MCP déjà configurés et authentifiés. L'installation initiale passe actuellement par Copilot CLI ; Windows est la principale plateforme testée et Agency est facultatif. La compatibilité et le niveau de vérification diffèrent selon les clients.
+
+Configurations et sauvegardes peuvent contenir des identifiants : gardez-les privés et n’approuvez que les changements prévus.
+
+```powershell
+copilot plugin marketplace add yeelam-gordon/MCPGateway
+copilot plugin install shared-mcp-gateway@mcp-gateway
+```
+
+1. Après l'installation du plugin, lancez Copilot CLI et invoquez `/mcp-gateway-setup`. Examinez l'aperçu avant d'approuver les changements souhaités. Fermez puis rouvrez Copilot et exécutez le `readinessCommand` exact fourni. Conservez les commandes de sauvegarde et de restauration. Installer le plugin seul ne fusionne pas les configurations.
+
+La découverte et le schéma ne nécessitent pas de réservation ; si `requiresExclusiveAccess: true`, utilisez `claim_server` avant `call_tool`.
+
+2. Appelez `list_servers` avec `{}` : les alias, états et indicateurs d'exclusivité des services existants doivent apparaître. Choisissez un backend autorisé, recherchez un terme de votre tâche avec `search_tools`, puis obtenez le schéma de l'outil avec `get_tool_schema`. Construisez les arguments selon ce schéma et effectuez une lecture approuvée avec `call_tool`. Vérifiez l'enregistrement attendu ou un résultat vide documenté ; une réponse de la passerelle ne suffit pas à prouver la réussite de la lecture.
+3. Si `requiresExclusiveAccess: true`, utilisez `claim_server` avant l’appel et `release_server` une fois tous les appels terminés. Les backends non exclusifs n'ont pas besoin de réservation. En cas de délai dépassé avec un résultat inconnu, ne réessayez pas : examinez le travail actif et coordonnez le redémarrage. Si le résultat est inconnu, le backend exclusif reste bloqué jusqu’au redémarrage de la passerelle ; libérer la réservation ou déconnecter le client ne permet pas de le débloquer en toute sécurité, et une déconnexion n’annule pas l’opération.
+4. Dans une deuxième session utilisant le même connecteur et catalogue, répétez `list_servers` / `search_tools` pour le même alias. Attendez `ready` pour le backend initialisé et les capacités du même catalogue. Un alias identique ne prouve ni l’identité du processus ni une économie de RAM ; consultez le test public de réutilisation. [Méthode de réutilisation des processus](../BENCHMARK.md#method) · [Test du cache du catalogue](../../test/catalog-scale.test.js)
+
+[Exemple complet en anglais](../../README.md#first-use) · [Compatibilité et limites](../CLIENTS.md#compatibility-summary)
+
+## Limites, confidentialité et restauration
+
+Trouver ce dépôt depuis Claude Code, Codex, Gemini CLI, Kimi ou Qwen CLI ne garantit pas une intégration native. Aucun parcours d'installation de Gemini CLI n'est documenté ici ; Antigravity est un autre client. Kimi n'a été testé qu'au niveau de l'adaptateur. Les configurations et sauvegardes peuvent contenir des identifiants : ne les publiez pas. Les backends peuvent contacter des services distants ; le partage ne signifie pas un fonctionnement hors ligne ni des économies fixes de RAM ou de jetons.
+
+Avant de cesser l’utilisation, terminez les workflows actifs et attendez la fin des appels. Restaurer la configuration du client n’arrête pas le runtime persistant. Suivez la [procédure de sortie et de remise à l’opérateur (anglais)](../REFERENCE.md#planned-exit) et vérifiez l’état final ; conservez les données privées et les identifiants, sans arrêter de processus sans rapport.
+
+[Confidentialité](../REFERENCE.md#state-and-privacy) · [Restauration et retour arrière](../REFERENCE.md#setup-recovery)
+
+**Référence opérationnelle (anglais) :** [Consulter la référence opérationnelle](../REFERENCE.md)
+
+**Licence :** [MIT](../../LICENSE)
+
+
+<a id="resource-examples"></a>
+
+**Évitez la RAM des backends dupliqués**
+
+Hypothèse illustrative, pas un benchmark : 5 sessions ont chacune besoin des mêmes 12 connexions ; un ensemble complet de backends utilise 1.5 GB. Les sessions compatibles partagent les processus réels via le même connecteur et catalogue.
+
+| Déploiement | RAM des backends |
+|---|---|
+| Copies indépendantes | 5 × 1.5 GB = 7.5 GB |
+| Ensemble partagé | 1.5 GB + surcoût de la passerelle et des connecteurs |
+
+RAM dupliquée évitée avant surcoût : 7.5 GB - 1.5 GB = 6 GB. L’économie totale reste inconnue sans mesure. 1.5 GB n’est pas une constante selon les charges ou clients ; il ne s’agit pas de la RAM de cinq modèles.
+
+**Réutilisez aussi le travail de démarrage.** Si les 5 sessions utilisent les 12 services stdio, les copies exigent jusqu’à `5 × 12 = 60` démarrages contre `12` partagés : `60 - 12 = 48` doublons évités, soit `48 / 60 × 100 = 80%` de démarrages en moins. La connexion à la demande ne connecte que les `k` backends utilisés ; les autres ne démarrent pas. C’est un nombre d’opérations, pas un démarrage 80% plus rapide. La latence n’est pas mesurée ; concurrence, authentification et plateforme influent sur la durée.
+
+1000 outils → 6 définitions initiales : (1000 - 6) / 1000 × 100 = 99.4% de définitions en moins, pas de tokens. Les schémas demandés ensuite ont un coût ; les clients différant déjà leur chargement peuvent moins en bénéficier. Le test de catalogue synthétique vérifie six outils et un cache partagé par deux clients, pas les performances RSS. [catalog-scale.test.js](../../test/catalog-scale.test.js)
+
+**Fixture léger mesuré : réutilisation, mais RAM totale accrue et aucun gain au démarrage à froid.** Médianes de 3 essais, Windows x64 / Node 24.13.1 : schéma + echo partagé 426.2 ms avec backend froid, 21.1 ms au deuxième client, 19.0 ms au cinquième. Total premier client : 503.5 ms direct, 894.3 ms partagé avec passerelle prête ; partagé entièrement à froid 1886.7 ms. Processus backend 5 → 1, mais processus totaux 5 → 7 et working set cumulé 357.0 MiB → 564.0 MiB : RAM nette moins bonne. Un seul echo ne représente pas des services lourds réels ; 1.5 GB ci-dessus est une autre hypothèse, pas une mesure. [BENCHMARK.md](../BENCHMARK.md)
+
+<a id="mechanism"></a>
+
+Le test SDK/stdio conserve le même connecteur et la même connexion MCP pour découvrir un nouvel alias et exécuter echo après redémarrage ; les interfaces de conversation des produits ne sont pas testées. Pas de rechargement automatique ; conflits à examiner. Enregistrement initial ou mise à niveau du runtime peuvent nécessiter un redémarrage client. Les appels interrompus ne sont pas rejoués ; réservez de nouveau l’accès exclusif après redémarrage.
+
+```text
+Agent A ─┐                           ┌─ Intégration A: plusieurs outils
+Agent B ─┼─ connecteur ─ MCPGateway ─┼─ Intégration B: plusieurs outils
+Agent C ─┘                           └─ Intégration C: plusieurs outils
+```
+
+Plusieurs agents accèdent à MCPGateway par le même connecteur, qui se connecte à la demande aux backends configurés sélectionnés. Ce schéma illustre le partage : ce n’est ni un benchmark ni une vérification en fonctionnement, et il ne signifie pas que tous les backends démarrent.
 
 > Ceci est une présentation localisée. Le [README](../../README.md) anglais et le guide client anglais lié ci-dessous restent les références pour l'installation complète, les mises à niveau et les détails techniques.
 
+[English](../../README.md)
+
 ## Réutilisez les backends et découvrez les outils à la demande.
-
-Plusieurs sessions Copilot CLI n'ont pas besoin de démarrer chacune une copie du même backend MCP. Partagez les services locaux déjà configurés et coordonnez les workflows exclusifs ; ce n'est pas une plateforme de gouvernance des API d'entreprise.
-
-**Prérequis :** Node.js 24 ou ultérieur, npm, Git, Copilot CLI avec plugins et services MCP déjà configurés et authentifiés. L'installation initiale passe actuellement par Copilot CLI ; Windows est la principale plateforme testée et Agency est facultatif. La compatibilité et le niveau de vérification diffèrent selon les clients.
 
 ## Fonctionnement
 
@@ -36,28 +116,3 @@ Le runtime partagé est actuellement créé via Copilot CLI ; les autres clients
 | Antigravity CLI | [Installer](../CLIENTS.md#antigravity-cli-install) | [Mettre à niveau](../CLIENTS.md#antigravity-cli-upgrade) |
 
 La configuration affiche un aperçu avant toute modification. Après approbation, elle crée des sauvegardes privées et fournit des contrôles de disponibilité ainsi que des commandes exactes de restauration. La configuration et les sauvegardes peuvent contenir des identifiants : ne les publiez pas et ne les ajoutez pas au contrôle de version.
-
-## Première configuration et premier appel
-
-```powershell
-copilot plugin marketplace add yeelam-gordon/MCPGateway
-copilot plugin install shared-mcp-gateway@mcp-gateway
-```
-
-1. Après l'installation du plugin, lancez Copilot CLI et invoquez `/mcp-gateway-setup`. Examinez l'aperçu avant d'approuver les changements souhaités. Fermez puis rouvrez Copilot et exécutez le `readinessCommand` exact fourni. Conservez les commandes de sauvegarde et de restauration. Installer le plugin seul ne fusionne pas les configurations.
-2. Appelez `list_servers` avec `{}` : les alias, états et indicateurs d'exclusivité des services existants doivent apparaître. Choisissez un backend autorisé, recherchez un terme de votre tâche avec `search_tools`, puis obtenez le schéma de l'outil avec `get_tool_schema`. Construisez les arguments selon ce schéma et effectuez une lecture approuvée avec `call_tool`. Vérifiez l'enregistrement attendu ou un résultat vide documenté ; une réponse de la passerelle ne suffit pas à prouver la réussite de la lecture.
-3. Si `requiresExclusiveAccess: true`, utilisez `claim_server` avant la recherche et `release_server` une fois tous les appels terminés. Les backends non exclusifs n'ont pas besoin de réservation. En cas de délai dépassé avec un résultat inconnu, ne réessayez pas : examinez le travail actif et coordonnez le redémarrage. Si le résultat est inconnu, le backend exclusif reste bloqué jusqu’au redémarrage de la passerelle ; libérer la réservation ou déconnecter le client ne permet pas de le débloquer en toute sécurité, et une déconnexion n’annule pas l’opération.
-
-[Exemple complet en anglais](../../README.md#first-use) · [Compatibilité et limites](../CLIENTS.md#compatibility-summary)
-
-## Limites, confidentialité et restauration
-
-Trouver ce dépôt depuis Claude Code, Codex, Gemini CLI, Kimi ou Qwen CLI ne garantit pas une intégration native. Aucun parcours d'installation de Gemini CLI n'est documenté ici ; Antigravity est un autre client. Kimi n'a été testé qu'au niveau de l'adaptateur. Les configurations et sauvegardes peuvent contenir des identifiants : ne les publiez pas. Les backends peuvent contacter des services distants ; le partage ne signifie pas un fonctionnement hors ligne ni des économies fixes de RAM ou de jetons.
-
-Avant de cesser l’utilisation, terminez les workflows actifs et attendez la fin des appels. Restaurer la configuration du client n’arrête pas le runtime persistant. Suivez la [procédure de sortie et de remise à l’opérateur (anglais)](../REFERENCE.md#planned-exit) et vérifiez l’état final ; conservez les données privées et les identifiants, sans arrêter de processus sans rapport.
-
-[Confidentialité](../REFERENCE.md#state-and-privacy) · [Restauration et retour arrière](../REFERENCE.md#setup-recovery)
-
-**Référence opérationnelle (anglais) :** [Consulter la référence opérationnelle](../REFERENCE.md)
-
-**Licence :** [MIT](../../LICENSE)

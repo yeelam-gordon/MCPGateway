@@ -72,7 +72,39 @@ test('localized quickstarts retain truthful benefits, first workflows and canoni
     ]);
     assert.ok(text.includes(ownershipGuards.get(language.code)), `${language.code}: unknown-outcome blocked/release/disconnect/cancellation guard`);
     assert.ok(text.includes('../REFERENCE.md#planned-exit'), `${language.code}: planned exit route`);
+    assert.ok(text.includes('../BENCHMARK.md#configuration-only-connection-continuity'), `${language.code}: verified configuration-only continuity scope`);
     assert.match(text, /^# MCPGateway /m, language.code);
+    const topologyLabels = new Map([
+      ["zh-CN", "智能体", "集成服务", "连接器", "多个工具"],
+      ["zh-TW", "智慧代理", "整合服務", "連接器", "多個工具"],
+      ["ja", "エージェント", "連携サービス", "コネクター", "複数のツール"],
+      ["ko", "에이전트", "연동 서비스", "커넥터", "여러 도구"],
+      ["es", "Agente", "Integración", "conector", "varias herramientas"],
+      ["pt-BR", "Agente", "Integração", "conector", "várias ferramentas"],
+      ["fr", "Agent", "Intégration", "connecteur", "plusieurs outils"],
+      ["de", "Agent", "Integration", "Konnektor", "mehrere Tools"],
+      ["it", "Agente", "Integrazione", "connettore", "più strumenti"],
+      ["ru", "Агент", "Интеграция", "коннектор", "несколько инструментов"],
+      ["vi", "Tác nhân", "Tích hợp", "bộ kết nối", "nhiều công cụ"],
+      ["id", "Agen", "Integrasi", "konektor", "banyak alat"],
+      ["hi", "एजेंट", "इंटीग्रेशन", "कनेक्टर", "कई टूल"],
+      ["ar", "وكيل", "تكامل", "موصّل", "أدوات متعددة"],
+      ["tr", "Ajan", "Entegrasyon", "bağlayıcı", "birçok araç"]
+    ].map(([code, ...labels]) => [code, labels]));
+    const topology = text.match(/```text\r?\n([\s\S]*?)\r?\n```/)?.[1];
+    assert.ok(topology, `${language.code}: opening shared topology`);
+    const topologyLines = topology.split(/\r?\n/);
+    assert.equal(topologyLines.length, 3, `${language.code}: three illustrative agent/integration paths`);
+    const [agentLabel, integrationLabel, connectorLabel, toolsLabel] = topologyLabels.get(language.code);
+    for (const [index, letter] of ['A', 'B', 'C'].entries()) {
+      assert.ok(topologyLines[index].includes(`${agentLabel} ${letter}`), language.code);
+      assert.ok(topologyLines[index].includes(`${integrationLabel} ${letter}: ${toolsLabel}`), language.code);
+    }
+    assert.ok(topologyLines[1].includes(`─ ${connectorLabel} ─ MCPGateway ─`), language.code);
+    assert.ok(text.indexOf('](#first-use)') < text.indexOf('<img'), `${language.code}: action before artwork`);
+    assert.ok(text.indexOf('](#first-use)') < text.indexOf('| 5 × 1.5 GB'), `${language.code}: action before full arithmetic`);
+    assert.match(text, /<img src="\.\.\/\.\.\/assets\/mcp-gateway-benefits\.png"[^>]*width="780"/);
+    await access(new URL('../../assets/mcp-gateway-benefits.png', url));
     const installBlock = text.match(/```powershell\r?\n([\s\S]*?)\r?\n```/)?.[1];
     assert.equal(installBlock?.replaceAll('\r', ''), [
       'copilot plugin marketplace add yeelam-gordon/MCPGateway',
@@ -86,9 +118,23 @@ test('localized quickstarts retain truthful benefits, first workflows and canoni
       assert.ok(index > previous, `${language.code}: ${tool} discovery order`);
       previous = index;
     }
+    for (const startup of ['5 × 12 = 60', '60 - 12 = 48', '48 / 60 × 100 = 80%', '`k`', 'stdio']) {
+      assert.ok(text.includes(startup), `${language.code}: qualified startup work-count illustration`);
+    }
+    for (const evidence of ['426.2 ms', '21.1 ms', '19.0 ms', '503.5 ms', '894.3 ms', '1886.7 ms', '5 → 1', '5 → 7', '357.0 MiB → 564.0 MiB', 'Node 24.13.1', '../BENCHMARK.md']) {
+      assert.ok(text.includes(evidence), `${language.code}: complete measured fixture evidence, including adverse totals`);
+    }
+    const secondSession = text.match(/^4\. (.+)$/m)?.[1];
+    assert.ok(secondSession?.includes('`list_servers`') && secondSession.includes('`search_tools`') && secondSession.includes('`ready`'), `${language.code}: observable second-session sharing check`);
+    assert.equal((text.match(/^4\. /gm) ?? []).length, 1, `${language.code}: no duplicate sharing step`);
+    assert.ok(secondSession.includes('../BENCHMARK.md#method'), `${language.code}: multi-client process reuse method`);
+    assert.ok(secondSession.includes('../../test/catalog-scale.test.js'), `${language.code}: distinct catalog-cache evidence`);
+    assert.ok(!secondSession.includes('#configuration-only-connection-continuity'), `${language.code}: evidence matches sharing check`);
+    assert.ok(!text.includes('1.5 GB + overhead;'), `${language.code}: localized overhead`);
+    assert.ok(!text.includes('[6 tools / 2 clients]'), `${language.code}: localized discovery proof label`);
     const migration = text.split(/\r?\n\r?\n/).find(paragraph => paragraph.includes('**10**'));
     assert.ok(migration && !migration.includes('#cross-client-migration'), `${language.code}: short migration example separate from validation guidance`);
-    assert.equal((text.match(/^- /gm) ?? []).length, 3, `${language.code}: scannable migration safeguards`);
+    assert.equal((text.match(/^- /gm) ?? []).length, 6, `${language.code}: scannable migration safeguards`);
     assert.match(text, /Node\.js 24/, language.code);
     for (const phrase of selected.get(language.code)) {
       assert.ok(text.includes(phrase), `${language.code}: ${phrase}`);
@@ -105,7 +151,9 @@ test('localized quickstarts retain truthful benefits, first workflows and canoni
     ]) {
       assert.ok(text.includes(required), `${language.code}: ${required}`);
     }
-    assert.doesNotMatch(text, /\b(?:1[.,]5|7[.,]5)\s*GB/, `${language.code}: no hypothetical RAM promise`);
+    for (const scenario of ['5 × 1.5 GB = 7.5 GB', '1.5 GB +', '7.5 GB - 1.5 GB = 6 GB', '(1000 - 6) / 1000 × 100 = 99.4%', '../../test/catalog-scale.test.js']) {
+      assert.ok(text.includes(scenario), `${language.code}: bounded RAM/definition illustration`);
+    }
     assert.ok(text.includes('../../README.md'), language.code);
     assert.ok(text.includes('../../LICENSE'), language.code);
     assert.equal((text.match(/^```/gm) ?? []).length % 2, 0, language.code);
