@@ -1,142 +1,53 @@
-# MCPGateway — Chia sẻ máy chủ MCP cục bộ giữa các phiên tác nhân lập trình
+# MCPGateway — Chia sẻ backend MCP cục bộ giữa các phiên lập trình
 
 <a id="languages"></a>
 <details>
-<summary>Languages / 语言 / 言語 / اللغات (16)</summary>
+<summary>Languages (16)</summary>
 
 [English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português (Brasil)](README.pt-BR.md) · [Italiano](README.it.md) · [Русский](README.ru.md) · [العربية](README.ar.md) · [हिन्दी](README.hi.md) · [Bahasa Indonesia](README.id.md) · [Türkçe](README.tr.md) · [Tiếng Việt](README.vi.md)
 
 </details>
 
-Chia sẻ backend MCP cục bộ giữa các phiên: tránh RAM trùng lặp, dùng lại backend đang chạy, và thêm backend qua cấu hình mà không cần khởi động lại kết nối MCP hiện tại của tác nhân (SDK/stdio; lợi ích ròng phụ thuộc chi phí phụ).
+Nhiều phiên dùng một bộ backend: tránh bộ nhớ trùng lặp và công việc khởi động lặp lại. Tuyến SDK/stdio đã kiểm thử giữ kết nối MCP hiện có khi thêm cấu hình (kết nối hiện có từ agent của bạn tới gateway).
 
-[Bắt đầu qua Copilot CLI](#first-use) · [Kiểm chứng ứng dụng khách](../CLIENTS.md#compatibility-summary) · [Bằng chứng](#resource-examples)
+[Bắt đầu](#first-use) · [Tương thích (tiếng Anh)](../CLIENTS.md#compatibility-summary) · [Bằng chứng và giới hạn (tiếng Anh)](../BENCHMARK.md) · [Cập nhật Copilot](../CLIENTS.md#copilot-cli-upgrade)
 
-<img src="../../assets/mcp-gateway-benefits.png" alt="Dùng chung tiến trình máy chủ để tránh mỗi phiên khởi động một bản và tốn RAM riêng." width="780">
+<img src="../../assets/mcp-gateway-benefits.png" alt="Các bản sao backend thành một bộ dùng chung; công việc khởi động được dùng lại; trong thử nghiệm SDK/stdio, kết nối MCP hiện có được giữ khi khởi động lại gateway do mình quản lý sau khi công việc hoàn tất." width="780">
 
-Hình khái niệm có nhãn tiếng Anh, không phải ảnh chạy thực hay benchmark.
+Hình minh họa khái niệm với nhãn tiếng Anh, không phải ảnh ứng dụng hay benchmark. [SVG](../../assets/mcp-gateway-benefits.svg)
 
-- **Tránh bộ nhớ backend trùng lặp:** Giả định minh họa: 5 × 1.5 GB → một bộ; tránh 6 GB trùng lặp **trước** chi phí gateway/bộ kết nối, không phải tiết kiệm đã đo.
-- **Dùng lại backend đã khởi động, tránh khởi động bản sao:** Nếu cả 5 phiên dùng đủ 12 dịch vụ stdio: 60 → 12 lần khởi động backend, không phải nhanh hơn 80%.
-- **Chỉ thêm cấu hình; giữ kết nối tác nhân:** SDK/stdio: 1 lần khởi tạo được giữ qua lần khởi động lại gateway thuộc quyền quản lý sau khi công việc hoàn tất; bộ kết nối vẫn chạy. Không phải hot reload hay kiểm chứng giao diện hội thoại native. Đăng ký ban đầu/nâng cấp runtime có thể cần khởi động lại ứng dụng khách. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
+- **Tránh bộ nhớ backend trùng lặp:** Với giả định chia sẻ 5 × 1.5 GB thành một bộ, tránh 6 GB trùng lặp **trước** chi phí gateway và bộ kết nối. Không phải mức tiết kiệm ròng đã đo.
+- **Dùng lại công việc khởi động backend:** Nếu cả năm phiên dùng đủ mười hai dịch vụ stdio, số lần khởi động là 60 → 12. Không có nghĩa khởi động nhanh hơn 80%.
+- **Giữ kết nối MCP hiện có:** Thử nghiệm SDK/stdio giữ kết nối sau khi chỉ thêm cấu hình và khởi động lại gateway do mình quản lý khi công việc kết thúc. Không chứng minh hot reload, tính liên tục của lời gọi đang chạy hay mọi giao diện hội thoại native. Đăng ký lần đầu và nâng cấp runtime có thể cần khởi động lại ứng dụng khách. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
-Phù hợp nhiều phiên dùng cùng backend và danh mục; một phiên hoặc backend nhẹ có thể không bù được chi phí phụ.
+<a id="resource-examples"></a>
+**Khi nên dùng hoặc bỏ qua:** Dành cho nhiều phiên cùng bộ kết nối và danh mục. MCP trực tiếp có thể đơn giản hơn cho một phiên hoặc backend nhẹ. Kiểm thử nhẹ tăng tổng working set tiến trình từ 357.0 → 564.0 MiB; yêu cầu dùng chung đầu tiên, từ khởi chạy gateway mới đến kết quả hữu ích đầu tiên, mất 1886.7 ms so với trực tiếp 503.5 ms. Lợi ích ròng phụ thuộc chi phí phụ. [BENCHMARK](../BENCHMARK.md#sharing-model-and-evidence)
 
 <a id="first-use"></a>
-## Thiết lập và gọi công cụ lần đầu
+## Kết quả hữu ích đầu tiên: đọc dữ liệu được phép qua gateway
 
-**Điều kiện cần:** Node.js 24 trở lên, npm, Git, Copilot CLI hỗ trợ plugin và dịch vụ MCP đã cấu hình, xác thực. Lần cài đặt đầu hiện phải qua Copilot CLI; Windows là nền tảng được kiểm thử chính, Agency là tùy chọn. Khả năng tương thích và mức kiểm chứng khác nhau theo ứng dụng khách.
+Cần Node.js 24+, npm, Git, Copilot CLI hỗ trợ plugin và tích hợp MCP đã cấu hình, xác thực theo yêu cầu. Cài lần đầu qua Copilot CLI; Windows là nền tảng kiểm thử chính. Mức kiểm chứng khác nhau theo ứng dụng khách. [Copilot `/help` · `/plugin`](../CLIENTS.md#copilot-plugin-eligibility).
 
-Cấu hình và bản sao lưu có thể chứa thông tin xác thực: giữ riêng tư và chỉ chấp thuận thay đổi dự định.
-
-[Thoát và runtime thường trực](../REFERENCE.md#planned-exit) · [Khôi phục cấu hình không dừng tiến trình gateway thường trực (rollback ≠ daemon shutdown)](../REFERENCE.md#setup-recovery)
+**Trước khi cài:** Cấu hình, danh mục riêng tư và bản sao lưu có thể chứa thông tin xác thực: đừng công khai. Backend có thể liên hệ dịch vụ từ xa. Runtime thường trú được cài; khôi phục cấu hình hay gỡ plugin không dừng gateway. [REFERENCE](../REFERENCE.md#planned-exit) Trạng thái riêng cục bộ và token gateway đã lưu chỉ cho chủ sở hữu truy cập, không được mã hóa thêm.
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
 copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
-1. Sau khi cài đặt, mở Copilot CLI và gọi `/mcp-gateway-setup`. Xem trước rồi chỉ phê duyệt thay đổi mong muốn. Đóng và mở lại Copilot, chạy đúng `readinessCommand` được trả về. Giữ bản sao lưu riêng tư và lệnh hoàn tác.
+1. Mở Copilot CLI và gọi `/mcp-gateway-setup`. Xem bản xem trước, chỉ duyệt thay đổi mong muốn. Giữ bản sao lưu riêng tư và lệnh hoàn tác. Chỉ cài plugin không hợp nhất cấu hình.
+2. Đóng và mở lại Copilot; chạy đúng `readinessCommand` được trả về theo hướng dẫn đối tượng lệnh. Lệnh kiểm tra không khởi động gateway chưa chạy. [readinessCommand](../REFERENCE.md#readiness-command-object) Chỉ lưu đối tượng JSON trả về; `.command` là tệp thực thi đã được phê duyệt và `.args` là các đối số chính xác theo đúng thứ tự.
+3. Chọn tác vụ chỉ đọc vô hại, được phép trong tích hợp hiện có. Chỉ thay tác vụ trong ngoặc; lấy bí danh, công cụ và đối số từ khám phá và lược đồ, không đoán.
 
-`readinessCommand` là đối tượng trả về, không phải chuỗi lệnh shell. Gán đúng đối tượng đó từ kết quả thiết lập đã được phê duyệt cho `$readinessCommand`, rồi chạy ví dụ PowerShell. `.command` giữ nguyên đường dẫn tệp thực thi và `.args` giữ mọi đối số theo thứ tự, kể cả đường dẫn có khoảng trắng hoặc dấu nháy. Không ghép mảng hay đoán đường dẫn. Kiểm tra không khởi động gateway chưa chạy.
+> Dùng gateway cho [tác vụ chỉ đọc được phép của tôi]. Chạy `list_servers`, tìm kiếm có mục tiêu bằng `search_tools` và `get_tool_schema`; chuẩn bị đối số đúng lược đồ với giá trị thử nghiệm được phép, không nhạy cảm. Xin phê duyệt thông thường. Nếu `requiresExclusiveAccess: true`, dùng `claim_server` một lần trước `call_tool` và `release_server` sau khi mọi lời gọi hoàn tất; backend không độc quyền không cần giữ quyền. Hiển thị bản ghi thực hoặc kết quả rỗng có giải thích và kiểm tra lỗi, không chỉ phản hồi của gateway. Khi chưa biết kết quả, không thử lại: giữ trạng thái chặn và bàn giao riêng tư cho người quản lý cài đặt.
 
-Chỉ lưu đối tượng JSON `readinessCommand` từ kết quả thiết lập đã phê duyệt, không phải toàn bộ đầu ra, thành tệp UTF-8 `readiness-command.json` trong thư mục hiện tại riêng tư. Giữ nguyên lệnh đã biết và phê duyệt `.command` cùng mọi `.args`; không ghép đối số hay đoán đường dẫn. Chỉ phân tích JSON thiết lập này, không dùng dữ liệu web/dịch vụ tùy ý; phân tích JSON không thực thi mã. Giữ tệp riêng tư vì nội dung đối số phụ thuộc thiết lập.
+4. Trong phiên thứ hai cùng bộ kết nối và danh mục, tìm cùng bí danh: mong đợi `ready` và cùng khả năng. Đây là kiểm tra khám phá dùng chung, không chứng minh cùng tiến trình hay tiết kiệm RAM. [MCP](../REFERENCE.md#first-shared-workflow) [Ví dụ echo công khai và kết quả](../REFERENCE.md#public-echo-illustration).
 
-```powershell
-$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
-$command = $readinessCommand.command
-$commandArgs = @($readinessCommand.args)
-& $command @commandArgs
-```
+**Nếu thất bại:** Danh mục trống: kiểm tra cấu hình và bản xem trước; tìm từ trong mô tả backend. Theo tài liệu khi xác thực hoặc sẵn sàng thất bại, không chạy tiến trình để vượt gateway. Nhả quyền hoặc ngắt kết nối không hủy hay gỡ chặn an toàn kết quả độc quyền chưa biết. Đối chiếu kết quả, phối hợp khởi động lại gateway do mình quản lý rồi yêu cầu lại quyền. [Authentication](../REFERENCE.md#native-http-oauth) · [Recovery](../REFERENCE.md#setup-recovery) · [Unknown outcome](../REFERENCE.md#unknown-exclusive-result)
 
-Khám phá và lấy schema không cần giữ quyền; nếu `requiresExclusiveAccess: true`, gọi `claim_server` trước `call_tool`.
-
-> Dùng gateway cho [tác vụ chỉ đọc được phép của tôi]: liệt kê máy chủ, tìm công cụ, kiểm tra schema và chuẩn bị đối số bằng giá trị thử nghiệm được phép, không nhạy cảm. Xin phê duyệt thông thường, giữ quyền trước khi thực thi độc quyền và nhả sau khi mọi lời gọi hoàn tất. Hiển thị kết quả thực. Không thử lại kết quả chưa biết; bàn giao cho người quản lý cài đặt.
-
-[SDK tool flow: `list_servers` → `search_tools` → `get_tool_schema` → `claim_server` (exclusive) → `call_tool` → `release_server`](../../README.md#first-use) · [REFERENCE](../REFERENCE.md#unknown-exclusive-result)
-
-2. Gọi `list_servers` với `{}`: sẽ thấy bí danh, trạng thái và cờ truy cập dành riêng cho một phiên của các dịch vụ đã cấu hình. Chọn backend được phép dùng, tìm thuật ngữ liên quan bằng `search_tools`, rồi lấy lược đồ đầu vào qua `get_tool_schema`. Chọn tác vụ chỉ đọc, vô hại và đã được cho phép. Chuẩn bị đối số đúng lược đồ, chỉ dùng các giá trị thử nghiệm được phép và không chứa thông tin nhạy cảm, rồi dùng `call_tool` để thực hiện tác vụ đó. Kết quả mong đợi là bản ghi thực hoặc kết quả rỗng có giải thích; phải kiểm tra lỗi, không coi việc nhận phản hồi là bằng chứng thành công.
-3. Nếu `requiresExclusiveAccess: true`, gọi `claim_server` trước khi gọi và `release_server` sau khi mọi lệnh gọi kết thúc. Backend không yêu cầu truy cập dành riêng cho một phiên không cần giữ quyền. Khi hết thời gian chờ mà chưa biết kết quả, không thử lại; kiểm tra công việc đang chạy rồi phối hợp khởi động lại. Khi chưa biết kết quả, backend chỉ cho phép một phiên truy cập vẫn bị chặn cho đến khi gateway khởi động lại; nhả quyền hoặc ngắt kết nối ứng dụng khách không thể gỡ chặn an toàn. Ngắt kết nối không hủy thao tác.
-4. Trong phiên thứ hai dùng cùng bộ kết nối và danh mục, lặp lại `list_servers` / `search_tools` cho cùng bí danh. Backend đã khởi tạo nên có trạng thái `ready`, tìm kiếm trả khả năng từ cùng danh mục. Bí danh trùng không chứng minh cùng tiến trình hay tiết kiệm RAM; xem kiểm thử tái sử dụng công khai. [Phương pháp tái sử dụng tiến trình](../BENCHMARK.md#method) · [Kiểm thử cache danh mục](../../test/catalog-scale.test.js)
-
-[Ví dụ đầy đủ bằng tiếng Anh](../../README.md#first-use) · [Tương thích](../CLIENTS.md#compatibility-summary)
-
-## Giới hạn, quyền riêng tư và khôi phục
-
-Tìm thấy kho này qua Claude Code, Codex, Gemini CLI, Kimi hoặc Qwen CLI không bảo đảm tích hợp native. Chưa có hướng dẫn cài Gemini CLI tại đây; Antigravity là ứng dụng khác. Kimi chỉ được kiểm thử ở lớp adapter. Cấu hình và bản sao lưu có thể chứa thông tin xác thực; không công khai hoặc đưa vào quản lý phiên bản. Backend có thể liên hệ dịch vụ từ xa; chia sẻ không có nghĩa hoạt động offline hay tiết kiệm RAM/token cố định.
-
-Nếu danh sách trống, kiểm tra cấu hình đã chọn và bản xem trước di chuyển. Nếu không có kết quả tìm, dùng từ trong mô tả công cụ của backend. Khi xác thực hoặc kiểm tra trạng thái sẵn sàng thất bại, hãy làm theo tài liệu vận hành; không mở tiến trình khác để bỏ qua gateway. Khôi phục cấu hình khách không dừng runtime thường trú; khi ngừng dùng, theo hướng dẫn bàn giao cho người vận hành và kiểm tra hoàn tất.
-
-[Quyền riêng tư](../REFERENCE.md#state-and-privacy) · [Khôi phục và hoàn tác](../REFERENCE.md#setup-recovery) · [Ngừng dùng và bàn giao](../REFERENCE.md#planned-exit)
-
-<a id="resource-examples"></a>
-
-**Tránh RAM của backend chạy trùng lặp**
-
-Giả định minh họa, không phải benchmark: 5 phiên đều cần cùng 12 kết nối; một bộ backend đầy đủ dùng 1.5 GB. Các phiên tương thích chia sẻ tiến trình thực qua cùng bộ kết nối và danh mục.
-
-| Cách triển khai | RAM backend |
-|---|---|
-| Các bản chạy riêng | 5 × 1.5 GB = 7.5 GB |
-| Một bộ dùng chung | 1.5 GB + chi phí bộ nhớ của gateway và bộ kết nối |
-
-RAM backend trùng lặp tránh được trước chi phí phụ: 7.5 GB - 1.5 GB = 6 GB. Tổng mức tiết kiệm chưa biết cho đến khi đo. 1.5 GB không cố định giữa tải công việc hay ứng dụng khách; đây không phải RAM của năm mô hình.
-
-**Dùng lại các tiến trình backend đã khởi động, thay vì khởi động một bản riêng cho mỗi phiên.** Nếu cả 5 phiên dùng đủ 12 dịch vụ stdio, các bản riêng cần tối đa `5 × 12 = 60` lần khởi động so với `12` khi chia sẻ: tránh `60 - 12 = 48` lần trùng lặp, giảm `48 / 60 × 100 = 80%` số lần. Kết nối khi cần chỉ kết nối `k` backend được dùng; backend không dùng không khởi động. Đây là số thao tác, không phải nhanh hơn 80%. Độ trễ chưa được đo; chạy đồng thời, xác thực và nền tảng ảnh hưởng thời gian.
-
-1000 công cụ → 6 định nghĩa ban đầu: (1000 - 6) / 1000 × 100 = 99.4% ít định nghĩa hơn, không phải token. Schema được yêu cầu sau vẫn có chi phí; ứng dụng khách đã tải trì hoãn có thể được lợi ít hơn. Kiểm thử danh mục tổng hợp xác minh sáu công cụ và cache khám phá dùng chung giữa hai ứng dụng khách, không đo hiệu năng RSS. [catalog-scale.test.js](../../test/catalog-scale.test.js)
-
-**Fixture nhẹ đã đo: tổng working set của các tiến trình tăng** Trung vị 3 lần, Windows x64 / Node 24.13.1: schema + echo chia sẻ 426.2 ms với backend nguội, 21.1 ms ở ứng dụng khách thứ hai, 19.0 ms ở thứ năm. Tổng lần đầu: trực tiếp 503.5 ms, chia sẻ khi gateway sẵn sàng 894.3 ms; chia sẻ hoàn toàn nguội 1886.7 ms. Tiến trình backend 5 → 1 nhưng tổng tiến trình 5 → 7, tổng working set 357.0 MiB → 564.0 MiB: tổng working set của các tiến trình cao hơn; chưa đo bộ nhớ vật lý riêng. Một echo không đại diện dịch vụ thực nặng; 1.5 GB phía trên là giả định riêng, không phải số đo. [BENCHMARK.md](../BENCHMARK.md)
-
-Đã đo tổng working set của các tiến trình; chưa đo bộ nhớ vật lý loại trừ phần tính trùng hay private bytes (bộ nhớ riêng của tiến trình).
-
-<a id="mechanism"></a>
-
-## Cách hoạt động
-
-Thêm backend mà không khởi động lại kết nối MCP hiện tại của tác nhân: đồng bộ các mục mới, hoàn tất công việc đang chạy rồi chỉ khởi động lại gateway thuộc quyền quản lý; bộ kết nối hiện tại sẽ kết nối lại. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
-
-Kiểm thử SDK/stdio giữ nguyên bộ kết nối và kết nối MCP để tìm bí danh mới và gọi echo sau khởi động lại; chưa kiểm thử giao diện hội thoại của từng sản phẩm. Không tự động hot reload; xung đột cần xem xét. Đăng ký ban đầu hoặc nâng cấp runtime có thể cần khởi động lại ứng dụng khách. Không phát lại lời gọi gián đoạn. Sau khi khởi động lại, hãy yêu cầu lại quyền truy cập độc quyền.
-
-Đây không phải nền tảng quản trị API doanh nghiệp.
-
-Gateway luôn cung cấp 6 công cụ cho tác nhân: 4 công cụ để tìm và gọi chức năng, cùng 2 công cụ cho tích hợp chỉ cho phép một phiên truy cập tại một thời điểm. Thêm kết nối không làm tăng giao diện ban đầu; lược đồ đầy đủ chỉ được tải cho công cụ đã chọn. Các kết nối bạn đã cấu hình và xác thực được dùng lại, không cài đặt dịch vụ hoặc cung cấp thông tin xác thực.
-
-```text
-Tác nhân A ─┐                           ┌─ Tích hợp A: nhiều công cụ
-Tác nhân B ─┼─ bộ kết nối ─ MCPGateway ─┼─ Tích hợp B: nhiều công cụ
-Tác nhân C ─┘                           └─ Tích hợp C: nhiều công cụ
-```
-
-Nhiều tác nhân truy cập MCPGateway qua cùng một bộ kết nối; các backend đã cấu hình được chọn sẽ được kết nối khi cần. Sơ đồ minh họa cơ chế chia sẻ, không phải kết quả benchmark hay kiểm chứng khi chạy, và không có nghĩa là khởi động mọi backend.
+**Ngừng dùng:** Hoàn tất công việc và lời gọi, khôi phục hoặc loại bỏ bộ kết nối của ứng dụng khách liên quan, rồi theo bàn giao người vận hành để xác minh gateway do mình quản lý đã dừng. Hoàn tác cấu hình không dừng tiến trình. Giữ trạng thái riêng tư, thông tin xác thực, lịch sử và tiến trình không liên quan. [Exit](../REFERENCE.md#planned-exit)
 
 <a id="clients"></a>
-## Cài đặt và nâng cấp theo ứng dụng khách
+Đây là bản tổng quan tiếng Việt. Phương pháp, nguồn số liệu và vận hành chi tiết ở tài liệu tiếng Anh. Hỗ trợ ứng dụng khách native không chứng nhận người dùng thực hiểu bản dịch này. [CLIENTS](../CLIENTS.md) · [REFERENCE](../REFERENCE.md) · [BENCHMARK](../BENCHMARK.md)
 
-> Đây là phần tổng quan đã được bản địa hóa. Bản [README](../../README.md) tiếng Anh và hướng dẫn ứng dụng khách tiếng Anh được liên kết bên dưới là nguồn chính thức cho cài đặt đầy đủ, nâng cấp và chi tiết kỹ thuật.
-
-<details>
-<summary>Cài đặt và nâng cấp theo ứng dụng khách</summary>
-
-Ví dụ, Copilot có **10** kết nối; chủ động di chuyển **2** kết nối mới từ cấu hình Claude được hỗ trợ sẽ cho phép hai tác nhân cùng dùng **12** kết nối.
-
-- Chỉ cài plugin không tự hợp nhất cấu hình. Mục trùng tên chỉ được loại bỏ bản sao khi định nghĩa bí danh giống hệt; cùng trỏ đến một dịch vụ là chưa đủ. Xung đột sẽ dừng quy trình để xem xét.
-- Di chuyển hiển thị bản xem trước, tạo bản sao lưu và từ chối thiết lập native không được hỗ trợ.
-- Điều này không có nghĩa mọi ứng dụng khách native đều được kiểm thử đầu cuối. [Hướng dẫn di chuyển (tiếng Anh)](../CLIENTS.md#cross-client-migration).
-
-| Ứng dụng khách | Cài đặt | Nâng cấp | Thiết lập ban đầu bắt buộc | Mức kiểm chứng |
-|---|---|---|---|---|
-| GitHub Copilot CLI | [Cài đặt](../CLIENTS.md#copilot-cli-install) | [Nâng cấp](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Quy trình marketplace/thiết lập; phân tích cô lập](../CLIENTS.md#compatibility-summary) |
-| VS Code (trình soạn thảo) | [Cài đặt](../CLIENTS.md#vs-code-install) | [Nâng cấp](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [Cài đặt](../CLIENTS.md#claude-code-install) | [Nâng cấp](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã phân tích cấu hình cô lập; không chạy mô hình/backend](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [Cài đặt](../CLIENTS.md#codex-install) | [Nâng cấp](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kiểm chứng ứng dụng gốc bị chính sách chặn](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [Cài đặt](../CLIENTS.md#opencode-install) | [Nâng cấp](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [Cài đặt](../CLIENTS.md#qwen-code-install) | [Nâng cấp](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [Cài đặt](../CLIENTS.md#kimi-cli-install) | [Nâng cấp](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [Cài đặt](../CLIENTS.md#antigravity-cli-install) | [Nâng cấp](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Đã thử adapter đăng ký/định dạng; chưa thử phiên ứng dụng gốc toàn trình](../CLIENTS.md#compatibility-summary) |
-
-</details>
-
-**Tài liệu vận hành (tiếng Anh):** [Xem tài liệu vận hành](../REFERENCE.md)
-
-**Giấy phép:** [MIT](../../LICENSE)
+MIT — [LICENSE](../../LICENSE).

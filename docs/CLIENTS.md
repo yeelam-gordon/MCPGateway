@@ -67,6 +67,11 @@ Checked against official documentation on 2026-09-24. Installed Copilot CLI and 
 
 Every client registration below points to the same stable stdio connector. Today, the supported way to create that connector and its private backend catalog is the Copilot setup workflow. Do not present `connect-client.mjs` as a standalone fresh installer for another client.
 
+<a id="copilot-plugin-eligibility"></a>
+### Check Copilot plugin eligibility
+
+In your installed Copilot CLI, open `/help` and confirm `/plugin` is listed, then use `/plugin` to inspect plugin/marketplace support before attempting the commands below. These commands are present in the installed CLI help checked for this documentation; no minimum release version is inferred. If absent, consult the [official CLI guide](https://docs.github.com/copilot/how-tos/use-copilot-agents/use-copilot-cli) and [Copilot upgrade route](#copilot-cli-upgrade); do not bypass managed installation policy.
+
 <a id="shared-core-install"></a>
 ### Install the shared core
 

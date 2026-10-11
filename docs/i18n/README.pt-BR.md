@@ -1,145 +1,53 @@
-# MCPGateway — Compartilhe servidores MCP locais entre sessões de agentes de programação
+# MCPGateway — Compartilhe backends MCP locais entre sessões de programação
 
 <a id="languages"></a>
 <details>
-<summary>Languages / 语言 / 言語 / اللغات (16)</summary>
+<summary>Languages (16)</summary>
 
 [English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português (Brasil)](README.pt-BR.md) · [Italiano](README.it.md) · [Русский](README.ru.md) · [العربية](README.ar.md) · [हिन्दी](README.hi.md) · [Bahasa Indonesia](README.id.md) · [Türkçe](README.tr.md) · [Tiếng Việt](README.vi.md)
 
 </details>
 
-Compartilhe backends MCP locais entre sessões: evite RAM duplicada, use backends já iniciados e adicione backends por configuração sem reiniciar a conexão MCP atual do agente (rota SDK/stdio; o ganho líquido depende da sobrecarga).
+Várias sessões, um conjunto de backends: evite memória duplicada e inicializações repetidas. A rota SDK/stdio verificada mantém a conexão MCP existente ao adicionar configuração (conexão existente do seu agente ao gateway).
 
-[Comece via Copilot CLI](#first-use) · [Verificação dos clientes](../CLIENTS.md#compatibility-summary) · [Evidência](#resource-examples)
+[Começar](#first-use) · [Compatibilidade (inglês)](../CLIENTS.md#compatibility-summary) · [Evidências e limites (inglês)](../BENCHMARK.md) · [Atualizações do Copilot](../CLIENTS.md#copilot-cli-upgrade)
 
-<img src="../../assets/mcp-gateway-benefits.png" alt="Reutilize RAM e trabalho de inicialização de backends pesados, sem uma cópia por sessão." width="780">
+<img src="../../assets/mcp-gateway-benefits.png" alt="Cópias de backends viram um conjunto compartilhado; inicializações são reutilizadas; no experimento SDK/stdio, a conexão MCP existente permanece após reiniciar o gateway sob sua autoridade com o trabalho concluído." width="780">
 
-Conceito com rótulos em inglês, não captura nem benchmark.
+Ilustração conceitual com rótulos em inglês, não uma captura de tela ou benchmark. [SVG](../../assets/mcp-gateway-benefits.svg)
 
-- **Evite memória de backends duplicados:** Ilustração: 5 × 1.5 GB → um conjunto; 6 GB de duplicação evitada **antes** da sobrecarga do gateway e conectores, não economia medida.
-- **Evite iniciar os mesmos backends novamente:** Se as 5 sessões usarem os 12 serviços stdio: 60 → 12 inicializações de backend, não inicialização 80% mais rápida.
-- **Adicione apenas configuração; mantenha a conexão do agente:** SDK/stdio: 1 inicialização sobrevive ao reinício do gateway próprio após concluir o trabalho; o conector permanece, sem recarga automática nem UI nativa de conversa verificada. Registro inicial ou atualização do runtime podem exigir reiniciar o cliente. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
+- **Evite duplicar a memória dos backends:** Na hipótese de compartilhar 5 × 1.5 GB em um conjunto, evitam-se 6 GB de duplicação **antes** da sobrecarga do gateway e dos conectores. Não é economia líquida medida.
+- **Reutilize o trabalho de inicialização:** Se as cinco sessões usam os doze serviços stdio, as inicializações passam de 60 → 12. Não significa iniciar 80% mais rápido.
+- **Mantenha a conexão MCP existente:** O experimento SDK/stdio manteve a conexão após apenas adicionar configuração e reiniciar o gateway sob sua autoridade depois de concluir o trabalho. Não demonstra hot reload, continuidade de chamadas ativas nem a preservação da conexão em todas as interfaces nativas de conversa. Registro inicial e upgrades do runtime podem exigir reiniciar o cliente. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
-Indicado para várias sessões com o mesmo backend e catálogo; uma sessão ou backends leves podem não compensar a sobrecarga.
+<a id="resource-examples"></a>
+**Quando usar ou dispensar:** Para várias sessões com o mesmo conector e catálogo. MCP direto pode ser mais simples para uma sessão ou backends leves. O teste leve aumentou o working set somado dos processos de 357.0 → 564.0 MiB; a primeira solicitação compartilhada, da inicialização de um gateway novo ao primeiro resultado útil, levou 1886.7 ms contra 503.5 ms direto. O ganho líquido depende da sobrecarga. [BENCHMARK](../BENCHMARK.md#sharing-model-and-evidence)
 
 <a id="first-use"></a>
-## Primeira configuração e chamada
+## Primeiro resultado útil: uma leitura autorizada pelo gateway
 
-**Pré-requisitos:** Node.js 24 ou mais recente, npm, Git, Copilot CLI com plugins e serviços MCP já configurados e autenticados. A instalação inicial exige Copilot CLI; Windows é a principal plataforma testada e Agency é opcional. A compatibilidade e o nível de verificação variam entre clientes.
+Requer Node.js 24+, npm, Git, Copilot CLI com plugins e integrações MCP já configuradas e autenticadas. A instalação inicial passa pelo Copilot CLI; Windows é a principal plataforma testada. A verificação varia entre clientes. [Copilot `/help` · `/plugin`](../CLIENTS.md#copilot-plugin-eligibility).
 
-Configurações e backups podem conter credenciais: mantenha-os privados e aprove apenas as mudanças pretendidas.
-
-[Saída e runtime persistente](../REFERENCE.md#planned-exit) · [Restaurar a configuração não encerra o processo persistente do gateway (rollback ≠ daemon shutdown)](../REFERENCE.md#setup-recovery)
+**Antes de instalar:** Configuração, catálogo privado e backups podem conter credenciais: não publique. Backends podem acessar serviços remotos. Um runtime persistente é instalado; restaurar configuração ou remover o plugin não encerra o gateway. [REFERENCE](../REFERENCE.md#planned-exit) O estado privado local e os tokens salvos do gateway têm acesso restrito ao proprietário, sem criptografia adicional.
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
 copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
-1. Após instalar o plugin, abra o Copilot CLI e execute `/mcp-gateway-setup`. Revise a prévia antes de aprovar as alterações desejadas. Feche e reabra o Copilot; execute o `readinessCommand` exato recebido. Guarde os comandos de backup e reversão. Instalar apenas o plugin não mescla configurações.
+1. Abra o Copilot CLI e execute `/mcp-gateway-setup`. Revise a prévia e aprove apenas as alterações desejadas. Guarde backups privados e comandos de reversão. O plugin sozinho não mescla configurações.
+2. Feche e reabra o Copilot; execute o `readinessCommand` exato retornado seguindo a explicação do objeto de comando. Uma verificação não inicia um gateway ausente. [readinessCommand](../REFERENCE.md#readiness-command-object) Salve apenas o objeto JSON retornado; `.command` é o executável aprovado e `.args` contém os argumentos exatos na ordem original.
+3. Escolha uma leitura inofensiva e autorizada em uma integração existente. Substitua apenas a tarefa entre colchetes; obtenha aliases, ferramentas e argumentos pela descoberta e pelo esquema, sem inventá-los.
 
-`readinessCommand` é o objeto retornado, não uma string de shell. Atribua a `$readinessCommand` esse objeto exato do resultado da configuração aprovada e execute o exemplo PowerShell. `.command` preserva o caminho do executável e `.args` todos os argumentos em ordem, incluindo caminhos com espaços ou aspas. Não junte o array nem invente caminhos. A verificação não inicia um gateway ausente.
+> Use o gateway para [minha leitura autorizada]. Execute `list_servers`, uma busca focada com `search_tools` e `get_tool_schema`; prepare argumentos válidos com valores de teste autorizados e não sensíveis. Obtenha as aprovações normais. Se `requiresExclusiveAccess: true`, use `claim_server` uma vez antes de `call_tool` e `release_server` após todas as chamadas terminarem; backends não exclusivos dispensam reserva. Mostre o registro real ou um resultado vazio documentado e confira erros, não apenas a resposta do gateway. Se o resultado for desconhecido, não repita: mantenha o bloqueio e encaminhe em privado ao responsável pela instalação.
 
-Salve apenas o objeto JSON `readinessCommand` do resultado de configuração aprovado, não toda a saída, como UTF-8 `readiness-command.json` na pasta atual privada. Preserve exatamente o executável conhecido e aprovado `.command` e todos os `.args`; não junte argumentos nem invente caminhos. Analise apenas esse JSON de configuração, não dados arbitrários da web ou de serviços; analisar JSON não avalia código. Mantenha o arquivo privado: os argumentos dependem da configuração.
+4. Em outra sessão com o mesmo conector e catálogo, consulte o mesmo alias: espere `ready` e as mesmas capacidades. Isso verifica descoberta compartilhada, não identidade do processo ou economia de RAM. [MCP](../REFERENCE.md#first-shared-workflow) [Exemplo público de echo e resultado](../REFERENCE.md#public-echo-illustration).
 
-```powershell
-$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
-$command = $readinessCommand.command
-$commandArgs = @($readinessCommand.args)
-& $command @commandArgs
-```
+**Se falhar:** Catálogo vazio: confira configuração e prévia; pesquise termos das descrições do backend. Siga a referência para autenticação ou prontidão, sem processo paralelo de contorno. Liberar ou desconectar não cancela nem desbloqueia com segurança um resultado exclusivo desconhecido. Confira o resultado, coordene o reinício do gateway sob sua autoridade e reserve novamente. [Authentication](../REFERENCE.md#native-http-oauth) · [Recovery](../REFERENCE.md#setup-recovery) · [Unknown outcome](../REFERENCE.md#unknown-exclusive-result)
 
-Descoberta e esquema não exigem reserva; se `requiresExclusiveAccess: true`, use `claim_server` antes de `call_tool`.
-
-> Use o gateway para [minha tarefa de leitura autorizada]: liste servidores, descubra a ferramenta e inspecione o esquema; prepare argumentos com valores de teste autorizados e não sensíveis. Obtenha as aprovações normais, reserve antes da execução exclusiva e libere após todas as chamadas. Mostre o resultado real. Não repita um resultado desconhecido: encaminhe ao responsável pela instalação.
-
-[SDK tool flow: `list_servers` → `search_tools` → `get_tool_schema` → `claim_server` (exclusive) → `call_tool` → `release_server`](../../README.md#first-use) · [REFERENCE](../REFERENCE.md#unknown-exclusive-result)
-
-2. Chame `list_servers` com `{}`: devem aparecer os aliases, estados e indicadores de exclusividade dos serviços existentes. Escolha um backend autorizado, pesquise um termo da tarefa com `search_tools` e obtenha o esquema da ferramenta com `get_tool_schema`. Monte os argumentos conforme esse esquema e faça uma leitura aprovada com `call_tool`. Confira o registro esperado ou um resultado vazio documentado; uma resposta do gateway não comprova, por si só, o sucesso da leitura.
-3. Se `requiresExclusiveAccess: true`, use `claim_server` antes da chamada e `release_server` após todas as chamadas terminarem. Backends não exclusivos dispensam reserva. Se houver timeout com resultado desconhecido, não repita a chamada: revise o trabalho ativo e coordene a reinicialização. Se o resultado for desconhecido, o backend exclusivo permanece bloqueado até o gateway ser reiniciado; liberar a reserva ou desconectar o cliente não desbloqueia o backend com segurança, e desconectar não cancela a operação.
-4. Em outra sessão com o mesmo conector e catálogo, repita `list_servers` / `search_tools` para o mesmo alias. Espere `ready` no backend inicializado e recursos do mesmo catálogo. O alias igual não prova identidade do processo nem economia de RAM; veja o teste público de reutilização. [Método de reutilização de processos](../BENCHMARK.md#method) · [Teste de cache do catálogo](../../test/catalog-scale.test.js)
-
-Se o catálogo estiver vazio, confira a configuração selecionada e a prévia da migração. Se não houver correspondências, use um termo mais específico das descrições de ferramentas do próprio backend; não há nome universal. Em erros de autenticação ou prontidão, siga a [autenticação](../REFERENCE.md#native-http-oauth) e a [recuperação/reversão](../REFERENCE.md#setup-recovery), sem repetir chamadas nem iniciar processo paralelo para contornar o gateway.
-
-[Exemplo completo em inglês](../../README.md#first-use) · [Compatibilidade e limites](../CLIENTS.md#compatibility-summary)
-
-## Limites, privacidade e recuperação
-
-Encontrar este repositório pelo Claude Code, Codex, Gemini CLI, Kimi ou Qwen CLI não garante integração nativa. Não há uma rota de instalação documentada para Gemini CLI; Antigravity é outro cliente. Kimi tem apenas testes do adaptador. Configurações e backups podem conter credenciais: não os publique. Os backends podem acessar serviços remotos; compartilhar não significa operar offline nem garante economia fixa de RAM ou tokens.
-
-Antes de parar de usar, conclua os fluxos ativos e aguarde o fim das chamadas. Restaurar a configuração do cliente não encerra o runtime persistente. Siga a [saída e entrega ao operador (inglês)](../REFERENCE.md#planned-exit) e verifique o estado final; preserve os dados privados e as credenciais e não encerre processos não relacionados.
-
-[Privacidade](../REFERENCE.md#state-and-privacy) · [Recuperação e reversão](../REFERENCE.md#setup-recovery)
-
-<a id="resource-examples"></a>
-
-**Evite RAM de backends duplicados**
-
-Hipótese ilustrativa, não benchmark: 5 sessões precisam das mesmas 12 conexões; um conjunto completo de backends usa 1.5 GB. Sessões compatíveis compartilham processos reais pelo mesmo conector e catálogo.
-
-| Implantação | RAM dos backends |
-|---|---|
-| Cópias independentes | 5 × 1.5 GB = 7.5 GB |
-| Conjunto compartilhado | 1.5 GB + sobrecarga do gateway e dos conectores |
-
-RAM duplicada evitada antes da sobrecarga: 7.5 GB - 1.5 GB = 6 GB. A economia total só será conhecida após medição. 1.5 GB não é constante entre cargas ou clientes; não se economiza a RAM de cinco modelos.
-
-**Reutilize também o trabalho de inicialização.** Se as 5 sessões usarem os 12 serviços stdio, cópias exigem até `5 × 12 = 60` inicializações contra `12` compartilhadas: `60 - 12 = 48` duplicadas evitadas, `48 / 60 × 100 = 80%` menos inicializações. A conexão sob demanda conecta apenas `k` backends usados; os não usados não iniciam. É contagem de operações, não inicialização 80% mais rápida. A latência não foi medida; concorrência, autenticação e plataforma afetam o tempo.
-
-1000 ferramentas → 6 definições iniciais: (1000 - 6) / 1000 × 100 = 99.4% menos definições, não tokens. Os esquemas solicitados depois têm custo; clientes que já adiam o carregamento podem ganhar menos. O teste de catálogo sintético verifica seis ferramentas e cache compartilhado entre dois clientes, não desempenho RSS. [catalog-scale.test.js](../../test/catalog-scale.test.js)
-
-**Cenário de teste leve medido: aumentou o working set somado dos processos (soma da memória residente)** Medianas de 3 testes, Windows x64 / Node 24.13.1: esquema + echo compartilhado 426.2 ms com backend frio, 21.1 ms no segundo cliente, 19.0 ms no quinto. Total do primeiro cliente: 503.5 ms direto, 894.3 ms compartilhado com gateway pronto; inicialização compartilhada com todos os processos ainda não iniciados 1886.7 ms. Processos backend 5 → 1, mas processos totais 5 → 7 e working set somado 357.0 MiB → 564.0 MiB: working set somado dos processos maior; memória física única não medida. Um único echo não representa serviços reais pesados; 1.5 GB acima é outra hipótese, não medição. [BENCHMARK.md](../BENCHMARK.md)
-
-Mediu-se o working set somado dos processos; memória física sem duplicação e bytes privados (private bytes) não foram medidos.
-
-<a id="mechanism"></a>
-<a id="reutilize-backends-e-descubra-ferramentas-sob-demanda"></a>
-
-## Como funciona
-
-Adicione backends sem reiniciar a conexão MCP atual do agente: sincronize as adições, conclua o trabalho ativo e reinicie apenas o gateway próprio; o conector atual reconecta. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
-
-O teste SDK/stdio mantém o mesmo conector e conexão MCP para descobrir novo alias e executar echo após reiniciar; não testa interfaces de conversa de cada marca. Não há recarga automática; conflitos exigem revisão. Registro inicial ou atualização do runtime podem exigir reiniciar o cliente. Chamadas interrompidas não são repetidas; reserve novamente o acesso exclusivo após reiniciar.
-
-Não é uma plataforma corporativa de governança de APIs.
-
-O gateway sempre apresenta 6 ferramentas ao agente: 4 para descobrir e chamar recursos e 2 para integrações que exigem um fluxo exclusivo. Adicionar conexões não aumenta essa interface inicial; o esquema completo só é carregado para a ferramenta escolhida. As conexões já configuradas e autenticadas são reutilizadas, sem instalar serviços nem fornecer credenciais.
-
-```text
-Agente A ─┐                         ┌─ Integração A: várias ferramentas
-Agente B ─┼─ conector ─ MCPGateway ─┼─ Integração B: várias ferramentas
-Agente C ─┘                         └─ Integração C: várias ferramentas
-```
-
-Vários agentes acessam o MCPGateway pelo mesmo conector; a conexão com os backends configurados selecionados ocorre sob demanda. O diagrama ilustra o compartilhamento: não é um benchmark nem uma verificação em execução, e não significa iniciar todos os backends.
+**Parar de usar:** Conclua trabalhos e chamadas, restaure ou remova os conectores dos clientes afetados e siga a coordenação com o operador responsável para confirmar que o gateway sob sua autoridade parou. Reverter configuração não encerra o processo. Preserve estado privado, credenciais, histórico e processos alheios. [Exit](../REFERENCE.md#planned-exit)
 
 <a id="clients"></a>
-## Instalação e atualização por cliente
+Este é um resumo localizado. Métodos, origem dos números e detalhes operacionais estão nos guias em inglês. Suporte nativo a clientes não certifica compreensão humana desta tradução. [CLIENTS](../CLIENTS.md) · [REFERENCE](../REFERENCE.md) · [BENCHMARK](../BENCHMARK.md)
 
-> Esta é uma visão geral localizada. O [README](../../README.md) em inglês e o guia de clientes em inglês vinculado abaixo são as fontes oficiais para instalação completa, atualização e detalhes técnicos.
-
-<details>
-<summary>Instalação e atualização por cliente</summary>
-
-Um catálogo MCP compartilhado pode atender vários agentes. Por exemplo, comece com **10** conexões no Copilot e migre explicitamente uma configuração compatível do Claude com **2** novas conexões: ambos os agentes poderão usar as mesmas **12**.
-
-- Instalar apenas o plugin não mescla as configurações. Entradas com o mesmo nome só são deduplicadas se as definições de alias forem idênticas; apontar para o mesmo serviço não basta. Conflitos interrompem o processo para revisão.
-- A migração mostra primeiro uma prévia, cria backup e rejeita configurações nativas incompatíveis.
-- Isso não significa que todos os clientes nativos foram testados de ponta a ponta. Consulte o [guia de migração (inglês)](../CLIENTS.md#cross-client-migration).
-
-| Cliente | Instalação | Atualização | Instalação inicial obrigatória | Nível de verificação |
-|---|---|---|---|---|
-| GitHub Copilot CLI | [Instalar](../CLIENTS.md#copilot-cli-install) | [Atualizar](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Rota de marketplace/configuração; análise isolada](../CLIENTS.md#compatibility-summary) |
-| VS Code (editor) | [Instalar](../CLIENTS.md#vs-code-install) | [Atualizar](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [Instalar](../CLIENTS.md#claude-code-install) | [Atualizar](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Configuração isolada analisada; sem modelo/backend](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [Instalar](../CLIENTS.md#codex-install) | [Atualizar](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Validação nativa bloqueada por política](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [Instalar](../CLIENTS.md#opencode-install) | [Atualizar](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [Instalar](../CLIENTS.md#qwen-code-install) | [Atualizar](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [Instalar](../CLIENTS.md#kimi-cli-install) | [Atualizar](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [Instalar](../CLIENTS.md#antigravity-cli-install) | [Atualizar](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Adaptador de registro/formato testado; sem sessão nativa completa](../CLIENTS.md#compatibility-summary) |
-
-</details>
-
-**Referência operacional (inglês):** [Consultar a referência operacional](../REFERENCE.md)
-
-**Licença:** [MIT](../../LICENSE)
+MIT — [LICENSE](../../LICENSE).

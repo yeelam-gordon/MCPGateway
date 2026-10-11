@@ -4,6 +4,7 @@ This document contains detailed operating, recovery, ownership, and transfer gui
 
 ## Contents
 
+- [First shared workflow](#first-shared-workflow)
 - [Tool discovery and capacity](#tool-discovery-and-capacity)
 - [Concurrent terminal resume](#concurrent-terminal-resume)
 - [Workflow ownership](#workflow-ownership)
@@ -394,3 +395,31 @@ OpenCode migration conservatively rejects any root or agent-level `permission` o
 - Preserve unknown client fields and unrelated entries; refuse conflicts instead of guessing.
 - Do not expose private environment values in generated command lines.
 - Do not treat configuration-adapter tests as proof of a live third-party client session. Installed native config parsing is currently verified only for Copilot CLI and Claude Code.
+
+
+<a id="first-shared-workflow"></a>
+## First shared workflow: exact inputs and result checks
+
+Install once through [the Copilot shared-core route](CLIENTS.md#shared-core-install); use the [readiness object](#readiness-command-object). The following manual tool inputs are an alternative to the assisted request, not extra installation steps.
+
+> Use the shared gateway for [my authorized read-only task]: list configured servers, discover a suitable tool, inspect its schema and prepare schema-valid arguments using authorized non-sensitive test values. Obtain normal approvals; claim an exclusive backend before calling it and release after calls settle. Show the actual result. Never retry an unknown outcome; use the operator handoff.
+
+Replace only the bracketed task; actual aliases/tool names come from discovery, not invented defaults.
+
+<a id="public-echo-illustration"></a>
+**Public fixture illustration, not a backend installation step or real-integration proof:** the existing [lifecycle echo fixture](../test/fixtures/lifecycle-backend.mjs) advertises `echo` with required string `text`. In that isolated test only, arguments `{"text":"hello"}` produce `structuredContent` with `text: "hello"` and the actual numeric backend `pid`; the text content contains the same JSON. Check returned text equality and errors. See [the fixture workflow](../test/lifecycle-e2e.test.js). This demonstrates what an observable result check looks like; neither `echo` nor a fixture alias is a default tool on your private integration. Use discovery/schema for your own approved read.
+
+2. Choose a harmless, authorized read-only task on an integration you already use: for example, look up a record you are allowed to read. In that client, use the gateway tool calls below. These are **tool inputs, not shell commands**. Angle-bracket values are **placeholders**, not shipped aliases, tool names, credentials, or literal arguments. Replace them with values from your own catalog and selected schema; do not submit the templates unchanged.
+
+   | Step | Gateway tool and input | Expected observable result |
+   |---|---|---|
+   | List configured integrations | `list_servers` with `{}` | `servers` lists redacted entries with `name`, `state`, and `requiresExclusiveAccess`; listing does not connect to every backend. Choose an existing `name` as `<backend-alias>`. |
+   | Find a read-only capability | `search_tools` with `{"server":"<backend-alias>","query":"<term-from-your-task>"}` | `tools` contains matching names/descriptions and the ownership flag, not full input schemas. Choose a returned `name` as `<returned-tool-name>` after checking what it does. |
+   | Inspect that tool | `get_tool_schema` with `{"server":"<backend-alias>","tool":"<returned-tool-name>"}` | The returned `tool.inputSchema` gives required fields, types, and constraints. Fill an arguments object from that schema using only authorized, non-sensitive test values. |
+   | Required ownership before execution | If `requiresExclusiveAccess: true`, use `claim_server` with `{"server":"<backend-alias>"}` before `call_tool` | Discovery/schema lookup do not require a claim; execution does. Non-exclusive backends need no claim. |
+   | Perform the approved read | `call_tool` with `{"server":"<backend-alias>","tool":"<returned-tool-name>","arguments":{}}` **only if the schema permits an empty object**; otherwise replace `{}` with the complete schema-valid object you just prepared | The backend's result is preserved. Check its actual content for the expected record or documented empty result and any error indication; a gateway response alone is not proof the read succeeded. |
+
+3. If discovery says `requiresExclusiveAccess: true`, use `claim_server` with `{"server":"<backend-alias>"}` once **before `call_tool`**, and `release_server` with the same input after all calls settle. Non-exclusive backends need no claim. If an exclusive call times out with an unknown outcome, do not retry: review active work and use the [unknown-exclusive-result operator handoff](#unknown-exclusive-result); releasing is not a safe unblock.
+4. In a second session registered to the **same connector and catalog**, repeat list/search for the same alias. It should expose the same configured backend, reusing its initialized catalog rather than requiring a second backend configuration. This checks the first shared workflow, not measured memory savings. Discovery is not permission to execute a tool. After initialization, `list_servers` should show `ready` and search should expose the same cached catalog. Alias equality alone does not prove PID identity or RAM savings; see the [public process-reuse fixture](BENCHMARK.md#method). [Catalog-cache test](../test/catalog-scale.test.js).
+
+If the list is empty, check the selected configuration/migration preview. If search returns no matches, use a narrower term from your backend's own tool descriptions; there is no universal backend tool name. For authentication errors or failed readiness, follow the [authentication guidance](#native-http-oauth) and [setup recovery/rollback](#setup-recovery), not repeated calls or a parallel bypass process. Backend requests can still contact remote services; local sharing does not make them offline.

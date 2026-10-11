@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="600" viewBox="0 0 1536 600">
+<title>Three shared-backend payoffs</title>
+<desc>Five backend sets become one shared set; repeated backend starts are reused; the same agent-side MCP connection survives a settled owned gateway restart in the SDK/stdio experiment.</desc>
+<rect width="1536" height="600" fill="#ffffff"/>
+<g fill="#f0f8fa" stroke="#b9dce3" stroke-width="2">
+<rect x="16" y="16" width="488" height="568" rx="24"/>
+<rect x="524" y="16" width="488" height="568" rx="24"/>
+<rect x="1032" y="16" width="488" height="568" rx="24"/>
+</g>
+<g font-family="Segoe UI,Arial,sans-serif" fill="#082547" text-anchor="middle">
+<g font-size="43" font-weight="700">
+<text x="260" y="78">Avoid duplicate</text><text x="260" y="132">backend memory</text>
+<text x="768" y="78">Reuse backend</text><text x="768" y="132">startup work</text>
+<text x="1276" y="78">Keep the existing</text><text x="1276" y="132">MCP connection</text>
+</g>
+<g font-size="31"><text x="260" y="202">5 backend sets</text><text x="768" y="202">5 sessions × 12 starts</text><text x="1276" y="202">Configuration additions</text></g>
+</g>
+<!-- Backend sets, not models or conversations. -->
+<g fill="#f8dfa6" stroke="#b77b13" stroke-width="3">
+<rect x="63" y="235" width="62" height="73" rx="8"/><rect x="146" y="235" width="62" height="73" rx="8"/><rect x="229" y="235" width="62" height="73" rx="8"/><rect x="312" y="235" width="62" height="73" rx="8"/><rect x="395" y="235" width="62" height="73" rx="8"/>
+</g>
+<g stroke="#b77b13" stroke-width="4"><path d="M75 257h38m-38 24h38M158 257h38m-38 24h38M241 257h38m-38 24h38M324 257h38m-38 24h38M407 257h38m-38 24h38"/></g>
+<g fill="none" stroke="#082547" stroke-width="5"><path d="M94 321v30h332v-30M260 351v37"/></g>
+<path d="M244 376l16 20 16-20" fill="none" stroke="#082547" stroke-width="5"/>
+<rect x="218" y="408" width="84" height="88" rx="10" fill="#7dd4d0" stroke="#087b83" stroke-width="4"/>
+<path d="M234 430h52m-52 23h52m-52 23h52" stroke="#087b83" stroke-width="5"/>
+<text x="260" y="548" font-family="Segoe UI,Arial,sans-serif" font-size="32" font-weight="700" fill="#087b83" text-anchor="middle">1 shared set</text>
+<!-- Repeated startup work converges into shared work; icons are schematic. -->
+<g fill="#f8dfa6" stroke="#b77b13" stroke-width="3"><circle cx="610" cy="275" r="26"/><circle cx="688" cy="275" r="26"/><circle cx="766" cy="275" r="26"/><circle cx="844" cy="275" r="26"/><circle cx="922" cy="275" r="26"/></g>
+<g fill="#b77b13"><path d="M602 261l21 14-21 14zM680 261l21 14-21 14zM758 261l21 14-21 14zM836 261l21 14-21 14zM914 261l21 14-21 14z"/></g>
+<path d="M768 326v67m-17-17 17 20 17-20" fill="none" stroke="#082547" stroke-width="5"/>
+<circle cx="768" cy="452" r="45" fill="#7dd4d0" stroke="#087b83" stroke-width="4"/>
+<path d="M760 430l29 22-29 22z" fill="#087b83"/>
+<text x="768" y="548" font-family="Segoe UI,Arial,sans-serif" font-size="32" font-weight="700" fill="#087b83" text-anchor="middle">12 shared starts</text>
+<!-- Connection retained across an idle owned gateway replacement, not active calls. -->
+<rect x="1076" y="307" width="84" height="60" rx="6" fill="#cee1f4" stroke="#082547" stroke-width="4"/>
+<path d="M1076 367l-10 13h104l-10-13" fill="#cee1f4" stroke="#082547" stroke-width="4"/>
+<path d="M1170 344h52m94 0h37" stroke="#087b83" stroke-width="7"/>
+<rect x="1222" y="300" width="94" height="94" rx="14" fill="#7dd4d0" stroke="#087b83" stroke-width="4"/>
+<path d="M1238 343a31 31 0 0 1 49-23m-2-10 4 17-17-2M1299 351a31 31 0 0 1-49 23m2 10-4-17 17 2" fill="none" stroke="#087b83" stroke-width="5"/>
+<rect x="1353" y="308" width="122" height="74" rx="10" fill="#cee1f4" stroke="#082547" stroke-width="4"/>
+<path d="M1390 345h48m-24-24v48" stroke="#087b83" stroke-width="6"/>
+<g font-family="Segoe UI,Arial,sans-serif" font-size="27" fill="#082547" text-anchor="middle"><text x="1118" y="431">Agent</text><text x="1269" y="431">Gateway</text><text x="1414" y="431">New</text><text x="1414" y="466">backend</text></g>
+<text x="1276" y="515" font-family="Segoe UI,Arial,sans-serif" font-size="29" font-weight="700" fill="#087b83" text-anchor="middle">Settled owned restart</text>
+<text x="1276" y="553" font-family="Segoe UI,Arial,sans-serif" font-size="29" fill="#082547" text-anchor="middle">SDK/stdio experiment</text>
+</svg>

@@ -15,6 +15,8 @@ npm run test:migration
 npm run test:lifecycle
 ```
 
+`npm run setup` previews only. Use `npm run setup -- --apply` only after reviewing the preview. The lifecycle suite uses isolated fixtures rather than personal credentials or production services.
+
 Keep paths portable across Ubuntu and Windows. In particular, test paths containing spaces and avoid assumptions about shell quoting or path separators.
 
 ## Changes and tests

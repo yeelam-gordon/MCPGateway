@@ -1,142 +1,53 @@
-# MCPGateway — Kodlama ajanı oturumları arasında yerel MCP sunucularını paylaşın
+# MCPGateway — Programlama oturumları arasında yerel MCP arka uçlarını paylaşın
 
 <a id="languages"></a>
 <details>
-<summary>Languages / 语言 / 言語 / اللغات (16)</summary>
+<summary>Languages (16)</summary>
 
 [English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português (Brasil)](README.pt-BR.md) · [Italiano](README.it.md) · [Русский](README.ru.md) · [العربية](README.ar.md) · [हिन्दी](README.hi.md) · [Bahasa Indonesia](README.id.md) · [Türkçe](README.tr.md) · [Tiếng Việt](README.vi.md)
 
 </details>
 
-Yerel MCP arka uçlarını paylaşın: yinelenen RAM kullanımını önleyin, çalışan arka uçları yeniden kullanın ve yapılandırmaya arka uç eklerken mevcut ajan MCP bağlantısını yeniden başlatmadan koruyun (SDK/stdio yolu; net fayda ek yüke bağlı).
+Birden çok oturum tek arka uç kümesini kullanır: yinelenen bellek ve başlatma işinden kaçının. Doğrulanan SDK/stdio yolu, yapılandırma eklenirken mevcut MCP bağlantısını korur (ajanınızdan ağ geçidine mevcut bağlantı).
 
-[Copilot CLI ile başlayın](#first-use) · [İstemci doğrulaması](../CLIENTS.md#compatibility-summary) · [Kanıt](#resource-examples)
+[Başlayın](#first-use) · [Uyumluluk (İngilizce)](../CLIENTS.md#compatibility-summary) · [Kanıt ve sınırlar (İngilizce)](../BENCHMARK.md) · [Copilot güncellemeleri](../CLIENTS.md#copilot-cli-upgrade)
 
-<img src="../../assets/mcp-gateway-benefits.png" alt="Sunucu sürecini yeniden kullanın; her oturum ayrı kopya başlatıp ayrı RAM tüketmesin." width="780">
+<img src="../../assets/mcp-gateway-benefits.png" alt="Arka uç kopyaları ortak kümeye dönüşür; başlatma işi yeniden kullanılır; SDK/stdio deneyinde iş tamamlandıktan sonra yönetilen ağ geçidi yeniden başlarken mevcut MCP bağlantısı korunur." width="780">
 
-İngilizce etiketli kavramsal görsel, çalışma ekranı veya performans testi değil.
+İngilizce etiketli kavramsal çizimdir; ekran görüntüsü veya performans ölçümü değildir. [SVG](../../assets/mcp-gateway-benefits.svg)
 
-- **Yinelenen arka uç belleğini önleyin:** Varsayımsal örnek: 5 × 1.5 GB → bir küme; ağ geçidi/bağlayıcı ek yükünden **önce** 6 GB tekrar önlenir, ölçülmüş tasarruf değildir.
-- **Tekrarlanan başlatma işini yeniden kullanın:** 5 oturumun tümü 12 stdio hizmetini kullanırsa: 60 → 12 arka uç başlatması, %80 daha hızlı başlangıç değil.
-- **Yalnız yapılandırma ekleyin; ajan bağlantısını koruyun:** SDK/stdio testinde bağlantı bir kez (1) ilklendirildi; etkin iş tamamlandıktan sonra yalnızca yönetilen ağ geçidi yeniden başlatıldığında mevcut MCP bağlantısı korundu ve bağlayıcı çalışmaya devam etti. Bu, hot reload değildir; istemcilerin kendi sohbet arayüzleriyle yapılan uçtan uca bir test de değildir. İlk kayıt/runtime yükseltmesi istemci yeniden başlatması gerektirebilir. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
+- **Yinelenen arka uç belleğinden kaçının:** Her biri 1.5 GB olan beş arka uç kümesinin (5 × 1.5 GB) tek kümede paylaşıldığı varsayımda ağ geçidi/bağlayıcı ek yükünden **önce** 6 GB yinelenen bellek kullanımı önlenir. Ölçülmüş net tasarruf değildir.
+- **Arka uç başlatma işini yeniden kullanın:** Beş oturumun tamamı on iki stdio hizmetini kullanırsa başlatma sayısı 60 → 12 olur. Bu, %80 daha hızlı başlangıç demek değildir.
+- **Mevcut MCP bağlantısını koruyun:** SDK/stdio deneyi yalnız yapılandırma eklenip işler bittikten sonra yönetilen ağ geçidi yeniden başlatıldığında bağlantıyı korudu. Hot reload, etkin çağrıların devamlılığı veya tüm yerel sohbet arayüzleri için kanıt değildir. İlk kayıt ve runtime yükseltmeleri istemci yeniden başlatması gerektirebilir. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
 
-Aynı arka uç ve kataloğu kullanan birden fazla oturum için uygun; tek oturum veya hafif arka uçlar ek yükü karşılamayabilir.
+<a id="resource-examples"></a>
+**Ne zaman kullanmalı veya atlamalı:** Aynı bağlayıcı ve katalogla çalışan birden çok oturum için. Tek oturum ya da hafif arka uçta doğrudan MCP daha basit olabilir. Hafif testte süreç working set toplamı 357.0 → 564.0 MiB oldu; yeni ağ geçidinin başlatılmasından ilk paylaşımlı isteğin yararlı sonucuna kadar geçen süre 1886.7 ms, doğrudan kullanım 503.5 ms idi. Net fayda ek yüke bağlıdır. [BENCHMARK](../BENCHMARK.md#sharing-model-and-evidence)
 
 <a id="first-use"></a>
-## İlk kurulum ve çağrı
+## İlk yararlı sonuç: ağ geçidinden izinli salt okunur işlem
 
-**Ön koşullar:** Node.js 24 veya üzeri, npm, Git, eklenti destekli Copilot CLI ve yapılandırılmış, kimliği doğrulanmış MCP hizmetleri. İlk kurulum şu anda Copilot CLI üzerinden yapılır; ana test platformu Windows’tur ve Agency isteğe bağlıdır. Uyumluluk ve doğrulama düzeyi istemciye göre değişir.
+Node.js 24+, npm, Git, eklenti destekli Copilot CLI ve yapılandırılmış, gerekli kimlik doğrulaması tamamlanmış MCP entegrasyonları gerekir. İlk kurulum Copilot CLI üzerinden; Windows ana test platformudur. Doğrulama düzeyi istemciye göre değişir. [Copilot `/help` · `/plugin`](../CLIENTS.md#copilot-plugin-eligibility).
 
-Yapılandırma ve yedekler kimlik bilgileri içerebilir: gizli tutun ve yalnız amaçlanan değişiklikleri onaylayın.
-
-[Çıkış ve kalıcı runtime](../REFERENCE.md#planned-exit) · [Yapılandırmayı geri yüklemek sürekli çalışan ağ geçidini durdurmaz (rollback ≠ daemon shutdown)](../REFERENCE.md#setup-recovery)
+**Kurulumdan önce:** Yapılandırma, özel katalog ve yedekler kimlik bilgileri içerebilir: yayımlamayın. Arka uçlar uzak hizmetlere bağlanabilir. Kalıcı runtime kurulur; yapılandırmayı geri yüklemek veya eklentiyi kaldırmak ağ geçidini durdurmaz. [REFERENCE](../REFERENCE.md#planned-exit) Yerel özel durum ve kayıtlı ağ geçidi tokenları yalnız sahibine açıktır; ayrıca şifrelenmez.
 
 ```powershell
 copilot plugin marketplace add yeelam-gordon/MCPGateway
 copilot plugin install shared-mcp-gateway@mcp-gateway
 ```
 
-1. Kurulumdan sonra Copilot CLI’yi açıp `/mcp-gateway-setup` çağırın. Önizlemeyi inceleyin ve yalnızca istediğiniz değişiklikleri onaylayın. Copilot’u kapatıp yeniden açın, döndürülen tam `readinessCommand` komutunu çalıştırın. Özel yedekleri ve geri alma komutlarını saklayın.
+1. Copilot CLI’yi açıp `/mcp-gateway-setup` çağırın. Önizlemeyi inceleyin ve yalnız istediğiniz değişiklikleri onaylayın. Özel yedekleri ve geri alma komutlarını saklayın. Eklenti tek başına yapılandırmaları birleştirmez.
+2. Copilot’u kapatıp yeniden açın; komut nesnesi açıklamasına göre döndürülen tam `readinessCommand` komutunu çalıştırın. Yalnız kontrol yapan komut çalışmayan ağ geçidini başlatmaz. [readinessCommand](../REFERENCE.md#readiness-command-object) Yalnız döndürülen JSON nesnesini kaydedin; `.command` onaylanan yürütülebilir dosya, `.args` ise tam ve sıralı argümanlarıdır.
+3. Mevcut entegrasyonda zararsız, izinli salt okunur görev seçin. Yalnız köşeli parantezdeki görevi değiştirin; takma ad, araç ve bağımsız değişkenleri keşif ve şemadan alın, tahmin etmeyin.
 
-`readinessCommand` dönen nesnedir, kabuk komut metni değildir. `$readinessCommand` değişkenine onaylı kurulum sonucundaki nesneyi aynen atayın ve PowerShell örneğini çalıştırın. `.command` dosya yolunu, `.args` boşluk veya tırnak içeren yollar dahil tüm bağımsız değişkenleri sırayla korur. Diziyi birleştirmeyin veya yol uydurmayın. Kontrol, çalışmayan ağ geçidini başlatmaz.
+> Ağ geçidini [izinli salt okunur görevim] için kullan. `list_servers`, hedefli `search_tools` ve `get_tool_schema` çalıştır; izinli, hassas olmayan test değerleriyle şemaya uygun bağımsız değişkenler hazırla. Normal onayları al. `requiresExclusiveAccess: true` ise `call_tool` öncesinde bir kez `claim_server`, bütün çağrılar bitince `release_server` kullan; özel erişim istemeyen arka uçlar için sahiplik talebi gerekmez. Gerçek kaydı veya belgelenmiş boş sonucu göster ve hataları kontrol et; yalnız ağ geçidi yanıtını başarı sayma. Sonuç bilinmiyorsa tekrar deneme: engeli koru ve kurulum sorumlusuna özel olarak devret.
 
-Onaylı kurulum sonucunun yalnız `readinessCommand` JSON nesnesini, tüm çıktıyı değil, özel geçerli klasörde UTF-8 `readiness-command.json` olarak kaydedin. Bilinen onaylı `.command` ve tüm `.args` değerlerini aynen koruyun; birleştirmeyin veya yol uydurmayın. Yalnız bu kurulum JSON verisini ayrıştırın, rastgele web/hizmet verilerini değil; JSON ayrıştırma kod değerlendirme değildir. Bağımsız değişkenler kuruluma bağlı olduğundan dosyayı özel tutun.
+4. Aynı bağlayıcı ve kataloglu ikinci oturumda aynı takma adı arayın: `ready` ve aynı yetenekler beklenir. Bu, ortak keşif kontrolüdür; süreç kimliği veya RAM tasarrufu kanıtı değildir. [MCP](../REFERENCE.md#first-shared-workflow) [Açık echo örneği ve sonucu](../REFERENCE.md#public-echo-illustration).
 
-```powershell
-$readinessCommand = Get-Content -Raw -LiteralPath '.\readiness-command.json' | ConvertFrom-Json
-$command = $readinessCommand.command
-$commandArgs = @($readinessCommand.args)
-& $command @commandArgs
-```
+**Başarısız olursa:** Boş katalogda yapılandırmayı ve önizlemeyi kontrol edin; arka uç açıklamalarından terimler arayın. Kimlik doğrulama veya hazırlık hatalarında kılavuzu izleyin, atlatma süreci çalıştırmayın. Sahipliği bırakmak ya da bağlantıyı kesmek bilinmeyen özel erişim sonucunu iptal etmez veya güvenle açmaz. Sonucu uzlaştırın, yönetilen ağ geçidi yeniden başlatmasını koordine edip yeniden sahiplik isteyin. [Authentication](../REFERENCE.md#native-http-oauth) · [Recovery](../REFERENCE.md#setup-recovery) · [Unknown outcome](../REFERENCE.md#unknown-exclusive-result)
 
-Keşif ve şema sahiplik gerektirmez; `requiresExclusiveAccess: true` ise `call_tool` öncesinde `claim_server` gerekir.
-
-> Ağ geçidini [izinli salt okunur görevim] için kullan: sunucuları listele, aracı keşfet, şemasını incele ve izinli hassas olmayan test değerleriyle bağımsız değişkenleri hazırla. Normal onayları al, tek oturuma ayrılan yürütmeden önce sahipliği talep et ve bütün çağrılar bitince bırak. Gerçek sonucu göster. Bilinmeyen sonucu tekrar deneme; kurulum sorumlusuna devret.
-
-[SDK tool flow: `list_servers` → `search_tools` → `get_tool_schema` → `claim_server` (exclusive) → `call_tool` → `release_server`](../../README.md#first-use) · [REFERENCE](../REFERENCE.md#unknown-exclusive-result)
-
-2. `list_servers` aracına `{}` gönderin: yapılandırılmış takma adlar, durumlar ve tek oturumla sınırlı erişim göstergeleri görünmelidir. Yetkili bir arka uç seçin, `search_tools` ile görevinize uygun bir terim arayın ve `get_tool_schema` ile aracın giriş şemasını alın. Şemaya uygun bağımsız değişkenler hazırlayıp `call_tool` ile onaylanmış salt okunur işlemi yapın. Beklenen sonuç gerçek kayıt veya belgelenmiş boş sonuçtur; hataları da kontrol edin, yanıt almak tek başına başarı değildir.
-3. `requiresExclusiveAccess: true` ise çağrıdan önce `claim_server`, bütün çağrılar tamamlandıktan sonra `release_server` kullanın. Tek oturumla sınırlı erişim gerektirmeyen arka uçlar için rezervasyon gerekmez. Sonucu bilinmeyen zaman aşımında yeniden denemeyin; etkin işleri inceleyip yeniden başlatmayı koordine edin. Sonuç bilinmiyorsa tek oturumun erişimine ayrılan arka uç, ağ geçidi yeniden başlatılana kadar engelli kalır; sahipliği bırakmak veya istemcinin bağlantısını kesmek engeli güvenli biçimde kaldırmaz. Bağlantıyı kesmek işlemi iptal etmez.
-4. Aynı bağlayıcı ve kataloğu kullanan ikinci oturumda aynı takma ad için `list_servers` / `search_tools` çağrılarını tekrarlayın. Başlatılmış arka uçta `ready` ve aynı katalog yeteneklerini bekleyin. Aynı takma ad süreç kimliğini veya RAM tasarrufunu kanıtlamaz; açık paylaşım testine bakın. [Süreç paylaşımı yöntemi](../BENCHMARK.md#method) · [Katalog önbelleği testi](../../test/catalog-scale.test.js)
-
-[Tam İngilizce örnek](../../README.md#first-use) · [Uyumluluk](../CLIENTS.md#compatibility-summary)
-
-## Sınırlar, gizlilik ve kurtarma
-
-Claude Code, Codex, Gemini CLI, Kimi veya Qwen CLI üzerinden bu depoyu bulmak doğrudan istemci entegrasyonu garantisi değildir. Gemini CLI kurulum yolu burada belgelenmemiştir; Antigravity başka bir istemcidir. Kimi yalnızca adaptör düzeyinde test edilmiştir. Yapılandırma ve yedekler kimlik bilgileri içerebilir; yayımlamayın veya sürüm denetimine eklemeyin. Arka uçlar uzak hizmetlere bağlanabilir; paylaşım çevrimdışı çalışma ya da sabit RAM/token tasarrufu anlamına gelmez.
-
-Liste boşsa seçilen yapılandırmayı ve taşıma önizlemesini kontrol edin. Eşleşme yoksa arka uç açıklamalarındaki terimleri kullanın. Kimlik doğrulama veya hazırlık hatalarında işletim kılavuzunu izleyin, atlatmak için paralel süreç açmayın. İstemci ayarlarını geri yüklemek kalıcı çalışma zamanını durdurmaz; çıkış için operatöre devir ve tamamlanma kontrollerini izleyin.
-
-[Gizlilik](../REFERENCE.md#state-and-privacy) · [Kurtarma ve geri alma](../REFERENCE.md#setup-recovery) · [Çıkış ve operatöre devir](../REFERENCE.md#planned-exit)
-
-<a id="resource-examples"></a>
-
-**Yinelenen arka uçların RAM kullanımını azaltın**
-
-Ölçüm değil, varsayımsal örnek: 5 oturumun her biri aynı 12 bağlantıya ihtiyaç duyar; tam bir arka uç kümesi 1.5 GB kullanır. Uyumlu oturumlar aynı bağlayıcı ve katalog üzerinden gerçek süreçleri paylaşır.
-
-| Dağıtım | Arka uç RAM |
-|---|---|
-| Bağımsız kopyalar | 5 × 1.5 GB = 7.5 GB |
-| Paylaşılan tek küme | 1.5 GB + ağ geçidi ve bağlayıcı ek yükü |
-
-Ek yükten önce önlenen yinelenen RAM: 7.5 GB - 1.5 GB = 6 GB. Toplam tasarruf ölçülene kadar bilinmez. 1.5 GB her iş yükü veya istemcide sabit değildir; beş modelin RAM tasarrufu değildir.
-
-**Başlatma işini de yeniden kullanın.** 5 oturumun tümü 12 stdio hizmetini kullanırsa, ayrı kopyalarda en fazla `5 × 12 = 60`, paylaşımda `12` başlatma gerekir: `60 - 12 = 48` tekrar önlenir, `48 / 60 × 100 = 80%` daha az başlatma. İhtiyaç anında yalnız kullanılan `k` arka uca bağlanılır; kullanılmayanlar başlatılmaz. İşlem sayısıdır, %80 daha hızlı başlangıç değildir. Gecikme ölçülmedi; eşzamanlılık, kimlik doğrulama ve platform süreyi etkiler.
-
-1000 araç → 6 başlangıç tanımı: (1000 - 6) / 1000 × 100 = 99.4% daha az tanım, token değil. Sonradan istenen şemaların da maliyeti vardır; zaten gecikmeli yükleyen istemcilerin kazancı daha az olabilir. Sentetik katalog testi altı aracı ve iki istemci arasında paylaşılan keşif önbelleğini doğrular, RSS performansını değil. [catalog-scale.test.js](../../test/catalog-scale.test.js)
-
-**Hafif düzenek ölçümü: süreçlerin toplam working set değeri arttı** Windows x64 / Node 24.13.1, 3 denemenin medyanı: paylaşılan şema + echo soğuk arka uçta 426.2 ms, ikinci istemcide 21.1 ms, beşincide 19.0 ms. İlk istemci toplamı: doğrudan 503.5 ms, ağ geçidi hazırken paylaşılan 894.3 ms; tamamen soğuk paylaşılan başlangıç 1886.7 ms. Arka uç süreçleri 5 → 1, fakat toplam süreçler 5 → 7 ve working set toplamı 357.0 MiB → 564.0 MiB: toplam süreç working set değeri daha yüksek; benzersiz fiziksel bellek ölçülmedi. Tek echo ağır gerçek hizmetleri temsil etmez; yukarıdaki 1.5 GB ayrı varsayımdır, ölçüm değildir. [BENCHMARK.md](../BENCHMARK.md)
-
-Ölçüm süreçlerin working set toplamıdır; tekrar sayımı çıkarılmış fiziksel bellek ve özel baytlar (private bytes) ölçülmedi.
-
-<a id="mechanism"></a>
-
-## Nasıl çalışır
-
-Ajanın mevcut MCP bağlantısını yeniden başlatmadan arka uç ekleyin: eklemeleri eşitleyin, etkin işi tamamlayın ve yalnız sahip olunan ağ geçidini yeniden başlatın; mevcut bağlayıcı tekrar bağlanır. [SDK/stdio](../BENCHMARK.md#configuration-only-connection-continuity)
-
-SDK/stdio testi aynı bağlayıcı ve MCP bağlantısıyla yeniden başlatma sonrası yeni takma adı keşfedip echo çalıştırır; ürünlerin konuşma arayüzleri test edilmedi. Otomatik hot reload değildir; çakışmalar incelenir. İlk kayıt veya runtime yükseltmesi istemci yeniden başlatması gerektirebilir. Kesilen çağrılar tekrarlanmaz; yeniden başlatma sonrası tek oturuma ayrılan erişimi tekrar talep edin.
-
-Kurumsal API yönetişim platformu değildir.
-
-Ağ geçidi ajana her zaman 6 araç sunar: 4'ü yetenekleri bulup çağırmak, 2'si bir seferde yalnızca bir oturumun erişebildiği entegrasyonlar içindir. Bağlantı eklemek başlangıç arayüzünü büyütmez; tam şema yalnızca seçilen araç için yüklenir. Önceden yapılandırıp doğruladığınız bağlantılar yeniden kullanılır; hizmet kurulmaz veya kimlik bilgisi sağlanmaz.
-
-```text
-Ajan A ─┐                          ┌─ Entegrasyon A: birçok araç
-Ajan B ─┼─ bağlayıcı ─ MCPGateway ─┼─ Entegrasyon B: birçok araç
-Ajan C ─┘                          └─ Entegrasyon C: birçok araç
-```
-
-Birden fazla ajan aynı bağlayıcı üzerinden MCPGateway’e erişir; yapılandırılmış arka uçlardan seçilenlere ihtiyaç duyulduğunda bağlanılır. Şema paylaşım mekanizmasını açıklar; performans testi veya çalışma anında doğrulama değildir ve tüm arka uçların başlatıldığı anlamına gelmez.
+**Kullanımı bırakın:** İşleri ve çağrıları bitirin, ilgili istemci bağlayıcılarını geri yükleyin veya kaldırın; operatöre devirle yönetilen ağ geçidinin durduğunu doğrulayın. Yapılandırmayı geri almak ağ geçidi sürecini durdurmaz. Özel durumu, kimlik bilgilerini, geçmişi ve ilgisiz süreçleri koruyun. [Exit](../REFERENCE.md#planned-exit)
 
 <a id="clients"></a>
-## İstemciye göre kurulum ve yükseltme
+Bu yerelleştirilmiş özettir. Yöntemler, sayıların kaynağı ve işlem ayrıntıları İngilizce kılavuzlardadır. Yerel istemci desteği, çevirinin gerçek kişilerce anlaşıldığının onayı değildir. [CLIENTS](../CLIENTS.md) · [REFERENCE](../REFERENCE.md) · [BENCHMARK](../BENCHMARK.md)
 
-> Bu, yerelleştirilmiş bir genel bakıştır. Tam kurulum, yükseltme ve teknik ayrıntılar için İngilizce [README](../../README.md) ile aşağıda bağlantısı verilen İngilizce istemci kılavuzu yetkili kaynaklardır.
-
-<details>
-<summary>İstemciye göre kurulum ve yükseltme</summary>
-
-Örneğin Copilot’taki **10** bağlantıya, desteklenen Claude yapılandırmasından açıkça taşınan **2** yeni bağlantı eklenince iki ajan da aynı **12** bağlantıyı kullanabilir.
-
-- Eklenti tek başına yapılandırmaları birleştirmez. Aynı adlı girdiler ancak takma ad tanımları birebir aynıysa tekilleştirilir; aynı hizmete işaret etmek yetmez. Çakışmalar inceleme için işlemi durdurur.
-- Taşıma önce önizleme gösterir, yedek oluşturur ve desteklenmeyen istemciye özgü ayarları reddeder.
-- Bu, her istemcinin kendi ortamında uçtan uca test edildiği anlamına gelmez. [Taşıma kılavuzu (İngilizce)](../CLIENTS.md#cross-client-migration).
-
-| İstemci | Kurulum | Yükseltme | Gerekli ilk kurulum | Doğrulama düzeyi |
-|---|---|---|---|---|
-| GitHub Copilot CLI | [Kur](../CLIENTS.md#copilot-cli-install) | [Yükselt](../CLIENTS.md#copilot-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Marketplace/kurulum yolu; yalıtılmış ayrıştırma](../CLIENTS.md#compatibility-summary) |
-| VS Code (düzenleyici) | [Kur](../CLIENTS.md#vs-code-install) | [Yükselt](../CLIENTS.md#vs-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
-| Claude Code | [Kur](../CLIENTS.md#claude-code-install) | [Yükselt](../CLIENTS.md#claude-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Yalıtılmış yapılandırma ayrıştırıldı; model/arka uç çalışmadı](../CLIENTS.md#compatibility-summary) |
-| Codex CLI | [Kur](../CLIENTS.md#codex-install) | [Yükselt](../CLIENTS.md#codex-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [İstemcinin kendi doğrulaması politika nedeniyle engellendi](../CLIENTS.md#compatibility-summary) |
-| OpenCode | [Kur](../CLIENTS.md#opencode-install) | [Yükselt](../CLIENTS.md#opencode-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
-| Qwen Code | [Kur](../CLIENTS.md#qwen-code-install) | [Yükselt](../CLIENTS.md#qwen-code-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
-| Kimi CLI | [Kur](../CLIENTS.md#kimi-cli-install) | [Yükselt](../CLIENTS.md#kimi-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
-| Antigravity CLI | [Kur](../CLIENTS.md#antigravity-cli-install) | [Yükselt](../CLIENTS.md#antigravity-cli-upgrade) | [Copilot CLI](../CLIENTS.md#shared-gateway-prerequisite) | [Kayıt/biçim bağdaştırıcısı test edildi; yerel istemcide uçtan uca oturum test edilmedi](../CLIENTS.md#compatibility-summary) |
-
-</details>
-
-**İşletim kılavuzu (İngilizce):** [İşletim kılavuzunu aç](../REFERENCE.md)
-
-**Lisans:** [MIT](../../LICENSE)
+MIT — [LICENSE](../../LICENSE).
