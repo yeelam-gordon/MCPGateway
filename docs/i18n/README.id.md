@@ -12,7 +12,7 @@ Beberapa sesi memakai satu set backend: hindari memori duplikat dan pekerjaan in
 
 [Mulai](#first-use) · [Kompatibilitas (Inggris)](../CLIENTS.md#compatibility-summary) · [Bukti dan batasan (Inggris)](../BENCHMARK.md) · [Pembaruan Copilot](../CLIENTS.md#copilot-cli-upgrade)
 
-<img src="../../assets/mcp-gateway-benefits.png" alt="Salinan backend menjadi satu set bersama; proses mulai digunakan ulang; dalam eksperimen SDK/stdio, koneksi MCP tetap ada saat gateway milik sendiri dimulai ulang setelah pekerjaan selesai." width="780">
+<img src="../../assets/mcp-gateway-benefits.png" alt="Konsep: sesi baru memulai salinan lain dari alat MCP lokal yang sama; MCPGateway memakai ulang backend kompatibel yang sudah berjalan, menghindari duplikasi memori dan inisialisasi backend." width="700">
 
 Ilustrasi konsep dengan label Inggris, bukan tangkapan layar atau benchmark. [SVG](../../assets/mcp-gateway-benefits.svg)
 

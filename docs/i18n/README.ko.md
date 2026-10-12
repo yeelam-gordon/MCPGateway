@@ -12,7 +12,7 @@
 
 [시작하기](#first-use) · [호환성(영어)](../CLIENTS.md#compatibility-summary) · [근거와 제한(영어)](../BENCHMARK.md) · [Copilot 업데이트](../CLIENTS.md#copilot-cli-upgrade)
 
-<img src="../../assets/mcp-gateway-benefits.png" alt="중복 백엔드가 한 세트로 합쳐지고 시작 작업이 공유됨. SDK/stdio 실험에서는 작업이 끝난 뒤 소유한 게이트웨이를 재시작해도 기존 MCP 연결이 유지됨." width="780">
+<img src="../../assets/mcp-gateway-benefits.png" alt="개념도: 새 코딩 세션이 같은 로컬 MCP 도구를 다시 시작하는 대신 MCPGateway를 통해 실행 중인 호환 백엔드를 재사용하여 백엔드 메모리와 시작 작업의 중복을 줄입니다." width="700">
 
 영어 레이블을 사용한 개념 그림입니다. 실행 화면이나 벤치마크가 아닙니다. [SVG](../../assets/mcp-gateway-benefits.svg)
 

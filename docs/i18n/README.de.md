@@ -12,7 +12,7 @@ Mehrere Sitzungen nutzen einen Backend-Satz: weniger doppelte Speicherbelegung u
 
 [Starten](#first-use) · [Kompatibilität (Englisch)](../CLIENTS.md#compatibility-summary) · [Belege und Grenzen (Englisch)](../BENCHMARK.md) · [Copilot-Updates](../CLIENTS.md#copilot-cli-upgrade)
 
-<img src="../../assets/mcp-gateway-benefits.png" alt="Backend-Kopien werden gemeinsam genutzt, Starts wiederverwendet; im SDK/stdio-Versuch bleibt die bestehende MCP-Verbindung beim Neustart des eigenen Gateways nach Arbeitsabschluss erhalten." width="780">
+<img src="../../assets/mcp-gateway-benefits.png" alt="Konzept: Eine neue Sitzung startet eine weitere Kopie derselben lokalen MCP-Tools; MCPGateway nutzt bereits laufende kompatible Backends und vermeidet deren doppelte Speicherbelegung und Initialisierung." width="700">
 
 Konzeptgrafik mit englischen Beschriftungen, kein Laufzeitbild oder Benchmark. [SVG](../../assets/mcp-gateway-benefits.svg)
 

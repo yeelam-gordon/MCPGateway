@@ -12,7 +12,7 @@ Várias sessões, um conjunto de backends: evite memória duplicada e inicializa
 
 [Começar](#first-use) · [Compatibilidade (inglês)](../CLIENTS.md#compatibility-summary) · [Evidências e limites (inglês)](../BENCHMARK.md) · [Atualizações do Copilot](../CLIENTS.md#copilot-cli-upgrade)
 
-<img src="../../assets/mcp-gateway-benefits.png" alt="Cópias de backends viram um conjunto compartilhado; inicializações são reutilizadas; no experimento SDK/stdio, a conexão MCP existente permanece após reiniciar o gateway sob sua autoridade com o trabalho concluído." width="780">
+<img src="../../assets/mcp-gateway-benefits.png" alt="Conceito: uma nova sessão inicia outra cópia das mesmas ferramentas MCP locais; MCPGateway reutiliza um conjunto compatível já ativo, evitando memória e inicialização duplicadas do backend." width="700">
 
 Ilustração conceitual com rótulos em inglês, não uma captura de tela ou benchmark. [SVG](../../assets/mcp-gateway-benefits.svg)
 

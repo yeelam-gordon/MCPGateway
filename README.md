@@ -12,9 +12,9 @@ Running several coding sessions? Share one set of MCP backends to avoid duplicat
 
 [Start with Copilot CLI](#first-use) · [Client compatibility](docs/CLIENTS.md#compatibility-summary) · [Evidence and limits](#resource-examples) · [Copilot updates](docs/CLIENTS.md#copilot-cli-upgrade)
 
-<img src="assets/mcp-gateway-benefits.png" alt="Backend copies become one shared set; repeated starts become shared starts; an existing MCP connection survives a settled owned-gateway restart in the SDK/stdio experiment" width="780">
+<img src="assets/mcp-gateway-benefits.png" alt="Concept: a new coding session starts another copy of the same local MCP tools before; with MCPGateway it reuses an already-running compatible backend set, avoiding duplicate backend memory and startup work." width="700">
 
-[Concept artwork](assets/mcp-gateway-benefits.svg), not a screenshot or benchmark. English labels; three payoffs:
+[Concept illustration](assets/mcp-gateway-benefits.svg), not a screenshot or benchmark. English labels show warm backend reuse; product benefits and scope:
 
 - **Avoid duplicate backend memory:** assumed 5 × 1.5 GB sets share one; 6 GB duplication avoided **before** gateway/connector overhead, not measured net savings.
 - **Reuse backend startup work:** if all five sessions use twelve stdio services, 60 → 12 backend starts—not 80% faster elapsed startup.

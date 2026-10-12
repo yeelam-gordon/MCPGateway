@@ -12,7 +12,7 @@
 
 [ابدأ](#first-use) · [التوافق (بالإنجليزية)](../CLIENTS.md#compatibility-summary) · [الأدلة والحدود (بالإنجليزية)](../BENCHMARK.md) · [تحديثات Copilot](../CLIENTS.md#copilot-cli-upgrade)
 
-<img src="../../assets/mcp-gateway-benefits.png" alt="تتحول نسخ الخدمات الخلفية إلى مجموعة مشتركة ويُعاد استخدام عمل بدء التشغيل؛ في تجربة SDK/stdio يبقى اتصال MCP الحالي عند إعادة تشغيل البوابة المملوكة بعد انتهاء العمل." width="780">
+<img src="../../assets/mcp-gateway-benefits.png" alt="رسم تصوري: تبدأ جلسة برمجة جديدة نسخة أخرى من أدوات MCP المحلية نفسها؛ يعيد MCPGateway استخدام الخلفيات المتوافقة العاملة بالفعل، لتجنب تكرار ذاكرتها وتهيئتها." width="700">
 
 رسم مفاهيمي بعناوين إنجليزية، وليس لقطة تشغيل أو اختبار أداء. [SVG](../../assets/mcp-gateway-benefits.svg)
 

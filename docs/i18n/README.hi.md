@@ -12,7 +12,7 @@
 
 [शुरू करें](#first-use) · [संगतता (अंग्रेज़ी)](../CLIENTS.md#compatibility-summary) · [प्रमाण और सीमाएँ (अंग्रेज़ी)](../BENCHMARK.md) · [Copilot अपडेट](../CLIENTS.md#copilot-cli-upgrade)
 
-<img src="../../assets/mcp-gateway-benefits.png" alt="बैकएंड की प्रतियाँ एक साझा सेट बनती हैं; शुरू करने का काम साझा होता है; SDK/stdio प्रयोग में काम पूरा होने के बाद अपने गेटवे के रीस्टार्ट पर मौजूदा MCP कनेक्शन बना रहता है।" width="780">
+<img src="../../assets/mcp-gateway-benefits.png" alt="अवधारणा: नया कोडिंग सत्र उन्हीं स्थानीय MCP टूल की एक और कॉपी शुरू करता है; MCPGateway पहले से चल रहे संगत बैकएंड का पुनः उपयोग करके उनकी मेमोरी और आरंभ कार्य की पुनरावृत्ति से बचता है।" width="700">
 
 अंग्रेज़ी लेबल वाला वैचारिक चित्र; असली स्क्रीनशॉट या बेंचमार्क नहीं। [SVG](../../assets/mcp-gateway-benefits.svg)
 

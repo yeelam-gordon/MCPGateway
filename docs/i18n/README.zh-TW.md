@@ -12,7 +12,7 @@
 
 [開始使用](#first-use) · [相容性（英文）](../CLIENTS.md#compatibility-summary) · [證據與限制（英文）](../BENCHMARK.md) · [Copilot 更新](../CLIENTS.md#copilot-cli-upgrade)
 
-<img src="../../assets/mcp-gateway-benefits.png" alt="重複後端合為一組；重複啟動變為共用啟動；SDK/stdio 實驗中，現有 MCP 連線跨越工作結束後的自有閘道重啟。" width="780">
+<img src="../../assets/mcp-gateway-benefits.png" alt="概念圖：新建程式開發工作階段時再次啟動相同本機 MCP 工具；透過 MCPGateway 重用已執行的相容後端，避免重複的後端記憶體與啟動工作。" width="700">
 
 概念示意圖，使用英文標籤；不是執行畫面或效能測試。 [SVG](../../assets/mcp-gateway-benefits.svg)
 

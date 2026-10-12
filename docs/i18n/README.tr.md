@@ -12,7 +12,7 @@ Birden çok oturum tek arka uç kümesini kullanır: yinelenen bellek ve başlat
 
 [Başlayın](#first-use) · [Uyumluluk (İngilizce)](../CLIENTS.md#compatibility-summary) · [Kanıt ve sınırlar (İngilizce)](../BENCHMARK.md) · [Copilot güncellemeleri](../CLIENTS.md#copilot-cli-upgrade)
 
-<img src="../../assets/mcp-gateway-benefits.png" alt="Arka uç kopyaları ortak kümeye dönüşür; başlatma işi yeniden kullanılır; SDK/stdio deneyinde iş tamamlandıktan sonra yönetilen ağ geçidi yeniden başlarken mevcut MCP bağlantısı korunur." width="780">
+<img src="../../assets/mcp-gateway-benefits.png" alt="Kavram: yeni oturum aynı yerel MCP araçlarının başka bir kopyasını başlatır; MCPGateway çalışan uyumlu arka uçları yeniden kullanarak arka uç belleği ve başlatma işinin yinelenmesini önler." width="700">
 
 İngilizce etiketli kavramsal çizimdir; ekran görüntüsü veya performans ölçümü değildir. [SVG](../../assets/mcp-gateway-benefits.svg)
 

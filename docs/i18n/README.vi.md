@@ -12,7 +12,7 @@ Nhiều phiên dùng một bộ backend: tránh bộ nhớ trùng lặp và côn
 
 [Bắt đầu](#first-use) · [Tương thích (tiếng Anh)](../CLIENTS.md#compatibility-summary) · [Bằng chứng và giới hạn (tiếng Anh)](../BENCHMARK.md) · [Cập nhật Copilot](../CLIENTS.md#copilot-cli-upgrade)
 
-<img src="../../assets/mcp-gateway-benefits.png" alt="Các bản sao backend thành một bộ dùng chung; công việc khởi động được dùng lại; trong thử nghiệm SDK/stdio, kết nối MCP hiện có được giữ khi khởi động lại gateway do mình quản lý sau khi công việc hoàn tất." width="780">
+<img src="../../assets/mcp-gateway-benefits.png" alt="Minh họa: phiên mới khởi chạy thêm bản sao của cùng công cụ MCP cục bộ; MCPGateway tái sử dụng backend tương thích đang chạy, tránh bộ nhớ và công việc khởi tạo backend bị lặp." width="700">
 
 Hình minh họa khái niệm với nhãn tiếng Anh, không phải ảnh ứng dụng hay benchmark. [SVG](../../assets/mcp-gateway-benefits.svg)
 

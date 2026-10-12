@@ -12,7 +12,7 @@
 
 [使い始める](#first-use) · [互換性（英語）](../CLIENTS.md#compatibility-summary) · [根拠と制限（英語）](../BENCHMARK.md) · [Copilot の更新](../CLIENTS.md#copilot-cli-upgrade)
 
-<img src="../../assets/mcp-gateway-benefits.png" alt="重複したバックエンドを一組にまとめ、起動処理を共有する。SDK/stdio 実験では、作業完了後の自分が管理するゲートウェイ再起動をまたいで既存の MCP 接続を維持する。" width="780">
+<img src="../../assets/mcp-gateway-benefits.png" alt="概念図：新しい開発セッションが同じローカル MCP ツールを再起動する状態から、MCPGateway で実行中の互換バックエンドを再利用し、重複するバックエンドメモリと起動処理を避ける状態へ。" width="700">
 
 英語ラベルの概念図です。実行画面やベンチマークではありません。 [SVG](../../assets/mcp-gateway-benefits.svg)
 
