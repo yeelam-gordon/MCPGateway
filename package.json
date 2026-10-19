@@ -19,11 +19,11 @@
     "test:lifecycle": "node --test --test-timeout=360000 --test-concurrency=1 test/lifecycle-e2e.test.js"
   },
   "dependencies": {
-    "@azure/msal-node": "7.0.1",
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@azure/msal-node": "7.1.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "ajv": "^8.17.1",
-    "express": "^5.1.0",
-    "smol-toml": "1.8.0",
-    "zod": "^4.1.11"
+    "express": "^5.3.0",
+    "smol-toml": "1.9.1",
+    "zod": "^4.6.7"
   }
 }
